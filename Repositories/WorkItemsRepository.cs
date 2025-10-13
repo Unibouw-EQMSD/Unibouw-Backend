@@ -21,17 +21,17 @@ namespace UnibouwAPI.Repositories
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
-        public async Task<IEnumerable<WorkItems>> GetAllAsync()
+        public async Task<IEnumerable<WorkItem>> GetAllAsync()
         {
-            return await _connection.QueryAsync<WorkItems>("SELECT * FROM WorkItems");
+            return await _connection.QueryAsync<WorkItem>("SELECT * FROM WorkItems");
         }
 
-        public async Task<WorkItems?> GetByIdAsync(Guid id)
+        public async Task<WorkItem?> GetByIdAsync(Guid id)
         {
-            return await _connection.QueryFirstOrDefaultAsync<WorkItems>("SELECT * FROM WorkItems WHERE Id = @Id", new { Id = id });
+            return await _connection.QueryFirstOrDefaultAsync<WorkItem>("SELECT * FROM WorkItems WHERE Id = @Id", new { Id = id });
         }
 
-        public async Task<int> CreateAsync(WorkItems workItem)
+        public async Task<int> CreateAsync(WorkItem workItem)
         {
             var sql = @"
             INSERT INTO WorkItems 
@@ -42,7 +42,7 @@ namespace UnibouwAPI.Repositories
             return await _connection.ExecuteAsync(sql, workItem);
         }
 
-        public async Task<int> UpdateAsync(WorkItems workItem)
+        public async Task<int> UpdateAsync(WorkItem workItem)
         {
             
             var sql = @"

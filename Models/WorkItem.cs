@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace UnibouwAPI.Models;
 
-public partial class WorkItems
+public partial class WorkItem
 {
     [Key]
     [Column("ID")]

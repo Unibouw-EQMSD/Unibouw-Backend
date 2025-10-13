@@ -2,10 +2,10 @@
 
 public interface IWorkItems
 {
-    Task<IEnumerable<WorkItems>> GetAllAsync();
-    Task<WorkItems?> GetByIdAsync(Guid id);
-    Task<int> CreateAsync(WorkItems workItem);
-    Task<int> UpdateAsync(WorkItems workItem);
+    Task<IEnumerable<WorkItem>> GetAllAsync();
+    Task<WorkItem?> GetByIdAsync(Guid id);
+    Task<int> CreateAsync(WorkItem workItem);
+    Task<int> UpdateAsync(WorkItem workItem);
     Task<int> UpdateIsActiveAsync(Guid id, bool isActive, string modifiedBy);
     Task<int> DeleteAsync(Guid id);
 }

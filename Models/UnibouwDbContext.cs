@@ -15,7 +15,7 @@ public partial class UnibouwDbContext : DbContext
     {
     }
 
-    public virtual DbSet<WorkItems> WorkItems { get; set; }
+    public virtual DbSet<WorkItem> WorkItems { get; set; }
 
     public virtual DbSet<WorkItemCategoryType> WorkItemCategoryTypes { get; set; }
 
@@ -25,7 +25,7 @@ public partial class UnibouwDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<WorkItems>(entity =>
+        modelBuilder.Entity<WorkItem>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK__WorkItem__3214EC273704D4C9");
 

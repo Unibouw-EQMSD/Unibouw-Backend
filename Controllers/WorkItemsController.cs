@@ -32,7 +32,7 @@ namespace UnibouwAPI.Controllers
                     return NotFound(new
                     {
                         message = "No work items found.",
-                        data = Array.Empty<WorkItems>() // return empty array for consistency
+                        data = Array.Empty<WorkItem>() // return empty array for consistency
                     });
                 }
                 return Ok(new
@@ -61,7 +61,7 @@ namespace UnibouwAPI.Controllers
                     return NotFound(new
                     {
                         message = $"No work item found for ID: {id}.",
-                        data = (WorkItems?)null
+                        data = (WorkItem?)null
                     });
                 }
 
