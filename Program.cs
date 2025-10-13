@@ -54,7 +54,13 @@ builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSch
 });
 
 // Add Authorization
-builder.Services.AddAuthorization();
+//builder.Services.AddAuthorization();
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("ReadPolicy", policy => policy.RequireRole("Admin", "ProjectManager"));
+    options.AddPolicy("WritePolicy", policy => policy.RequireRole("Admin"));
+});
 
 // Configure Swagger with OAuth2
 builder.Services.AddEndpointsApiExplorer();
