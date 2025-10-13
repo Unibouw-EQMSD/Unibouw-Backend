@@ -31,9 +31,9 @@ namespace UnibouwAPI.Controllers
 
                 if (items == null || !items.Any())
                 {
-                    return Ok(new
+                    return NotFound(new
                     {
-                        message = "No work items category type found!",
+                        message = "No work items category type found.",
                         data = Array.Empty<WorkItemCategoryType>() // return empty array for consistency
                     });
                 }
@@ -46,7 +46,7 @@ namespace UnibouwAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "An error occurred while fetching work items.");
-                return StatusCode(500, new { message = "An unexpected error occurred. Please contact support." });
+                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
             }
         }
 
@@ -60,9 +60,9 @@ namespace UnibouwAPI.Controllers
 
                 if (item == null)
                 {
-                    return Ok(new
+                    return NotFound(new
                     {
-                        message = $"No work item category type found for ID {id}!",
+                        message = $"No work item category type found for ID: {id}.",
                         data = (WorkItemCategoryType?)null
                     });
                 }
@@ -74,8 +74,8 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "An error occurred while fetching work item category type with ID {Id}.", id);
-                return StatusCode(500, new { message = "An unexpected error occurred. Please contact support." });
+                _logger.LogError(ex, "An error occurred while fetching work item category type with ID: {Id}.", id);
+                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
             }
         }
 

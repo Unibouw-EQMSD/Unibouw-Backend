@@ -59,6 +59,27 @@ namespace UnibouwAPI.Repositories
             return await _connection.ExecuteAsync(sql, workItem);
         }
 
+        public async Task<int> UpdateIsActiveAsync(Guid id, bool isActive, string modifiedBy)
+        {
+            var sql = @"
+        UPDATE WorkItems SET
+            IsActive = @IsActive,
+            ModifiedOn = @ModifiedOn,
+            ModifiedBy = @ModifiedBy
+        WHERE ID = @Id";
+
+            var parameters = new
+            {
+                Id = id,
+                IsActive = isActive,
+                ModifiedOn = DateTime.UtcNow,
+                ModifiedBy = modifiedBy
+            };
+
+            return await _connection.ExecuteAsync(sql, parameters);
+        }
+
+
         public async Task<int> DeleteAsync(Guid id)
         {
             var sql = "UPDATE WorkItems SET IsActive = 0, DeletedOn = @DeletedOn WHERE ID = @Id";
