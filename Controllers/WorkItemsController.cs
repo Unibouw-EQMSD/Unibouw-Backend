@@ -78,7 +78,7 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpPut("{id}/{isActive}")]
-        [Authorize]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UpdateIsActive(Guid id, bool isActive)
         {
             try

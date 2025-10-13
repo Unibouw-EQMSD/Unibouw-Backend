@@ -18,40 +18,6 @@ public class MeController : ControllerBase
         _configuration = configuration;
     }
 
-    /* [HttpGet("GetMe")]
-     [Authorize] // Requires a valid JWT Bearer token
-     public IActionResult GetMe()
-     {
-         try
-         {
-             var user = HttpContext.User;
-
-             if (user?.Identity == null || !user.Identity.IsAuthenticated)
-                 return Unauthorized();
-
-             var name = user.FindFirst("name")?.Value ?? user.FindFirst(ClaimTypes.Name)?.Value;
-             var email = user.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn")?.Value;
-             var roles = user.FindFirst("http://schemas.microsoft.com/ws/2008/06/identity/claims/role")?.Value;
-             var scopes = user.FindFirst("http://schemas.microsoft.com/identity/claims/scope")?.Value;
-             // var allClaims = user.Claims.Select(c => new { c.Type, c.Value }).ToList();
-
-             return Ok(new
-             {
-                 name,
-                 email,
-                 roles,
-                 scopes,
-              //   allClaims
-             });
-         }
-         catch(Exception ex)
-         {
-             _logger.LogError(ex, "An error occurred in GetMe");
-             return StatusCode(500, "An unexpected error occurred. Please contact support.");
-         }
-
-     }*/
-
     [HttpGet("GetMe")]
     [Authorize] // Requires a valid JWT Bearer token
     public IActionResult GetMe()
@@ -86,7 +52,7 @@ public class MeController : ControllerBase
                 name,
                 email,
                 roles,
-                scopes = allowedScopes
+                //scopes = allowedScopes
             });
         }
         catch (Exception ex)
@@ -110,14 +76,6 @@ public class MeController : ControllerBase
     public IActionResult TestUserRoleMethod()
     {
         return Ok("Hello User! You have access to this endpoint.");
-    }
-
-    // Method accessible only by User
-    [HttpGet("TestAPIConnect")]
-    [Authorize]
-    public IActionResult TestAPIConnect()
-    {
-        return Ok("API is connected!..");
     }*/
 
 
