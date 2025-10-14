@@ -96,7 +96,7 @@ namespace UnibouwAPI.Controllers
                     return NotFound(new
                     {
                         message = $"No work items found for Category ID: {categoryId}",
-                        data = Array.Empty<WorkItems>()
+                        data = Array.Empty<WorkItem>()
                     });
                 }
 
