@@ -15,7 +15,7 @@ namespace UnibouwAPI.Repositories
         public WorkItemsRepository(IConfiguration configuration)
         {
             _configuration = configuration;
-            _connectionString = _configuration.GetConnectionString("UnibouwDbConnection");
+            _connectionString = _configuration.GetConnectionString("UnibouwDbConnection");         
             if (string.IsNullOrEmpty(_connectionString))
                 throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
         }
@@ -24,12 +24,12 @@ namespace UnibouwAPI.Repositories
 
         public async Task<IEnumerable<WorkItem>> GetAllAsync()
         {
-            return await _connection.QueryAsync<WorkItem>("SELECT * FROM WorkItems");
+            return await _connection.QueryAsync<WorkItem>("SELECT * FROM WorkItems WHERE isDeleted=0");
         }
 
         public async Task<WorkItem?> GetByIdAsync(Guid id)
         {
-            return await _connection.QueryFirstOrDefaultAsync<WorkItem>("SELECT * FROM WorkItems WHERE Id = @Id", new { Id = id });
+            return await _connection.QueryFirstOrDefaultAsync<WorkItem>("SELECT * FROM WorkItems WHERE Id = @Id AND isDeleted=0", new { Id = id });
         }
 
         public async Task<int> CreateAsync(WorkItem workItem)
@@ -62,6 +62,16 @@ namespace UnibouwAPI.Repositories
 
         public async Task<int> UpdateIsActiveAsync(Guid id, bool isActive, string modifiedBy)
         {
+            // Check if WorkItem is non-deleted WorkItem
+            var workItem = await _connection.QueryFirstOrDefaultAsync<WorkItem>(
+                "SELECT * FROM WorkItems WHERE Id = @Id AND IsDeleted = 0",
+                new { Id = id }
+            );
+
+            // Return 0 if not found (either inactive or deleted)
+            if (workItem == null)
+                return 0;
+
             var query = @"
         UPDATE WorkItems SET
             IsActive = @IsActive,
@@ -82,16 +92,16 @@ namespace UnibouwAPI.Repositories
 
         public async Task<int> UpdateDescriptionAsync(Guid id, string description, string modifiedBy)
         {
-            // Check if WorkItem is active
+            // Check if WorkItem is active and non-deleted WorkItem
             var workItem = await _connection.QueryFirstOrDefaultAsync<WorkItem>(
-                "SELECT * FROM WorkItems WHERE Id = @Id",
+                "SELECT * FROM WorkItems WHERE Id = @Id AND IsActive = 1 AND IsDeleted = 0",
                 new { Id = id }
             );
 
-            // Return 0 if not active or not found
-            if (workItem?.IsActive != true)
+            // Return 0 if not found (either inactive or deleted)
+            if (workItem == null)
                 return 0;
-           
+
             var query = @"UPDATE WorkItems
                   SET Description = @Description,
                       ModifiedBy = @ModifiedBy,

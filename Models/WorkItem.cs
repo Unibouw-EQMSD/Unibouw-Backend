@@ -33,5 +33,7 @@ public partial class WorkItem
 
     public string? Description { get; set; }
 
+    public bool IsDeleted { get; set; }
+
     public virtual WorkItemCategoryType? Category { get; set; }
 }

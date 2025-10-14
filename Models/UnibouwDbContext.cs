@@ -45,7 +45,7 @@ public partial class UnibouwDbContext : DbContext
                 .HasMaxLength(255)
                 .HasColumnName("WorkitemParent_ID");
 
-            /*entity.HasOne(d => d.Category).WithMany(p => p.WorkItems)
+           /* entity.HasOne(d => d.Category).WithMany(p => p.WorkItems)
                 .HasForeignKey(d => d.CategoryId)
                 .HasConstraintName("FK_WorkItems_CategoryID");*/
         });

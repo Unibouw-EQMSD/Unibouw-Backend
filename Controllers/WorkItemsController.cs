@@ -83,24 +83,24 @@ namespace UnibouwAPI.Controllers
         {
             try
             {
-                // 1. Validate input parameters
+                // Validate input parameters
                 if (id == Guid.Empty)
                     return BadRequest(new { message = "Invalid id." });
 
-                // 2. Get the current logged-in user from claims
+                // Get the current logged-in user from claims
                 var modifiedBy = User?.Identity?.Name; // usually the username or email from the token
 
                 if (string.IsNullOrWhiteSpace(modifiedBy))
                     return Unauthorized(new { message = "User information not found in token." });
 
-                // 3. Call the repository method directly
-                var rowsAffected = await _repository.UpdateIsActiveAsync(id, isActive, modifiedBy);
+                // Call the repository method directly
+                var result = await _repository.UpdateIsActiveAsync(id, isActive, modifiedBy);
 
-                // 4. Check result and return response
-                if (rowsAffected == 0)
+                // Check result and return response
+                if (result == 0)
                     return NotFound(new { message = "Work item not found." });
 
-                return Ok(new { message = "Status updated successfully.", rowsAffected });
+                return Ok(new { message = "Status updated successfully.", result });
             }
             catch (Exception ex)
             {
@@ -131,7 +131,6 @@ namespace UnibouwAPI.Controllers
 
                 if(result == 0)
                  return NotFound(new { message = "This WorkItem is not active or does not exist." });
-
 
                 return Ok(new { message = "Description updated successfully." });
             }
