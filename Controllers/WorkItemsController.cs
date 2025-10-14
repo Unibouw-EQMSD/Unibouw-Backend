@@ -77,7 +77,44 @@ namespace UnibouwAPI.Controllers
             }
         }
 
-        [HttpPut("{id}/{isActive}")]
+        [HttpGet("WorkItemByCategory/{categoryId}")]
+        [Authorize]
+        public async Task<IActionResult> GetWorkItemByCategory(Guid categoryId)
+        {
+            try
+            {
+                if (categoryId == Guid.Empty)
+                    return BadRequest(new { message = "Invalid category ID." });
+
+                var items = await _repository.GetAllAsync();
+
+                // Filter by category
+                var filteredItems = items.Where(w => w.CategoryId == categoryId).ToList();
+
+                if (!filteredItems.Any())
+                {
+                    return NotFound(new
+                    {
+                        message = $"No work items found for Category ID: {categoryId}",
+                        data = Array.Empty<WorkItems>()
+                    });
+                }
+
+                return Ok(new
+                {
+                    count = filteredItems.Count,
+                    data = filteredItems
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching work items for Category ID: {CategoryId}", categoryId);
+                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
+            }
+        }
+    
+
+    [HttpPut("{id}/{isActive}")]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UpdateIsActive(Guid id, bool isActive)
         {
