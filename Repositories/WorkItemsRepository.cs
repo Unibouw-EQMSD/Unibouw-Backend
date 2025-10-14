@@ -2,6 +2,7 @@
 using Microsoft.Data.SqlClient;
 using System.Data;
 using UnibouwAPI.Models;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
 
 
 namespace UnibouwAPI.Repositories
@@ -61,7 +62,7 @@ namespace UnibouwAPI.Repositories
 
         public async Task<int> UpdateIsActiveAsync(Guid id, bool isActive, string modifiedBy)
         {
-            var sql = @"
+            var query = @"
         UPDATE WorkItems SET
             IsActive = @IsActive,
             ModifiedOn = @ModifiedOn,
@@ -76,9 +77,37 @@ namespace UnibouwAPI.Repositories
                 ModifiedBy = modifiedBy
             };
 
-            return await _connection.ExecuteAsync(sql, parameters);
+            return await _connection.ExecuteAsync(query, parameters);
         }
 
+        public async Task<int> UpdateDescriptionAsync(Guid id, string description, string modifiedBy)
+        {
+            // Check if WorkItem is active
+            var workItem = await _connection.QueryFirstOrDefaultAsync<WorkItem>(
+                "SELECT * FROM WorkItems WHERE Id = @Id",
+                new { Id = id }
+            );
+
+            // Return 0 if not active or not found
+            if (workItem?.IsActive != true)
+                return 0;
+           
+            var query = @"UPDATE WorkItems
+                  SET Description = @Description,
+                      ModifiedBy = @ModifiedBy,
+                      ModifiedOn = GETDATE()
+                  WHERE Id = @Id";
+
+            var parameters = new
+            {
+                Id = id,
+                Description = description,
+                ModifiedOn = DateTime.UtcNow,
+                ModifiedBy = modifiedBy
+            };
+
+            return await _connection.ExecuteAsync(query, parameters);
+        }
 
         public async Task<int> DeleteAsync(Guid id)
         {

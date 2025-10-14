@@ -107,8 +107,39 @@ namespace UnibouwAPI.Controllers
                 _logger.LogError(ex, "An error occurred while fetching upadating IsActive status for ID: {Id}.", id);
                 return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
             }
+        }
+
+        [HttpPut("{id}/description")]
+        [Authorize]
+        public async Task<IActionResult> UpdateDescription(Guid id, [FromBody] string description)
+        {
+            try
+            {
+                if (id == Guid.Empty)
+                    return BadRequest(new { message = "Invalid Id." });
+
+                //Get the current logged-in user from claims
+                var modifiedBy = User?.Identity?.Name; // usually the username or email from the token
+
+                if (string.IsNullOrWhiteSpace(modifiedBy))
+                    return Unauthorized(new { message = "User information not found in token." });
+
+                if (string.IsNullOrWhiteSpace(description))
+                    return BadRequest("Description cannot be empty.");
+
+                var result = await _repository.UpdateDescriptionAsync(id, description, modifiedBy);
+
+                if(result == 0)
+                 return NotFound(new { message = "This WorkItem is not active or does not exist." });
 
 
+                return Ok(new { message = "Description updated successfully." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "An error occurred while fetching upadating IsActive status for ID: {Id}.", id);
+                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
+            }
         }
 
     }

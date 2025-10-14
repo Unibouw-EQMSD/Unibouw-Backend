@@ -7,5 +7,6 @@ public interface IWorkItems
     Task<int> CreateAsync(WorkItem workItem);
     Task<int> UpdateAsync(WorkItem workItem);
     Task<int> UpdateIsActiveAsync(Guid id, bool isActive, string modifiedBy);
+    Task<int> UpdateDescriptionAsync(Guid id, string description, string modifiedBy);
     Task<int> DeleteAsync(Guid id);
 }

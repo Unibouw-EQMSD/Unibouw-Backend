@@ -29,16 +29,37 @@ public partial class UnibouwDbContext : DbContext
         {
             entity.HasKey(e => e.Id).HasName("PK__WorkItem__3214EC273704D4C9");
 
-            entity.Property(e => e.Id).ValueGeneratedNever();
+            entity.Property(e => e.Id)
+                .ValueGeneratedNever()
+                .HasColumnName("ID");
+            entity.Property(e => e.CategoryId).HasColumnName("CategoryID");
+            entity.Property(e => e.CreatedBy).HasMaxLength(255);
+            entity.Property(e => e.DeletedBy).HasMaxLength(255);
+            entity.Property(e => e.ErpId)
+                .HasMaxLength(255)
+                .HasColumnName("ERP_ID");
+            entity.Property(e => e.ModifiedBy).HasMaxLength(255);
+            entity.Property(e => e.Name).HasMaxLength(255);
+            entity.Property(e => e.Number).HasMaxLength(255);
+            entity.Property(e => e.WorkitemParentId)
+                .HasMaxLength(255)
+                .HasColumnName("WorkitemParent_ID");
 
-            //entity.HasOne(d => d.Category).WithMany(p => p.WorkItems).HasConstraintName("FK_WorkItems_CategoryID");
+            /*entity.HasOne(d => d.Category).WithMany(p => p.WorkItems)
+                .HasForeignKey(d => d.CategoryId)
+                .HasConstraintName("FK_WorkItems_CategoryID");*/
         });
 
         modelBuilder.Entity<WorkItemCategoryType>(entity =>
         {
             entity.HasKey(e => e.CategoryId).HasName("PK__WorkItem__19093A2BB0E73124");
 
-            entity.Property(e => e.CategoryId).ValueGeneratedNever();
+            entity.ToTable("WorkItemCategoryType");
+
+            entity.Property(e => e.CategoryId)
+                .ValueGeneratedNever()
+                .HasColumnName("CategoryID");
+            entity.Property(e => e.CategoryName).HasMaxLength(255);
         });
 
         OnModelCreatingPartial(modelBuilder);
