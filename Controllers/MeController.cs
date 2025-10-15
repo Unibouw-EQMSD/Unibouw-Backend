@@ -29,7 +29,7 @@ public class MeController : ControllerBase
             if (user?.Identity == null || !user.Identity.IsAuthenticated)
                 return Unauthorized();
 
-            var name = user.FindFirst("name")?.Value ?? user.FindFirst(ClaimTypes.Name)?.Value;
+            var name = (user.FindFirst("name")?.Value ?? user.FindFirst(ClaimTypes.Name)?.Value)?.TrimEnd('.');
             var email = user.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn")?.Value;
             var roles = user.FindFirst("http://schemas.microsoft.com/ws/2008/06/identity/claims/role")?.Value;
             // Get all scopes from token
