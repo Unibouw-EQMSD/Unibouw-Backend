@@ -9,17 +9,17 @@ public partial class WorkItem
 
     public string? ErpId { get; set; }
 
-    public Guid? CategoryId { get; set; }
+    public Guid CategoryId { get; set; }
 
     public string? Number { get; set; }
 
     public string? Name { get; set; }
 
-    public string? WorkitemParentId { get; set; }
+    public Guid? WorkitemParentId { get; set; }
 
-    public bool? IsActive { get; set; }
+    public bool IsActive { get; set; }
 
-    public DateTime? CreatedOn { get; set; }
+    public DateTime CreatedOn { get; set; }
 
     public string? CreatedBy { get; set; }
 
@@ -35,5 +35,9 @@ public partial class WorkItem
 
     public bool IsDeleted { get; set; }
 
-    public virtual WorkItemCategoryType? Category { get; set; }
+    public virtual WorkItemCategoryType Category { get; set; } = null!;
+
+    public virtual ICollection<SubcontractorWorkItemMapping> SubcontractorWorkItemMappingCategories { get; set; } = new List<SubcontractorWorkItemMapping>();
+
+    public virtual ICollection<SubcontractorWorkItemMapping> SubcontractorWorkItemMappingWorkItems { get; set; } = new List<SubcontractorWorkItemMapping>();
 }
