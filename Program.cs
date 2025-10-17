@@ -4,6 +4,7 @@ using Microsoft.Identity.Web;
 using Microsoft.OpenApi.Models;
 using UnibouwAPI.Repositories;
 using UnibouwAPI.Repositories.Interfaces;
+using UnibouwAPI.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,6 +15,8 @@ builder.Services.AddControllers();
 builder.Services.AddScoped<IWorkItems, WorkItemsRepository>();
 builder.Services.AddScoped<IWorkItemCategoryType, WorkItemCategoryTypeRepository>();
 builder.Services.AddScoped<ISubcontractor, SubcontractorRepository>();
+builder.Services.AddScoped<DWHService>();              // DWH data fetch service
+builder.Services.AddScoped<WorkItemSyncService>();
 
 // Configure Azure AD authentication with custom Unauthorized/Forbidden responses
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

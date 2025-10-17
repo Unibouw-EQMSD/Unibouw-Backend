@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using UnibouwAPI.Models;
 using System;
 using System.Threading.Tasks;
+using UnibouwAPI.Services;
 
 namespace UnibouwAPI.Controllers
 {
@@ -12,11 +13,13 @@ namespace UnibouwAPI.Controllers
     {
         private readonly IWorkItems _repository;
         private readonly ILogger<WorkItemsController> _logger;
+        private readonly WorkItemSyncService _syncService;
 
-        public WorkItemsController(IWorkItems repository, ILogger<WorkItemsController> logger)
+        public WorkItemsController(IWorkItems repository, ILogger<WorkItemsController> logger, WorkItemSyncService syncService)
         {
             _repository = repository;
             _logger = logger;
+            _syncService = syncService;
         }
 
         [HttpGet]
@@ -177,6 +180,28 @@ namespace UnibouwAPI.Controllers
                 return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
             }
         }
+
+        /*[HttpPost("sync")]
+        public async Task<IActionResult> SyncWorkItems()
+        {
+            await _syncService.SyncWorkItems();
+            return Ok("Work items synced successfully.");
+        }*/
+
+        [HttpPost("sync")]
+        public async Task<IActionResult> SyncWorkItems()
+        {
+            var (insertedIds, updatedIds) = await _syncService.SyncWorkItems();
+
+            return Ok(new
+            {
+                insertedCount = insertedIds.Count,
+                updatedCount = updatedIds.Count,
+                insertedIds,
+                updatedIds
+            });
+        }
+
 
     }
 }

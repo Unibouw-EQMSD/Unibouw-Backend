@@ -25,6 +25,8 @@ public partial class UnibouwDbContext : DbContext
 
     public virtual DbSet<WorkItemCategoryType> WorkItemCategoryTypes { get; set; }
 
+    public virtual DbSet<WorkItemsDwh> WorkItemsDwhs { get; set; }
+
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
 #warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see https://go.microsoft.com/fwlink/?LinkId=723263.
         => optionsBuilder.UseSqlServer("Server=10.100.0.44\\SQLSERVER2022;Database=UnibouwQMS_Dev;User Id=UnibouwQMS;Password=Un!b0uwQMS;TrustServerCertificate=True;");
@@ -127,10 +129,10 @@ public partial class UnibouwDbContext : DbContext
             entity.Property(e => e.Number).HasMaxLength(50);
             entity.Property(e => e.WorkitemParentId).HasColumnName("WorkitemParent_ID");
 
-            /*entity.HasOne(d => d.Category).WithMany(p => p.WorkItems)
+            entity.HasOne(d => d.Category).WithMany(p => p.WorkItems)
                 .HasForeignKey(d => d.CategoryId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK_WorkItems_Category");*/
+                .HasConstraintName("FK_WorkItems_Category");
         });
 
         modelBuilder.Entity<WorkItemCategoryType>(entity =>
@@ -143,6 +145,30 @@ public partial class UnibouwDbContext : DbContext
                 .ValueGeneratedNever()
                 .HasColumnName("CategoryID");
             entity.Property(e => e.CategoryName).HasMaxLength(255);
+        });
+
+        modelBuilder.Entity<WorkItemsDwh>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("PK__WorkItem__3214EC2778835325");
+
+            entity.ToTable("WorkItemsDWH");
+
+            entity.Property(e => e.Id)
+                .ValueGeneratedNever()
+                .HasColumnName("ID");
+            entity.Property(e => e.CreatedAt)
+                .HasPrecision(0)
+                .HasColumnName("created_at");
+            entity.Property(e => e.DeletedAt)
+                .HasPrecision(0)
+                .HasColumnName("deleted_at");
+            entity.Property(e => e.Name).HasMaxLength(255);
+            entity.Property(e => e.Number).HasMaxLength(255);
+            entity.Property(e => e.Type).HasMaxLength(255);
+            entity.Property(e => e.UpdatedAt)
+                .HasPrecision(0)
+                .HasColumnName("updated_at");
+            entity.Property(e => e.WorkItemParent_ID).HasColumnName("WorkItemParent_ID");
         });
 
         OnModelCreatingPartial(modelBuilder);
