@@ -29,7 +29,7 @@ public partial class Subcontractor
 
     public string? BillingAddress { get; set; }
 
-    public string? RegisteredDate { get; set; }
+    public DateTime? RegisteredDate { get; set; }
 
     public Guid? AttachmentsId { get; set; }
 
