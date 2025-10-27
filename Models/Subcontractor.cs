@@ -29,11 +29,11 @@ public partial class Subcontractor
 
     public string? BillingAddress { get; set; }
 
-    public string? RegisteredDate { get; set; }
+    public DateTime? RegisteredDate { get; set; }
 
     public Guid? AttachmentsId { get; set; }
 
-    public Guid? WorkItemsId { get; set; }
+    public string? WorkItemsId { get; set; }
 
     public bool? IsActive { get; set; }
 
@@ -51,7 +51,9 @@ public partial class Subcontractor
 
     public string? DeletedBy { get; set; }
 
+    public string? Category { get; set; }
+
     public virtual SubcontractorAttachmentsMapping? Attachments { get; set; }
 
-    public virtual SubcontractorWorkItemMapping? WorkItems { get; set; }
+    public virtual ICollection<SubcontractorWorkItemMapping> SubcontractorWorkItemMappings { get; set; } = new List<SubcontractorWorkItemMapping>();
 }

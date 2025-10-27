@@ -6,5 +6,9 @@ namespace UnibouwAPI.Repositories.Interfaces
     {
         Task<IEnumerable<Subcontractor>> GetAllAsync();
         Task<Subcontractor?> GetByIdAsync(Guid id);
+        Task<int> UpdateIsActiveAsync(Guid id, bool isActive, string modifiedBy);
+        Task<int> CreateAsync(Subcontractor subcontractor);
+
+
     }
 }

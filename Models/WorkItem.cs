@@ -37,7 +37,5 @@ public partial class WorkItem
 
     public virtual WorkItemCategoryType Category { get; set; } = null!;
 
-    public virtual ICollection<SubcontractorWorkItemMapping> SubcontractorWorkItemMappingCategories { get; set; } = new List<SubcontractorWorkItemMapping>();
-
-    public virtual ICollection<SubcontractorWorkItemMapping> SubcontractorWorkItemMappingWorkItems { get; set; } = new List<SubcontractorWorkItemMapping>();
+    public virtual ICollection<SubcontractorWorkItemMapping> SubcontractorWorkItemMappings { get; set; } = new List<SubcontractorWorkItemMapping>();
 }

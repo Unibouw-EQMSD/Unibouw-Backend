@@ -11,9 +11,11 @@ public partial class SubcontractorWorkItemMapping
 
     public Guid? CategoryId { get; set; }
 
-    public virtual WorkItem? Category { get; set; }
+    public Guid? SubcontractorId { get; set; }
 
-    public virtual ICollection<Subcontractor> Subcontractors { get; set; } = new List<Subcontractor>();
+    public virtual WorkItemCategoryType? Category { get; set; }
+
+    public virtual Subcontractor? Subcontractor { get; set; }
 
     public virtual WorkItem? WorkItem { get; set; }
 }
