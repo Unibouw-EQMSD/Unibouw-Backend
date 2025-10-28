@@ -5,15 +5,10 @@ namespace UnibouwAPI.Models;
 
 public partial class SubcontractorWorkItemMapping
 {
-    public Guid Id { get; set; }
+    public Guid SubcontractorID { get; set; }
+    public Guid WorkItemID { get; set; }
 
-    public Guid? WorkItemId { get; set; }
-
-    public Guid? CategoryId { get; set; }
-
-    public virtual WorkItem? Category { get; set; }
-
-    public virtual ICollection<Subcontractor> Subcontractors { get; set; } = new List<Subcontractor>();
-
-    public virtual WorkItem? WorkItem { get; set; }
+    // Navigation
+    public Subcontractor? Subcontractor { get; set; }
+    public WorkItem? WorkItem { get; set; }
 }

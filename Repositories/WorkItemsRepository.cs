@@ -22,49 +22,39 @@ namespace UnibouwAPI.Repositories
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
-        public async Task<IEnumerable<WorkItem>> GetAllAsync()
+        public async Task<IEnumerable<WorkItem>> GetAllWorkItems()
         {
-            return await _connection.QueryAsync<WorkItem>("SELECT * FROM WorkItems WHERE isDeleted=0");
+            var query = @"
+        SELECT 
+            w.*, 
+            c.CategoryName
+        FROM WorkItems w
+        LEFT JOIN WorkItemCategoryTypes c ON w.CategoryID = c.CategoryID
+        WHERE w.IsDeleted = 0";
+
+            return await _connection.QueryAsync<WorkItem>(query);
+            //return await _connection.QueryAsync<WorkItem>("SELECT * FROM WorkItems WHERE isDeleted=0");
         }
 
-        public async Task<WorkItem?> GetByIdAsync(Guid id)
+        public async Task<WorkItem?> GetWorkItemById(Guid id)
         {
-            return await _connection.QueryFirstOrDefaultAsync<WorkItem>("SELECT * FROM WorkItems WHERE Id = @Id AND isDeleted=0", new { Id = id });
+            var query = @"
+        SELECT 
+            w.*, 
+            c.CategoryName
+        FROM WorkItems w
+        LEFT JOIN WorkItemCategoryTypes c ON w.CategoryID = c.CategoryID
+        WHERE w.WorkItemID = @Id AND w.IsDeleted = 0";
+
+            return await _connection.QueryFirstOrDefaultAsync<WorkItem>(query, new { Id = id });
+            // return await _connection.QueryFirstOrDefaultAsync<WorkItem>("SELECT * FROM WorkItems WHERE WorkItemID = @Id AND isDeleted=0", new { Id = id });
         }
 
-        public async Task<int> CreateAsync(WorkItem workItem)
-        {
-            var sql = @"
-            INSERT INTO WorkItems 
-            (ID, ERP_ID, CategoryID, Number, Name, WorkitemParent_ID, IsActive, CreatedOn, CreatedBy) 
-            VALUES 
-            (@Id, @ErpId, @CategoryId, @Number, @Name, @WorkitemParentId, @IsActive, @CreatedOn, @CreatedBy)";
-           
-            return await _connection.ExecuteAsync(sql, workItem);
-        }
-
-        public async Task<int> UpdateAsync(WorkItem workItem)
-        {
-            
-            var sql = @"
-            UPDATE WorkItems SET
-                ERP_ID = @ErpId,
-                CategoryID = @CategoryId,
-                Number = @Number,
-                Name = @Name,
-                WorkitemParent_ID = @WorkitemParentId,
-                ModifiedOn = @ModifiedOn,
-                ModifiedBy = @ModifiedBy
-            WHERE ID = @Id";
-            workItem.ModifiedOn = DateTime.UtcNow;
-            return await _connection.ExecuteAsync(sql, workItem);
-        }
-
-        public async Task<int> UpdateIsActiveAsync(Guid id, bool isActive, string modifiedBy)
+        public async Task<int> UpdateWorkItemIsActive(Guid id, bool isActive, string modifiedBy)
         {
             // Check if WorkItem is non-deleted WorkItem
             var workItem = await _connection.QueryFirstOrDefaultAsync<WorkItem>(
-                "SELECT * FROM WorkItems WHERE Id = @Id AND IsDeleted = 0",
+                "SELECT * FROM WorkItems WHERE WorkItemID = @Id AND IsDeleted = 0",
                 new { Id = id }
             );
 
@@ -77,7 +67,7 @@ namespace UnibouwAPI.Repositories
             IsActive = @IsActive,
             ModifiedOn = @ModifiedOn,
             ModifiedBy = @ModifiedBy
-        WHERE ID = @Id";
+        WHERE WorkItemID = @Id";
 
             var parameters = new
             {
@@ -90,11 +80,11 @@ namespace UnibouwAPI.Repositories
             return await _connection.ExecuteAsync(query, parameters);
         }
 
-        public async Task<int> UpdateDescriptionAsync(Guid id, string description, string modifiedBy)
+        public async Task<int> UpdateWorkItemDescription(Guid id, string description, string modifiedBy)
         {
-            // Check if WorkItem is active and non-deleted WorkItem
+            // Ensure WorkItem exists, active, and not deleted
             var workItem = await _connection.QueryFirstOrDefaultAsync<WorkItem>(
-                "SELECT * FROM WorkItems WHERE Id = @Id AND IsActive = 1 AND IsDeleted = 0",
+                "SELECT * FROM WorkItems WHERE WorkItemID = @Id AND IsActive = 1 AND IsDeleted = 0",
                 new { Id = id }
             );
 
@@ -106,7 +96,7 @@ namespace UnibouwAPI.Repositories
                   SET Description = @Description,
                       ModifiedBy = @ModifiedBy,
                       ModifiedOn = GETDATE()
-                  WHERE Id = @Id";
+                  WHERE WorkItemID = @Id";
 
             var parameters = new
             {
@@ -119,11 +109,6 @@ namespace UnibouwAPI.Repositories
             return await _connection.ExecuteAsync(query, parameters);
         }
 
-        public async Task<int> DeleteAsync(Guid id)
-        {
-            var sql = "UPDATE WorkItems SET IsActive = 0, DeletedOn = @DeletedOn WHERE ID = @Id";
-            return await _connection.ExecuteAsync(sql, new { Id = id, DeletedOn = DateTime.UtcNow });
-        }
 
     }
 }

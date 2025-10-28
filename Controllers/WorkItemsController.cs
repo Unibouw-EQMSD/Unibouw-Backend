@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using UnibouwAPI.Models;
 using System;
 using System.Threading.Tasks;
+using UnibouwAPI.Repositories.Interfaces;
 
 namespace UnibouwAPI.Controllers
 {
@@ -11,21 +12,23 @@ namespace UnibouwAPI.Controllers
     public class WorkItemsController : ControllerBase
     {
         private readonly IWorkItems _repository;
+        private readonly ICommon _repositoryCommon;
         private readonly ILogger<WorkItemsController> _logger;
 
-        public WorkItemsController(IWorkItems repository, ILogger<WorkItemsController> logger)
+        public WorkItemsController(IWorkItems repository,ICommon repositoryCommon, ILogger<WorkItemsController> logger)
         {
             _repository = repository;
+            _repositoryCommon = repositoryCommon;
             _logger = logger;
         }
 
         [HttpGet]
         [Authorize]
-        public async Task<IActionResult> GetAll()
+        public async Task<IActionResult> GetAllWorkItems()
         {
             try
             {
-                var items = await _repository.GetAllAsync();
+                var items = await _repository.GetAllWorkItems();
 
                 if (items == null || !items.Any())
                 {              
@@ -50,11 +53,11 @@ namespace UnibouwAPI.Controllers
 
         [HttpGet("{id}")]
         [Authorize]
-        public async Task<IActionResult> GetById(Guid id)
+        public async Task<IActionResult> GetWorkItemById(Guid id)
         {
             try
             {
-                var item = await _repository.GetByIdAsync(id);
+                var item = await _repository.GetWorkItemById(id);
 
                 if (item == null)
                 {
@@ -86,10 +89,10 @@ namespace UnibouwAPI.Controllers
                 if (categoryId == Guid.Empty)
                     return BadRequest(new { message = "Invalid category ID." });
 
-                var items = await _repository.GetAllAsync();
+                var items = await _repository.GetAllWorkItems();
 
                 // Filter by category
-                var filteredItems = items.Where(w => w.CategoryId == categoryId).ToList();
+                var filteredItems = items.Where(w => w.CategoryID == categoryId).ToList();
 
                 if (!filteredItems.Any())
                 {
@@ -114,9 +117,9 @@ namespace UnibouwAPI.Controllers
         }
     
 
-    [HttpPut("{id}/{isActive}")]
+        [HttpPut("{id}/{isActive}")]
         [Authorize(Roles = "Admin")]
-        public async Task<IActionResult> UpdateIsActive(Guid id, bool isActive)
+        public async Task<IActionResult> UpdateWorkItemIsActive(Guid id, bool isActive)
         {
             try
             {
@@ -131,7 +134,7 @@ namespace UnibouwAPI.Controllers
                     return Unauthorized(new { message = "User information not found in token." });
 
                 // Call the repository method directly
-                var result = await _repository.UpdateIsActiveAsync(id, isActive, modifiedBy);
+                var result = await _repository.UpdateWorkItemIsActive(id, isActive, modifiedBy);
 
                 // Check result and return response
                 if (result == 0)
@@ -148,7 +151,7 @@ namespace UnibouwAPI.Controllers
 
         [HttpPut("{id}/description")]
         [Authorize]
-        public async Task<IActionResult> UpdateDescription(Guid id, [FromBody] string description)
+        public async Task<IActionResult> UpdateWorkItemDescription(Guid id, [FromBody] string description)
         {
             try
             {
@@ -164,7 +167,7 @@ namespace UnibouwAPI.Controllers
                 if (string.IsNullOrWhiteSpace(description))
                     return BadRequest("Description cannot be empty.");
 
-                var result = await _repository.UpdateDescriptionAsync(id, description, modifiedBy);
+                var result = await _repository.UpdateWorkItemDescription(id, description, modifiedBy);
 
                 if(result == 0)
                  return NotFound(new { message = "This WorkItem is not active or does not exist." });
