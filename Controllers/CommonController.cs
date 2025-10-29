@@ -163,7 +163,7 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpGet("subcontractorattachmentmapping/{id}")]
-        [Authorize]
+        [Authorize] 
         public async Task<IActionResult> GetSubcontractorAttachmentMappingById(Guid id)
         {
             try

@@ -28,5 +28,5 @@ public partial class Subcontractor
     public bool IsDeleted { get; set; }
 
     // Navigation
-    public Person? Person { get; set; }
+    public string? PersonName { get; set; }
 }

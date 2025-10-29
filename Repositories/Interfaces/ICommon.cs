@@ -11,10 +11,10 @@ namespace UnibouwAPI.Repositories.Interfaces
         Task<Person?> GetPersonById(Guid id);
 
         Task<IEnumerable<SubcontractorWorkItemMapping>> GetAllSubcontractorWorkItemMapping();
-        Task<SubcontractorWorkItemMapping?> GetSubcontractorWorkItemMappingById(Guid id);
+        Task<List<SubcontractorWorkItemMapping?>> GetSubcontractorWorkItemMappingById(Guid id);
 
         Task<IEnumerable<SubcontractorAttachmentMapping>> GetAllSubcontractorAttachmentMapping();
-        Task<SubcontractorAttachmentMapping?> GetSubcontractorAttachmentMappingById(Guid id);
+        Task<List<SubcontractorAttachmentMapping?>> GetSubcontractorAttachmentMappingById(Guid id);
 
         Task<IEnumerable<Customer>> GetAllCustomer();
         Task<Customer?> GetCustomerById(Guid id);

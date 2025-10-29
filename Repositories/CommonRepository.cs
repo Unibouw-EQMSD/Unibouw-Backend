@@ -48,30 +48,62 @@ namespace UnibouwAPI.Repositories
         //------ SubcontractorWorkItemMapping
         public async Task<IEnumerable<SubcontractorWorkItemMapping>> GetAllSubcontractorWorkItemMapping()
         {
-            return await _connection.QueryAsync<SubcontractorWorkItemMapping>(
-                "SELECT * FROM SubcontractorWorkItemsMapping");
+            var query = @"
+                    SELECT 
+                        m.*, 
+                        s.Name AS SubcontractorName,
+                        w.Name AS WorkItemName
+                    FROM SubcontractorWorkItemsMapping m
+                    LEFT JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
+                    LEFT JOIN Subcontractors s ON m.SubcontractorID = s.SubcontractorID;
+                ";
+
+            return await _connection.QueryAsync<SubcontractorWorkItemMapping>(query);
         }
 
-        public async Task<SubcontractorWorkItemMapping?> GetSubcontractorWorkItemMappingById(Guid id)
+        public async Task<List<SubcontractorWorkItemMapping?>> GetSubcontractorWorkItemMappingById(Guid id)
         {
-            return await _connection.QueryFirstOrDefaultAsync<SubcontractorWorkItemMapping>(
-                "SELECT * FROM SubcontractorWorkItemsMapping WHERE SubcontractorWorkItemID = @Id",
-                new { Id = id });
+            var query = @"
+            SELECT 
+                m.*, 
+                s.Name AS SubcontractorName,
+                w.Name AS WorkItemName
+            FROM SubcontractorWorkItemsMapping m
+            LEFT JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
+            LEFT JOIN Subcontractors s ON m.SubcontractorID = s.SubcontractorID
+            WHERE m.SubcontractorID = @Id";
+
+            var result = await _connection.QueryAsync<SubcontractorWorkItemMapping>(query, new { Id = id });
+            return result.ToList();
         }
 
         //------ SubcontractorAttachmentMapping
         public async Task<IEnumerable<SubcontractorAttachmentMapping>> GetAllSubcontractorAttachmentMapping()
         {
-            return await _connection.QueryAsync<SubcontractorAttachmentMapping>(
-                "SELECT * FROM SubcontractorAttachmentsMapping");
+            var query = @"
+            SELECT 
+                m.*, 
+                s.Name AS SubcontractorName
+            FROM SubcontractorAttachmentsMapping m
+            LEFT JOIN Subcontractors s ON m.SubcontractorID = s.SubcontractorID";
+
+            return await _connection.QueryAsync<SubcontractorAttachmentMapping>(query);
         }
 
-        public async Task<SubcontractorAttachmentMapping?> GetSubcontractorAttachmentMappingById(Guid id)
+        public async Task<List<SubcontractorAttachmentMapping>> GetSubcontractorAttachmentMappingById(Guid id)
         {
-            return await _connection.QueryFirstOrDefaultAsync<SubcontractorAttachmentMapping>(
-                "SELECT * FROM SubcontractorAttachmentsMapping WHERE ID = @Id",
-                new { Id = id });
+            var query = @"
+            SELECT 
+                m.*, 
+                s.Name AS SubcontractorName
+            FROM SubcontractorAttachmentsMapping m
+            LEFT JOIN Subcontractors s ON m.SubcontractorID = s.SubcontractorID
+            WHERE m.SubcontractorID = @Id";
+
+            var result = await _connection.QueryAsync<SubcontractorAttachmentMapping>(query, new { Id = id });
+            return result.ToList();
         }
+
 
         //------ Customer
         public async Task<IEnumerable<Customer>> GetAllCustomer()
@@ -128,5 +160,7 @@ namespace UnibouwAPI.Repositories
                 "SELECT * FROM RfqResponseStatuses WHERE RfqResponseStatusID = @Id",
                 new { Id = id });
         }
+
+
     }
 }

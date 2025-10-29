@@ -13,5 +13,5 @@ public partial class SubcontractorAttachmentMapping
     public string? UploadedBy { get; set; }
 
     // Navigation
-    public Subcontractor? Subcontractor { get; set; }
+    public string? SubcontractorName { get; set; }
 }

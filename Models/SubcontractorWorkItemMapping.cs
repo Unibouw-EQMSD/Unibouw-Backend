@@ -9,6 +9,6 @@ public partial class SubcontractorWorkItemMapping
     public Guid WorkItemID { get; set; }
 
     // Navigation
-    public Subcontractor? Subcontractor { get; set; }
-    public WorkItem? WorkItem { get; set; }
+    public string? SubcontractorName { get; set; }
+    public string? WorkItemName { get; set; }
 }

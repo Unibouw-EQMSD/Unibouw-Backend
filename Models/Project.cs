@@ -25,8 +25,9 @@
         public bool IsDeleted { get; set; }
 
         // Navigation
-        public Customer? Customer { get; set; }
-        public WorkPlanner? WorkPlanner { get; set; }
-        public ProjectManager? ProjectManager { get; set; }
+        public string? CustomerName { get; set; }
+        public string? WorkPlannerName { get; set; }
+        public string? ProjectManagerName { get; set; }
+        public string? PersonName { get; set; }
     }
 }

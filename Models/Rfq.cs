@@ -21,8 +21,8 @@
         public bool IsDeleted { get; set; }
 
         // Navigation
-        public Customer? Customer { get; set; }
-        public Project? Project { get; set; }
-        public RfqResponseStatus? RfqResponseStatus { get; set; }
+        public string? CustomerName { get; set; }
+        public string? ProjectName { get; set; }
+        public string? RfqResponseStatusName { get; set; }
     }
 }

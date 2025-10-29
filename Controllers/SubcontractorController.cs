@@ -9,10 +9,10 @@ namespace UnibouwAPI.Controllers
     [Route("api/[controller]")]
     public class SubcontractorController : ControllerBase
     {
-        private readonly ISubcontractor _repository;
+        private readonly ISubcontractors _repository;
         private readonly ILogger<SubcontractorController> _logger;
 
-        public SubcontractorController(ISubcontractor repository, ILogger<SubcontractorController> logger)
+        public SubcontractorController(ISubcontractors repository, ILogger<SubcontractorController> logger)
         {
             _repository = repository;
             _logger = logger;
@@ -20,11 +20,11 @@ namespace UnibouwAPI.Controllers
 
         [HttpGet]
         [Authorize]
-        public async Task<IActionResult> GetAll()
+        public async Task<IActionResult> GetAllSubcontractor()
         {
             try
             {
-                var items = await _repository.GetAllAsync();
+                var items = await _repository.GetAllSubcontractor();
 
                 if (items == null || !items.Any())
                 {
@@ -49,11 +49,11 @@ namespace UnibouwAPI.Controllers
 
         [HttpGet("{id}")]
         [Authorize]
-        public async Task<IActionResult> GetById(Guid id)
+        public async Task<IActionResult> GetSubcontractorById(Guid id)
         {
             try
             {
-                var item = await _repository.GetByIdAsync(id);
+                var item = await _repository.GetSubcontractorById(id);
 
                 if (item == null)
                 {
@@ -75,5 +75,39 @@ namespace UnibouwAPI.Controllers
                 return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
             }
         }
+
+
+        [HttpPut("{id}/{isActive}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> UpdateSubcontractorIsActive(Guid id, bool isActive)
+        {
+            try
+            {
+                // Validate input parameters
+                if (id == Guid.Empty)
+                    return BadRequest(new { message = "Invalid id." });
+
+                // Get the current logged-in user from claims
+                var modifiedBy = User?.Identity?.Name; // usually the username or email from the token
+
+                if (string.IsNullOrWhiteSpace(modifiedBy))
+                    return Unauthorized(new { message = "User information not found in token." });
+
+                // Call the repository method directly
+                var result = await _repository.UpdateSubcontractorIsActive(id, isActive, modifiedBy);
+
+                // Check result and return response
+                if (result == 0)
+                    return NotFound(new { message = "Subcontractor not found." });
+
+                return Ok(new { message = "Status updated successfully.", result });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "An error occurred while fetching upadating IsActive status for ID: {Id}.", id);
+                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
+            }
+        }
+
     }
 }
