@@ -27,12 +27,12 @@ namespace UnibouwAPI.Repositories
         SELECT 
             r.*, 
             c.CustomerName,
-            p.ProjectName,
+            p.Name AS ProjectName,
             rs.RfqResponseStatusName               
         FROM Rfq r
         LEFT JOIN Customers c ON r.CustomerID = c.CustomerID
         LEFT JOIN Projects p ON r.ProjectID = p.ProjectID
-        LEFT JOIN RfqResponseStatus rs ON r.RfqResponseStatusID = rs.RfqResponseStatusID
+        LEFT JOIN RfqResponseStatus rs ON r.RfqResponseID = rs.RfqResponseID
         WHERE r.IsDeleted = 0";
 
             return await _connection.QueryAsync<Rfq>(query);
@@ -44,12 +44,12 @@ namespace UnibouwAPI.Repositories
         SELECT 
             r.*, 
             c.CustomerName,
-            p.ProjectName,
+            p.Name AS ProjectName,
             rs.RfqResponseStatusName               
         FROM Rfq r
         LEFT JOIN Customers c ON r.CustomerID = c.CustomerID
         LEFT JOIN Projects p ON r.ProjectID = p.ProjectID
-        LEFT JOIN RfqResponseStatus rs ON r.RfqResponseStatusID = rs.RfqResponseStatusID
+        LEFT JOIN RfqResponseStatus rs ON r.RfqResponseID = rs.RfqResponseID
         WHERE r.RfqID = @Id AND r.IsDeleted = 0";
 
             return await _connection.QueryFirstOrDefaultAsync<Rfq>(query, new { Id = id });

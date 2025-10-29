@@ -33,7 +33,7 @@ namespace UnibouwAPI.Repositories
                 FROM Projects p
                 LEFT JOIN Customers c ON p.CustomerID = c.CustomerID
                 LEFT JOIN WorkPlanners wp ON p.WorkPlannerID = wp.WorkPlannerID
-                LEFT JOIN ProjectManagers pm ON p.ProjectMangerID = pm.ProjectMangerID
+                LEFT JOIN ProjectManagers pm ON p.ProjectManagerID = pm.ProjectManagerID
                 LEFT JOIN Persons per ON p.PersonID = per.PersonID
                 WHERE p.IsDeleted = 0";
 
@@ -52,7 +52,7 @@ namespace UnibouwAPI.Repositories
                 FROM Projects p
                 LEFT JOIN Customers c ON p.CustomerID = c.CustomerID
                 LEFT JOIN WorkPlanners wp ON p.WorkPlannerID = wp.WorkPlannerID
-                LEFT JOIN ProjectManagers pm ON p.ProjectMangerID = pm.ProjectMangerID
+                LEFT JOIN ProjectManagers pm ON p.ProjectManagerID = pm.ProjectManagerID
                 LEFT JOIN Persons per ON p.PersonID = per.PersonID
                 WHERE p.ProjectID = @Id AND p.IsDeleted = 0";
 

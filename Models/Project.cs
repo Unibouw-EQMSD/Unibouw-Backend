@@ -9,7 +9,7 @@
         public string? Name { get; set; }
         public Guid? CustomerID { get; set; }
         public Guid? WorkPlannerID { get; set; }
-        public Guid? ProjectMangerID { get; set; }
+        public Guid? ProjectManagerID { get; set; }
         public Guid? PersonID { get; set; }
         public DateTime? StartDate { get; set; }
         public DateTime? CompletionDate { get; set; }
