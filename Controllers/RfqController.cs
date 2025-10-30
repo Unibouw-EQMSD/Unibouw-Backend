@@ -79,5 +79,36 @@ namespace UnibouwAPI.Controllers
         }
 
 
+        [HttpGet("byProject/{projectId}")]
+        [Authorize]
+        public async Task<IActionResult> GetRfqByProjectId(Guid projectId)
+        {
+            try
+            {
+                var item = await _repository.GetRfqByProjectId(projectId);
+
+                if (item == null)
+                {
+                    return NotFound(new
+                    {
+                        message = $"No RFQ found for Project ID: {projectId}.",
+                        data = (Rfq?)null
+                    });
+                }
+
+                return Ok(new
+                {
+                    data = item
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "An error occurred while fetching RFQ for Project ID: {ProjectId}.", projectId);
+                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
+            }
+        }
+
+
+
     }
 }

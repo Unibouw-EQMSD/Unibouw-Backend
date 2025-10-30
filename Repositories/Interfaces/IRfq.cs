@@ -6,5 +6,6 @@ namespace UnibouwAPI.Repositories.Interfaces
     {
         Task<IEnumerable<Rfq>> GetAllRfq();
         Task<Rfq?> GetRfqById(Guid id);
+        Task<Rfq?> GetRfqByProjectId(Guid projectId);
     }
 }

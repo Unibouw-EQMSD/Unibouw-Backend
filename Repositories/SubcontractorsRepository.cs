@@ -82,25 +82,67 @@ namespace UnibouwAPI.Repositories
             return await _connection.ExecuteAsync(query, parameters);
         }
 
-        public async Task<bool> CreateSubcontractor(Subcontractor subcontractor)
+        public async Task<bool> CreateSubcontractorWithMappings(Subcontractor subcontractor)
         {
-            var query = @"
-                INSERT INTO Subcontractors 
-                (SubcontractorID, ERP_ID, Name, Rating, EmailID, PhoneNumber1, PhoneNumber2, Location, 
-                 Country, OfficeAdress, BillingAddress, RegisteredDate, PersonID, IsActive, 
-                 CreatedOn, CreatedBy, IsDeleted)
-                VALUES 
-                (@SubcontractorID, @ERP_ID, @Name, @Rating, @EmailID, @PhoneNumber1, @PhoneNumber2, @Location, 
-                 @Country, @OfficeAdress, @BillingAddress, @RegisteredDate, @PersonID, @IsActive, 
-                 @CreatedOn, @CreatedBy, @IsDeleted)";
+            using (var connection = new SqlConnection(_connectionString))
+            {
+                await connection.OpenAsync();
+                using (var transaction = connection.BeginTransaction())
+                {
+                    try
+                    {
+                        // ✅ Step 1: Generate new ID if not already present
+                        subcontractor.SubcontractorID = Guid.NewGuid();
 
-            subcontractor.SubcontractorID = Guid.NewGuid();
-            subcontractor.CreatedOn = DateTime.UtcNow;
-            subcontractor.IsDeleted = false;
+                        subcontractor.CreatedOn = DateTime.UtcNow;
+                        subcontractor.IsActive ??= true;
+                        subcontractor.IsDeleted = false;
 
-            var rows = await _connection.ExecuteAsync(query, subcontractor);
-            return rows > 0;
+                        // ✅ Step 2: Insert subcontractor
+                        string insertSubcontractorQuery = @"
+                            INSERT INTO Subcontractors 
+                            (SubcontractorID, ERP_ID, Name, Rating, EmailID, PhoneNumber1, PhoneNumber2, 
+                             Location, Country, OfficeAdress, BillingAddress, RegisteredDate, PersonID, 
+                             IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
+                            VALUES 
+                            (@SubcontractorID, @ERP_ID, @Name, @Rating, @EmailID, @PhoneNumber1, @PhoneNumber2, 
+                             @Location, @Country, @OfficeAdress, @BillingAddress, @RegisteredDate, @PersonID, 
+                             @IsActive, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
+                        ";
+
+                        await connection.ExecuteAsync(insertSubcontractorQuery, subcontractor, transaction);
+
+                        // ✅ Step 3: Insert WorkItem Mappings if provided
+                        if (subcontractor.WorkItemIDs != null && subcontractor.WorkItemIDs.Any())
+                        {
+                            string insertMappingQuery = @"
+                                INSERT INTO SubcontractorWorkItemsMapping (SubcontractorID, WorkItemID)
+                                VALUES (@SubcontractorID, @WorkItemID);
+                            ";
+
+                            foreach (var workItemId in subcontractor.WorkItemIDs)
+                            {
+                                await connection.ExecuteAsync(insertMappingQuery, new
+                                {
+                                    SubcontractorID = subcontractor.SubcontractorID,
+                                    WorkItemID = workItemId
+                                }, transaction);
+                            }
+                        }
+
+                        // ✅ Step 4: Commit
+                        transaction.Commit();
+                        return true;
+                    }
+                    catch (Exception)
+                    {
+                        transaction.Rollback();
+                        throw;
+                    }
+                }
+            }
         }
+
 
     }
 }
