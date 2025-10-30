@@ -39,4 +39,6 @@ public partial class Subcontractor
     //[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     [SwaggerSchema(ReadOnly = true)]
     public string? PersonName { get; set; }
+
+    public List<Guid>? WorkItemIDs { get; set; }
 }

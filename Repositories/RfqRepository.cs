@@ -55,5 +55,24 @@ namespace UnibouwAPI.Repositories
             return await _connection.QueryFirstOrDefaultAsync<Rfq>(query, new { Id = id });
         }
 
+        public async Task<Rfq?> GetRfqByProjectId(Guid projectId)
+        {
+            var query = @"
+                    SELECT 
+                        r.*, 
+                        c.CustomerName,
+                        p.Name AS ProjectName,
+                        rs.RfqResponseStatusName               
+                    FROM Rfq r
+                    LEFT JOIN Customers c ON r.CustomerID = c.CustomerID
+                    LEFT JOIN Projects p ON r.ProjectID = p.ProjectID
+                    LEFT JOIN RfqResponseStatus rs ON r.RfqResponseID = rs.RfqResponseID
+                    WHERE p.ProjectID = @projectId AND p.IsDeleted = 0";
+
+            return await _connection.QueryFirstOrDefaultAsync<Rfq>(query, new { projectId });
+        }
+
+
+
     }
 }

@@ -109,21 +109,38 @@ namespace UnibouwAPI.Controllers
             }
         }
 
-        // ✅ POST: api/Subcontractors
-        [HttpPost]
-        public async Task<IActionResult> CreateSubcontractor([FromBody] Subcontractor subcontractor)
+        [HttpPost("createSubcontractorWithMappings")]
+        public async Task<IActionResult> CreateSubcontractorWithMappings([FromBody] Subcontractor subcontractor)
         {
             if (subcontractor == null)
                 return BadRequest("Invalid subcontractor data.");
 
-            subcontractor.CreatedBy ??= "System"; // optional fallback
+            try
+            {
+                var success = await _repository.CreateSubcontractorWithMappings(subcontractor);
 
-            var created = await _repository.CreateSubcontractor(subcontractor);
-
-            if (!created)
-                return StatusCode(500, "Failed to create subcontractor.");
-
-            return Ok(new { message = "Subcontractor created successfully", subcontractor.SubcontractorID });
+                if (success)
+                {
+                    return Ok(new
+                    {
+                        Message = "Subcontractor and mappings created successfully.",
+                        SubcontractorID = subcontractor.SubcontractorID
+                    });
+                }
+                else
+                {
+                    return StatusCode(500, "Something went wrong while saving data.");
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new
+                {
+                    Message = "An unexpected error occurred while processing the request.",
+                    Error = ex.Message
+                });
+            }
         }
+
     }
 }
