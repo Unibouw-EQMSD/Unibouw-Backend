@@ -11,9 +11,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 
 //Register Unibouw Repository
+builder.Services.AddScoped<ICommon, CommonRepository>();
 builder.Services.AddScoped<IWorkItems, WorkItemsRepository>();
-builder.Services.AddScoped<IWorkItemCategoryType, WorkItemCategoryTypeRepository>();
-builder.Services.AddScoped<ISubcontractor, SubcontractorRepository>();
+builder.Services.AddScoped<ISubcontractors, SubcontractorsRepository>();
+builder.Services.AddScoped<IProjects, ProjectsRepository>();
+builder.Services.AddScoped<IRfq, RfqRepository>();
 
 // Configure Azure AD authentication with custom Unauthorized/Forbidden responses
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
