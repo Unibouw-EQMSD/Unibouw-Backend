@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 
@@ -140,6 +141,43 @@ namespace UnibouwAPI.Controllers
                 return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
             }
         }
+
+        // POST: api/subcontractors/workitemmapping
+        [HttpPost("workitemmapping")]
+        public async Task<IActionResult> CreateWorkItemMapping([FromBody] SubcontractorWorkItemMapping mapping)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            try
+            {
+                var success = await _repositoryCommon.CreateSubcontractorWorkItemMapping(mapping);
+
+                if (!success)
+                    return StatusCode(500, "Failed to create subcontractor-workitem mapping.");
+
+                return Ok(new { message = "Mapping created successfully." });
+            }
+            catch (SqlException ex)
+            {
+                if (ex.Number == 2627 || ex.Number == 2601) // SQL unique constraint / PK violation
+                {
+                    return Conflict(new
+                    {
+                        message = "A mapping with the same SubcontractorID and WorkItemID already exists.",
+                        //error = ex.Message
+                    });
+                }
+
+                // For other SQL errors
+                return StatusCode(500, new { message = "Database error occurred.", error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "An unexpected error occurred.", error = ex.Message });
+            }
+        }
+
 
         //--- Subcontractor Attachment Mapping
         [HttpGet("subcontractorattachmentmapping")]

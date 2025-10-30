@@ -109,5 +109,21 @@ namespace UnibouwAPI.Controllers
             }
         }
 
+        // ✅ POST: api/Subcontractors
+        [HttpPost]
+        public async Task<IActionResult> CreateSubcontractor([FromBody] Subcontractor subcontractor)
+        {
+            if (subcontractor == null)
+                return BadRequest("Invalid subcontractor data.");
+
+            subcontractor.CreatedBy ??= "System"; // optional fallback
+
+            var created = await _repository.CreateSubcontractor(subcontractor);
+
+            if (!created)
+                return StatusCode(500, "Failed to create subcontractor.");
+
+            return Ok(new { message = "Subcontractor created successfully", subcontractor.SubcontractorID });
+        }
     }
 }

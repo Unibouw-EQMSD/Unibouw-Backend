@@ -3,6 +3,7 @@ using Microsoft.Data.SqlClient;
 using System.Data;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
 
 namespace UnibouwAPI.Repositories
 {
@@ -79,6 +80,26 @@ namespace UnibouwAPI.Repositories
             };
 
             return await _connection.ExecuteAsync(query, parameters);
+        }
+
+        public async Task<bool> CreateSubcontractor(Subcontractor subcontractor)
+        {
+            var query = @"
+                INSERT INTO Subcontractors 
+                (SubcontractorID, ERP_ID, Name, Rating, EmailID, PhoneNumber1, PhoneNumber2, Location, 
+                 Country, OfficeAdress, BillingAddress, RegisteredDate, PersonID, IsActive, 
+                 CreatedOn, CreatedBy, IsDeleted)
+                VALUES 
+                (@SubcontractorID, @ERP_ID, @Name, @Rating, @EmailID, @PhoneNumber1, @PhoneNumber2, @Location, 
+                 @Country, @OfficeAdress, @BillingAddress, @RegisteredDate, @PersonID, @IsActive, 
+                 @CreatedOn, @CreatedBy, @IsDeleted)";
+
+            subcontractor.SubcontractorID = Guid.NewGuid();
+            subcontractor.CreatedOn = DateTime.UtcNow;
+            subcontractor.IsDeleted = false;
+
+            var rows = await _connection.ExecuteAsync(query, subcontractor);
+            return rows > 0;
         }
 
     }

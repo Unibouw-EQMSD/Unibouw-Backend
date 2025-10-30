@@ -12,6 +12,7 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         Task<IEnumerable<SubcontractorWorkItemMapping>> GetAllSubcontractorWorkItemMapping();
         Task<List<SubcontractorWorkItemMapping?>> GetSubcontractorWorkItemMappingById(Guid id);
+        Task<bool> CreateSubcontractorWorkItemMapping(SubcontractorWorkItemMapping mapping);
 
         Task<IEnumerable<SubcontractorAttachmentMapping>> GetAllSubcontractorAttachmentMapping();
         Task<List<SubcontractorAttachmentMapping?>> GetSubcontractorAttachmentMappingById(Guid id);

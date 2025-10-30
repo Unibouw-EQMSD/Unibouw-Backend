@@ -77,6 +77,20 @@ namespace UnibouwAPI.Repositories
             return result.ToList();
         }
 
+        public async Task<bool> CreateSubcontractorWorkItemMapping(SubcontractorWorkItemMapping mapping)
+        {
+            var query = @"
+                INSERT INTO SubcontractorWorkItemsMapping (SubcontractorID, WorkItemID)
+                VALUES (@SubcontractorID, @WorkItemID);
+            ";
+
+            using (var connection = new SqlConnection(_connectionString))
+            {
+                var rows = await connection.ExecuteAsync(query, mapping);
+                return rows > 0;
+            }
+        }
+
         //------ SubcontractorAttachmentMapping
         public async Task<IEnumerable<SubcontractorAttachmentMapping>> GetAllSubcontractorAttachmentMapping()
         {
