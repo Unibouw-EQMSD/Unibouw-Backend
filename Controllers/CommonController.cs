@@ -220,6 +220,47 @@ namespace UnibouwAPI.Controllers
             }
         }
 
+        [HttpPost("subcontractorattachmentmapping/upload")]
+        [Authorize]
+        [RequestSizeLimit(100_000_000)] // ~100 MB
+        public async Task<IActionResult> UploadSubcontractorAttachments([FromForm] SubcontractorAttachmentUploadDto model)
+        {
+            try
+            {
+                if (model == null || model.SubcontractorID == Guid.Empty)
+                    return BadRequest("Invalid subcontractor data.");
+
+                if (model.Files == null || model.Files.Count == 0)
+                    return BadRequest("Please upload at least one file.");
+
+                var mapping = new SubcontractorAttachmentMapping
+                {
+                    SubcontractorID = model.SubcontractorID,
+                    Files = model.Files,
+                    UploadedBy = User.Identity?.Name ?? "System", // handle in backend
+                    UploadedOn = DateTime.UtcNow
+                };
+
+                var success = await _repositoryCommon.CreateSubcontractorAttachmentMappingsAsync(mapping);
+
+                if (success)
+                    return Ok(new
+                    {
+                        Message = "Files uploaded successfully.",
+                        SubcontractorID = model.SubcontractorID,
+                        FileCount = model.Files.Count
+                    });
+
+                return StatusCode(500, new { Message = "Failed to upload files." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error uploading subcontractor attachments.");
+                return StatusCode(500, new { Message = "An unexpected error occurred. Try again later." });
+            }
+        }
+
+
         //--- Customer
         [HttpGet("customer")]
         [Authorize]

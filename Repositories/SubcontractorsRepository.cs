@@ -22,20 +22,21 @@ namespace UnibouwAPI.Repositories
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
-        public async Task<IEnumerable<Subcontractor>> GetAllSubcontractor()
-        {
-            var query = @"
-        SELECT 
-            s.*, 
-            p.Name AS PersonName
-        FROM Subcontractors s
-        LEFT JOIN Persons p ON s.PersonID = p.PersonID
-        WHERE s.IsDeleted = 0";
+         public async Task<IEnumerable<Subcontractor>> GetAllSubcontractor()
+         {
+             var query = @"
+         SELECT 
+             s.*, 
+             p.Name AS PersonName
+         FROM Subcontractors s
+         LEFT JOIN Persons p ON s.PersonID = p.PersonID
+         WHERE s.IsDeleted = 0";
 
-            return await _connection.QueryAsync<Subcontractor>(query);
+             return await _connection.QueryAsync<Subcontractor>(query);
 
-            //return await _connection.QueryAsync<Subcontractor>("SELECT * FROM Subcontractors");
-        }
+             //return await _connection.QueryAsync<Subcontractor>("SELECT * FROM Subcontractors");
+         }
+ 
 
         public async Task<Subcontractor?> GetSubcontractorById(Guid id)
         {
