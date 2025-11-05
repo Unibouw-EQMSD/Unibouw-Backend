@@ -1,7 +1,9 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
-using System.Data;
+using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
 
@@ -18,8 +20,31 @@ public class MeController : ControllerBase
         _configuration = configuration;
     }
 
+    /*[AllowAnonymous]
+    [HttpGet("GetMe1")]
+    public IActionResult GetMe1()
+    {
+        try
+        {
+            return Ok(new
+            {
+                name = "Ashwini P",
+                email = "ashwini.p@flatworldsolutions.com",
+                roles = "Admin",
+                scopes = new[] { "Api.Read", "Api.Write" }
+            });
+        }
+
+        catch (Exception ex)
+        {
+            Console.WriteLine($"GetMe() failed: {ex.Message}\n{ex.StackTrace}");
+            _logger.LogError(ex, "An error occurred in GetMe");
+            return StatusCode(500, $"An unexpected error occurred: {ex.Message}");
+        }
+    }*/
+
     [HttpGet("GetMe")]
-    [Authorize] // Requires a valid JWT Bearer token
+    [Authorize]
     public IActionResult GetMe()
     {
         try
@@ -27,56 +52,76 @@ public class MeController : ControllerBase
             var user = HttpContext.User;
 
             if (user?.Identity == null || !user.Identity.IsAuthenticated)
-                return Unauthorized();
+                return Unauthorized("User is not authenticated.");
 
-            var name = (user.FindFirst("name")?.Value ?? user.FindFirst(ClaimTypes.Name)?.Value)?.TrimEnd('.');
-            var email = user.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn")?.Value;
-            var roles = user.FindFirst("http://schemas.microsoft.com/ws/2008/06/identity/claims/role")?.Value;
-            // Get all scopes from token
-            var tokenScopes = user.FindFirst("http://schemas.microsoft.com/identity/claims/scope")?.Value?
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries) ?? Array.Empty<string>();
+            // ✅ Get user name safely
+            var name = user.FindFirst("name")?.Value
+                        ?? user.FindFirst(ClaimTypes.Name)?.Value
+                        ?? user.Identity?.Name;
 
-            // Load RoleScopeMapping from configuration
-            var roleScopeMapping = _configuration.GetSection("AzureAd:RoleScopeMapping")
-                .Get<Dictionary<string, string[]>>() ?? new Dictionary<string, string[]>();
+            // ✅ Get email (or UPN)
+            var email = user.FindFirst("preferred_username")?.Value
+                        ?? user.FindFirst("upn")?.Value
+                        ?? user.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn")?.Value
+                        ?? user.FindFirst("emails")?.Value
+                        ?? user.FindFirst(ClaimTypes.Email)?.Value;
 
-            // Determine allowed scopes based on user's role
-            var allowedScopes = roles?.Split(',') // in case multiple roles
-                .SelectMany(r => roleScopeMapping.TryGetValue(r.Trim(), out var mappedScopes) ? mappedScopes : Array.Empty<string>())
-                .Distinct()
-                .Intersect(tokenScopes) // Only include scopes actually present in token
-                .ToArray() ?? Array.Empty<string>();
+            // ✅ Get first available role (single value)
+            var roles = user.FindFirst(ClaimTypes.Role)?.Value
+                        ?? user.FindFirst("roles")?.Value
+                        ?? "User"; // default fallback if role missing
 
+            // ✅ Get scopes from token
+            var scopeClaim = user.FindFirst("http://schemas.microsoft.com/identity/claims/scope")?.Value
+                             ?? user.FindFirst("scp")?.Value;
+            var tokenScopes = scopeClaim?.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                                ?? Array.Empty<string>();
+
+            // ✅ Load role-scope mapping from config
+            var roleScopeMappingSection = _configuration.GetSection("AzureAd:RoleScopeMapping");
+            var roleScopeMapping = roleScopeMappingSection.Exists()
+                ? roleScopeMappingSection.Get<Dictionary<string, string[]>>()
+                : new Dictionary<string, string[]>();
+
+            // ✅ Determine allowed scopes based on the single role
+            var allowedScopes = roleScopeMapping.TryGetValue(roles.Trim(), out var mappedScopes)
+                ? mappedScopes.Intersect(tokenScopes, StringComparer.OrdinalIgnoreCase).ToArray()
+                : Array.Empty<string>();
+
+            // ✅ Log for debugging
+            _logger.LogInformation("User fetched successfully: {Email}, Role: {Role}", email, roles);
+
+            // ✅ Final response
             return Ok(new
             {
                 name,
                 email,
                 roles,
-                //scopes = allowedScopes
+                scopes = allowedScopes
             });
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"GetMe() failed: {ex.Message}\n{ex.StackTrace}");
             _logger.LogError(ex, "An error occurred in GetMe");
-            return StatusCode(500, "An unexpected error occurred. Please contact support.");
+            return StatusCode(500, $"An unexpected error occurred: {ex.Message}");
         }
     }
 
+
     /*// Method accessible only by Admin
-    [HttpGet("TestAdminRoleMethod")]
-    [Authorize(Roles = "Admin")]
-    public IActionResult TestAdminRoleMethod()
-    {
-        return Ok("Hello Admin! You have access to this endpoint.");
-    }
+     [HttpGet("TestAdminRoleMethod")]
+     [Authorize(Roles = "Admin")]
+     public IActionResult TestAdminRoleMethod()
+     {
+         return Ok("Hello Admin! You have access to this endpoint.");
+     }
 
-    // Method accessible only by User
-    [HttpGet("TestUserRoleMethod")]
-    [Authorize(Roles = "User")]
-    public IActionResult TestUserRoleMethod()
-    {
-        return Ok("Hello User! You have access to this endpoint.");
-    }*/
-
-
+     // Method accessible only by User
+     [HttpGet("TestUserRoleMethod")]
+     [Authorize(Roles = "User")]
+     public IActionResult TestUserRoleMethod()
+     {
+         return Ok("Hello User! You have access to this endpoint.");
+     }*/
 }

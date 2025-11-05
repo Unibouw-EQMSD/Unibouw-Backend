@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Identity.Web;
 using Microsoft.OpenApi.Models;
 using UnibouwAPI.Repositories;
@@ -10,7 +11,16 @@ var builder = WebApplication.CreateBuilder(args);
 // Add controllers
 builder.Services.AddControllers();
 
-//Register Unibouw Repository
+// Configure logging
+builder.Logging.ClearProviders();
+builder.Logging.AddDebug();
+builder.Logging.AddConsole(options =>
+{
+    options.IncludeScopes = true;
+    options.TimestampFormat = "[HH:mm:ss] ";
+});
+
+// Register Repositories
 builder.Services.AddScoped<ICommon, CommonRepository>();
 builder.Services.AddScoped<IWorkItems, WorkItemsRepository>();
 builder.Services.AddScoped<ISubcontractors, SubcontractorsRepository>();
@@ -23,14 +33,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .EnableTokenAcquisitionToCallDownstreamApi()
     .AddInMemoryTokenCaches();
 
-// Customize 401 and 403 responses
 builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
 {
     options.Events = new JwtBearerEvents
     {
         OnChallenge = context =>
         {
-            context.HandleResponse(); // prevent default response
+            context.HandleResponse();
             context.Response.StatusCode = 401;
             context.Response.ContentType = "application/json";
             var result = System.Text.Json.JsonSerializer.Serialize(new
@@ -56,9 +65,7 @@ builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSch
     };
 });
 
-// Add Authorization
-//builder.Services.AddAuthorization();
-
+// Authorization policies
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("ReadPolicy", policy => policy.RequireRole("Admin", "ProjectManager"));
@@ -69,9 +76,9 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new OpenApiInfo { Title = "My API", Version = "v1" });
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Unibouw API", Version = "v1" });
 
-    // OAuth2 Definition
+    // OAuth2 definition
     c.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
     {
         Type = SecuritySchemeType.OAuth2,
@@ -97,21 +104,27 @@ builder.Services.AddSwaggerGen(c =>
             {
                 Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "oauth2" }
             },
-            new[] { $"api://{builder.Configuration["AzureAd:ClientId"]}/Api.Read", $"api://{builder.Configuration["AzureAd:ClientId"]}/Api.Write" }
+            new[] {
+                $"api://{builder.Configuration["AzureAd:ClientId"]}/Api.Read",
+                $"api://{builder.Configuration["AzureAd:ClientId"]}/Api.Write"
+            }
         }
     });
 });
 
-// CORS
-string[] allowedOrigins = builder.Environment.IsDevelopment()
-    ? new[] { "http://localhost:4200" }              // Local Angular
-    : builder.Environment.IsEnvironment("QA")
-        ? new[] { "https://qa-portal.unibouw.com" } // QA
-        : builder.Environment.IsEnvironment("UAT")
-            ? new[] { "https://uat-portal.unibouw.com" } // UAT
-            : builder.Environment.IsProduction()
-                ? new[] { "https://portal.unibouw.com" } // Production
-                : Array.Empty<string>();
+// CORS setup based on environment
+string[] allowedOrigins = builder.Environment.EnvironmentName switch
+{
+    "Development" => new[]
+    {
+        "http://localhost:4200",
+        "https://unibouwqa.flatworldinfotech.com"
+    },
+    "QA" => new[] { "https://unibouwqa.flatworldinfotech.com", "http://localhost:4200" },
+    "UAT" => new[] { "https://unibouwuat.flatworldinfotech.com" },
+    "Production" => new[] { "https://unibouw.flatworldinfotech.com" },
+    _ => Array.Empty<string>()
+};
 
 builder.Services.AddCors(options =>
 {
@@ -123,30 +136,34 @@ builder.Services.AddCors(options =>
     });
 });
 
-
 var app = builder.Build();
 
+// Enable Swagger in all environments (optional)
+app.UseSwagger();
+app.UseSwaggerUI(c =>
+{
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Unibouw API V1");
+    c.OAuthClientId(builder.Configuration["AzureAd:SwaggerClientID"]);
+    c.OAuthAppName("Unibouw API - Swagger");
+    c.OAuthUsePkce();
+});
+
+// Developer exception page in Development only
 if (app.Environment.IsDevelopment())
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "My API V1");
-        c.OAuthClientId(builder.Configuration["AzureAd:SwaggerClientID"]);
-        c.OAuthAppName("My API - Swagger");
-        c.OAuthUsePkce();
-    });
+    app.UseDeveloperExceptionPage();
 }
 
 app.UseHttpsRedirection();
 
-// Use CORS
+// CORS must come before authentication
 app.UseCors("AllowSpecificOrigins");
 
-// Important: order matters
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+Console.WriteLine($"------------ App starting in environment: {app.Environment.EnvironmentName}");
 
 app.Run();
