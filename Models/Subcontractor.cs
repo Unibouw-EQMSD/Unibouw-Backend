@@ -13,8 +13,8 @@ public partial class Subcontractor
     public string? Name { get; set; }
     public decimal? Rating { get; set; }
     public string? EmailID { get; set; }
-    public decimal? PhoneNumber1 { get; set; }
-    public decimal? PhoneNumber2 { get; set; }
+    public string? PhoneNumber1 { get; set; }
+    public string? PhoneNumber2 { get; set; }
     public string? Location { get; set; }
     public string? Country { get; set; }
     public string? OfficeAdress { get; set; }

@@ -16,6 +16,9 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         Task<IEnumerable<SubcontractorAttachmentMapping>> GetAllSubcontractorAttachmentMapping();
         Task<List<SubcontractorAttachmentMapping?>> GetSubcontractorAttachmentMappingById(Guid id);
+        // New method for multi-file upload
+        Task<bool> CreateSubcontractorAttachmentMappingsAsync(SubcontractorAttachmentMapping model);
+
 
         Task<IEnumerable<Customer>> GetAllCustomer();
         Task<Customer?> GetCustomerById(Guid id);

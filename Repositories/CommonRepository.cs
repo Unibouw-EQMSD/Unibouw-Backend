@@ -3,6 +3,9 @@ using Microsoft.Data.SqlClient;
 using System.Data;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
+using Microsoft.AspNetCore.Http;
+using System.ComponentModel.DataAnnotations.Schema;
+
 
 namespace UnibouwAPI.Repositories
 {
@@ -116,6 +119,61 @@ namespace UnibouwAPI.Repositories
 
             var result = await _connection.QueryAsync<SubcontractorAttachmentMapping>(query, new { Id = id });
             return result.ToList();
+        }
+
+        public async Task<bool> CreateSubcontractorAttachmentMappingsAsync(SubcontractorAttachmentMapping model)
+        {
+            if (model.Files == null || model.Files.Count == 0)
+                throw new ArgumentException("No files uploaded.");
+
+            string uploadRoot = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "subcontractors");
+            if (!Directory.Exists(uploadRoot))
+                Directory.CreateDirectory(uploadRoot);
+
+            using (var connection = new SqlConnection(_connectionString))
+            {
+                await connection.OpenAsync();
+
+                using (var transaction = connection.BeginTransaction())
+                {
+                    try
+                    {
+                        foreach (var file in model.Files)
+                        {
+                            string uniqueFileName = $"{Guid.NewGuid()}_{Path.GetFileName(file.FileName)}";
+                            string filePath = Path.Combine(uploadRoot, uniqueFileName);
+
+                            using (var stream = new FileStream(filePath, FileMode.Create))
+                            {
+                                await file.CopyToAsync(stream);
+                            }
+
+                            var query = @"
+                        INSERT INTO SubcontractorAttachmentsMapping
+                        (SubcontractorID, FileName, FileType, FilePath, UploadedOn, UploadedBy)
+                        VALUES (@SubcontractorID, @FileName, @FileType, @FilePath, @UploadedOn, @UploadedBy)";
+
+                            await connection.ExecuteAsync(query, new
+                            {
+                                model.SubcontractorID,
+                                FileName = file.FileName,
+                                FileType = file.ContentType,
+                                FilePath = $"/uploads/subcontractors/{uniqueFileName}",
+                                UploadedOn = DateTime.UtcNow,
+                                model.UploadedBy
+                            }, transaction);
+                        }
+
+                        transaction.Commit();
+                        return true;
+                    }
+                    catch
+                    {
+                        transaction.Rollback();
+                        throw;
+                    }
+                }
+            }
         }
 
 

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace UnibouwAPI.Models;
 
@@ -14,4 +15,7 @@ public partial class SubcontractorAttachmentMapping
 
     // Navigation
     public string? SubcontractorName { get; set; }
+    //This is for multi-file uploads (not mapped to DB)
+    [NotMapped]
+    public IFormFileCollection? Files { get; set; }
 }
