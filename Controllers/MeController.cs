@@ -94,7 +94,7 @@ public class MeController : ControllerBase
             // ✅ Final response
             return Ok(new
             {
-                name,
+                name = name = name?.TrimEnd('.'),
                 email,
                 roles,
                 scopes = allowedScopes

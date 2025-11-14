@@ -77,7 +77,7 @@ namespace UnibouwAPI.Controllers
         }
 
 
-        [HttpPut("{id}/{isActive}")]
+        [HttpPost("{id}/{isActive}")]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UpdateSubcontractorIsActive(Guid id, bool isActive)
         {
@@ -131,6 +131,15 @@ namespace UnibouwAPI.Controllers
                 {
                     return StatusCode(500, "Something went wrong while saving data.");
                 }
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("email", StringComparison.OrdinalIgnoreCase))
+            {
+                //Handle duplicate email specifically
+                return Conflict(new
+                {
+                    Message = "A subcontractor with this email address already exists.",
+                    Error = ex.Message
+                });
             }
             catch (Exception ex)
             {

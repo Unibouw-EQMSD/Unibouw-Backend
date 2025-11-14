@@ -117,7 +117,7 @@ namespace UnibouwAPI.Controllers
         }
     
 
-        [HttpPut("{id}/{isActive}")]
+        [HttpPost("{id}/{isActive}")]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> UpdateWorkItemIsActive(Guid id, bool isActive)
         {
@@ -149,7 +149,7 @@ namespace UnibouwAPI.Controllers
             }
         }
 
-        [HttpPut("{id}/description")]
+        [HttpPost("{id}/description")]
         [Authorize]
         public async Task<IActionResult> UpdateWorkItemDescription(Guid id, [FromBody] string description)
         {
