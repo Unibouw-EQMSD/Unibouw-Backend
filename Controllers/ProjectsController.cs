@@ -4,6 +4,8 @@ using UnibouwAPI.Models;
 using System;
 using System.Threading.Tasks;
 using UnibouwAPI.Repositories.Interfaces;
+using UnibouwAPI.Repositories;
+using System.Security.Claims;
 
 namespace UnibouwAPI.Controllers
 {
@@ -26,7 +28,24 @@ namespace UnibouwAPI.Controllers
         {
             try
             {
-                var items = await _repository.GetAllProject();
+                var user = HttpContext.User;
+
+                var email = user.FindFirst("preferred_username")?.Value
+                         ?? user.FindFirst("upn")?.Value
+                         ?? user.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn")?.Value
+                         ?? user.FindFirst("emails")?.Value
+                         ?? user.FindFirst(ClaimTypes.Email)?.Value;
+
+                var role = user.FindFirst(ClaimTypes.Role)?.Value
+                        ?? user.FindFirst("roles")?.Value
+                        ?? "User"; // default fallback if role missing
+
+                if (email == null || role == null )
+                    return Unauthorized("Unable to detect user email or role from token.");
+
+                var items = await _repository.GetAllProject(email, role);
+
+               // var items = await _repository.GetAllProject();
 
                 if (items == null || !items.Any())
                 {
@@ -55,7 +74,24 @@ namespace UnibouwAPI.Controllers
         {
             try
             {
-                var item = await _repository.GetProjectById(id);
+                var user = HttpContext.User;
+
+                var email = user.FindFirst("preferred_username")?.Value
+                         ?? user.FindFirst("upn")?.Value
+                         ?? user.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn")?.Value
+                         ?? user.FindFirst("emails")?.Value
+                         ?? user.FindFirst(ClaimTypes.Email)?.Value;
+
+                var role = user.FindFirst(ClaimTypes.Role)?.Value
+                        ?? user.FindFirst("roles")?.Value
+                        ?? "User"; // default fallback if role missing
+
+                if (email == null || role == null)
+                    return Unauthorized("Unable to detect user email or role from token.");
+
+                var item = await _repository.GetProjectById(id, email, role);
+
+                // var item = await _repository.GetProjectById(id);
 
                 if (item == null)
                 {
