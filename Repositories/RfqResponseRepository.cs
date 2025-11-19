@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 
+
 namespace UnibouwAPI.Repositories
 {
     public class RfqResponseRepository : IRfqResponseRepository
@@ -19,14 +20,18 @@ namespace UnibouwAPI.Repositories
                                 ?? throw new InvalidOperationException("Connection string missing");
         }
 
-        private async Task<Guid> GetResponseIdAsync(SqlConnection connection, SqlTransaction transaction, string status)
+        private async Task<Guid> GetResponseIdAsync(SqlConnection connection, SqlTransaction tx, string status)
         {
-            var query = @"SELECT RfqResponseID 
-                          FROM RfqResponseStatus 
-                          WHERE RfqResponseStatusName = @Status";
+            var id = await connection.ExecuteScalarAsync<Guid?>(@"
+        SELECT RfqResponseID 
+        FROM RfqResponseStatus
+        WHERE RfqResponseStatusName = @Status",
+                new { Status = status }, tx);
 
-            var responseId = await connection.QueryFirstOrDefaultAsync<Guid?>(query, new { Status = status }, transaction);
-            return responseId ?? Guid.Parse("279E5265-5952-46FC-BF7B-53A1A3292865");
+            if (id == null)
+                throw new Exception($"Status '{status}' not found in RfqResponseStatus table.");
+
+            return id.Value;
         }
 
         private async Task<bool> ValidateSubcontractorAsync(SqlConnection connection, SqlTransaction transaction, Guid subcontractorId)
@@ -43,110 +48,7 @@ namespace UnibouwAPI.Repositories
             return count > 0;
         }
 
-        // ✅ POST (Form/File submission)
-        //    public async Task<bool> SaveResponseWithOptionalFileAsync(
-        //Guid rfqId,
-        //Guid subcontractorId,
-        //Guid workItemId,
-        //string status,
-        //string? fileName,
-        //byte[]? fileBytes)
-        //    {
-        //        try
-        //        {
-        //            using var conn = new SqlConnection(_connectionString);
-        //            await conn.OpenAsync();
-        //            using var transaction = conn.BeginTransaction();
-
-        //            // 🔹 Validate RFQ & Subcontractor
-        //            if (!await ValidateRfqAsync(conn, transaction, rfqId))
-        //                throw new Exception($"RFQ {rfqId} does not exist.");
-
-        //            if (!await ValidateSubcontractorAsync(conn, transaction, subcontractorId))
-        //                throw new Exception($"Subcontractor {subcontractorId} does not exist.");
-
-        //            // 1️⃣ Ensure RFQ-Subcontractor mapping exists
-        //            var checkMappingCmd = new SqlCommand(@"
-        //        IF NOT EXISTS (SELECT 1 FROM RfqSubcontractorMapping 
-        //                       WHERE RfqID = @rfqId AND SubcontractorID = @subId)
-        //        INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID, CreatedOn)
-        //        VALUES (@rfqId, @subId, GETUTCDATE())",
-        //                conn, transaction);
-        //            checkMappingCmd.Parameters.AddWithValue("@rfqId", rfqId);
-        //            checkMappingCmd.Parameters.AddWithValue("@subId", subcontractorId);
-        //            await checkMappingCmd.ExecuteNonQueryAsync();
-
-        //            // 2️⃣ Ensure RFQ-WorkItem mapping exists
-        //            var checkWorkItemCmd = new SqlCommand(@"
-        //        IF NOT EXISTS (SELECT 1 FROM RfqWorkItemMapping 
-        //                       WHERE RfqID = @rfqId AND WorkItemID = @workItemId)
-        //        INSERT INTO RfqWorkItemMapping (RfqID, WorkItemID, CreatedOn)
-        //        VALUES (@rfqId, @workItemId, GETUTCDATE())",
-        //                conn, transaction);
-        //            checkWorkItemCmd.Parameters.AddWithValue("@rfqId", rfqId);
-        //            checkWorkItemCmd.Parameters.AddWithValue("@workItemId", workItemId);
-        //            await checkWorkItemCmd.ExecuteNonQueryAsync();
-
-        //            // 3️⃣ Map status → RfqResponseID
-        //            var responseId = await GetResponseIdAsync(conn, transaction, status);
-
-        //            // 4️⃣ Insert into RfqSubcontractorResponse
-        //            var rfqSubcontractorResponseId = Guid.NewGuid();
-        //            var insertSubResponse = new SqlCommand(@"
-        //        INSERT INTO RfqSubcontractorResponse
-        //            (RfqSubcontractorResponseID, RfqID, SubcontractorID, RfqResponseID, CreatedOn)
-        //        VALUES (@id, @rfqId, @subId, @respId, GETUTCDATE())",
-        //                conn, transaction);
-        //            insertSubResponse.Parameters.AddWithValue("@id", rfqSubcontractorResponseId);
-        //            insertSubResponse.Parameters.AddWithValue("@rfqId", rfqId);
-        //            insertSubResponse.Parameters.AddWithValue("@subId", subcontractorId);
-        //            insertSubResponse.Parameters.AddWithValue("@respId", responseId);
-        //            await insertSubResponse.ExecuteNonQueryAsync();
-
-        //            // 5️⃣ Insert into RfqSubcontractorWorkItemResponse
-        //            var workItemResponseId = Guid.NewGuid(); // Correct WorkItemResponse ID
-        //            var insertWorkItemResponse = new SqlCommand(@"
-        //        INSERT INTO RfqSubcontractorWorkItemResponse
-        //            (RfqSubcontractorWorkItemResponseID, RfqSubcontractorResponseID, RfqID, WorkItemID, 
-        //             IsReviewed, CreatedOn)
-        //        VALUES (@wid, @respId, @rfqId, @workItemId, 0, GETUTCDATE())",
-        //                conn, transaction);
-        //            insertWorkItemResponse.Parameters.AddWithValue("@wid", workItemResponseId);
-        //            insertWorkItemResponse.Parameters.AddWithValue("@respId", rfqSubcontractorResponseId);
-        //            insertWorkItemResponse.Parameters.AddWithValue("@rfqId", rfqId);
-        //            insertWorkItemResponse.Parameters.AddWithValue("@workItemId", workItemId);
-        //            await insertWorkItemResponse.ExecuteNonQueryAsync();
-
-        //            // 6️⃣ Optionally insert document
-        //            if (fileBytes != null && !string.IsNullOrEmpty(fileName))
-        //            {
-        //                var insertDocCmd = new SqlCommand(@"
-        //            INSERT INTO RfqResponseDocuments
-        //                (RfqResponseDocumentID, RfqSubcontractorWorkItemResponseID, RfqID, SubcontractorID, WorkItemID, 
-        //                 FileName, FileData, UploadedOn)
-        //            VALUES (@docId, @workItemRespId, @rfqId, @subId, @workItemId, @fileName, @fileData, GETUTCDATE())",
-        //                    conn, transaction);
-
-        //                insertDocCmd.Parameters.AddWithValue("@docId", Guid.NewGuid());
-        //                insertDocCmd.Parameters.AddWithValue("@workItemRespId", workItemResponseId);
-        //                insertDocCmd.Parameters.AddWithValue("@rfqId", rfqId);
-        //                insertDocCmd.Parameters.AddWithValue("@subId", subcontractorId);
-        //                insertDocCmd.Parameters.AddWithValue("@workItemId", workItemId);
-        //                insertDocCmd.Parameters.AddWithValue("@fileName", fileName);
-        //                insertDocCmd.Parameters.AddWithValue("@fileData", fileBytes);
-
-        //                await insertDocCmd.ExecuteNonQueryAsync();
-        //            }
-
-        //            transaction.Commit();
-        //            return true;
-        //        }
-        //        catch (Exception ex)
-        //        {
-        //            Console.WriteLine($"❌ Error saving response: {ex}");
-        //            return false;
-        //        }
-        //    }
+     
         public async Task<object?> GetProjectSummaryAsync(Guid rfqId, List<Guid>? workItemIds = null)
         {
             const string projectSql = @"
@@ -202,69 +104,88 @@ WHERE rwim.RfqID = @RfqID";
 
             try
             {
+                // Validate RFQ + subcontractor
                 if (!await ValidateRfqAsync(connection, transaction, rfqId))
-                    throw new Exception($"RFQ {rfqId} does not exist in database.");
+                    throw new Exception($"RFQ {rfqId} does not exist.");
 
                 if (!await ValidateSubcontractorAsync(connection, transaction, subcontractorId))
-                    throw new Exception($"Subcontractor {subcontractorId} does not exist in database.");
+                    throw new Exception($"Subcontractor {subcontractorId} does not exist.");
 
-                // ✅ Ensure RfqSubcontractorMapping exists
-                var mappingExists = await connection.QueryFirstOrDefaultAsync<int>(
-                    @"SELECT 1 FROM RfqSubcontractorMapping 
-              WHERE RfqID = @RfqID AND SubcontractorID = @SubcontractorID",
-                    new { RfqID = rfqId, SubcontractorID = subcontractorId }, transaction);
+                // Ensure mappings
+                await connection.ExecuteAsync(@"
+            IF NOT EXISTS (
+                SELECT 1 FROM RfqSubcontractorMapping
+                WHERE RfqID = @RfqID AND SubcontractorID = @SubID
+            )
+            INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID)
+            VALUES (@RfqID, @SubID);
+        ", new { RfqID = rfqId, SubID = subcontractorId }, transaction);
 
-                if (mappingExists == 0)
-                {
-                    await connection.ExecuteAsync(
-                        @"INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID)
-                  VALUES (@RfqID, @SubcontractorID)",
-                        new { RfqID = rfqId, SubcontractorID = subcontractorId }, transaction);
-                }
+                await connection.ExecuteAsync(@"
+            IF NOT EXISTS (
+                SELECT 1 FROM RfqWorkItemMapping
+                WHERE RfqID = @RfqID AND WorkItemID = @WorkItemID
+            )
+            INSERT INTO RfqWorkItemMapping (RfqID, WorkItemID)
+            VALUES (@RfqID, @WorkItemID);
+        ", new { RfqID = rfqId, WorkItemID = workItemId }, transaction);
 
-                // ✅ Ensure RfqWorkItemMapping exists (without CreatedOn)
-                var workItemExists = await connection.QueryFirstOrDefaultAsync<int>(
-                    @"SELECT 1 FROM RfqWorkItemMapping
-              WHERE RfqID=@RfqID AND WorkItemID=@WorkItemID",
-                    new { RfqID = rfqId, WorkItemID = workItemId }, transaction);
-
-                if (workItemExists == 0)
-                {
-                    await connection.ExecuteAsync(
-                        @"INSERT INTO RfqWorkItemMapping (RfqID, WorkItemID)
-                  VALUES (@RfqID, @WorkItemID)",
-                        new { RfqID = rfqId, WorkItemID = workItemId }, transaction);
-                }
-
-                // ✅ Map status to RfqResponseID
+                // Map status → RfqResponseID
                 var responseId = await GetResponseIdAsync(connection, transaction, status);
 
-                // ✅ Insert into RfqSubcontractorResponse
-                var responseGuid = Guid.NewGuid();
-                await connection.ExecuteAsync(
-                    @"INSERT INTO RfqSubcontractorResponse 
-              (RfqSubcontractorResponseID, RfqID, SubcontractorID, RfqResponseID, CreatedOn)
-              VALUES (@RfqSubcontractorResponseID, @RfqID, @SubcontractorID, @RfqResponseID, GETUTCDATE())",
-                    new
+                // Check if response already exists for this RFQ & Subcontractor
+                var existing = await connection.QuerySingleOrDefaultAsync<Guid?>(@"
+            SELECT RfqSubcontractorResponseID
+            FROM RfqSubcontractorResponse
+            WHERE RfqID = @RfqID AND SubcontractorID = @SubID
+        ", new { RfqID = rfqId, SubID = subcontractorId }, transaction);
+
+                Guid responseRecordId;
+
+                if (existing == null)
+                {
+                    // INSERT new record
+                    responseRecordId = Guid.NewGuid();
+
+                    await connection.ExecuteAsync(@"
+                INSERT INTO RfqSubcontractorResponse
+                (RfqSubcontractorResponseID, RfqID, SubcontractorID, RfqResponseID, CreatedOn)
+                VALUES (@ID, @RfqID, @SubID, @RespID, GETUTCDATE());
+            ", new
                     {
-                        RfqSubcontractorResponseID = responseGuid,
+                        ID = responseRecordId,
                         RfqID = rfqId,
-                        SubcontractorID = subcontractorId,
-                        RfqResponseID = responseId
+                        SubID = subcontractorId,
+                        RespID = responseId
                     }, transaction);
 
-                // ✅ Insert into RfqSubcontractorWorkItemResponse
-                await connection.ExecuteAsync(
-                    @"INSERT INTO RfqSubcontractorWorkItemResponse
-              (RfqSubcontractorWorkItemResponseID, RfqSubcontractorResponseID, RfqID, WorkItemID, IsReviewed, CreatedOn)
-              VALUES (@RfqSubcontractorWorkItemResponseID, @RfqSubcontractorResponseID, @RfqID, @WorkItemID, 0, GETUTCDATE())",
-                    new
+                    await connection.ExecuteAsync(@"
+                INSERT INTO RfqSubcontractorWorkItemResponse
+                (RfqSubcontractorWorkItemResponseID, RfqSubcontractorResponseID, RfqID, WorkItemID, IsReviewed, CreatedOn)
+                VALUES (NEWID(), @RespID, @RfqID, @WorkItemID, 0, GETUTCDATE());
+            ", new
                     {
-                        RfqSubcontractorWorkItemResponseID = Guid.NewGuid(),
-                        RfqSubcontractorResponseID = responseGuid,
+                        RespID = responseRecordId,
                         RfqID = rfqId,
                         WorkItemID = workItemId
                     }, transaction);
+                }
+                else
+                {
+                    // UPDATE existing record
+                    responseRecordId = existing.Value;
+
+                    await connection.ExecuteAsync(@"
+                UPDATE RfqSubcontractorResponse
+                SET RfqResponseID = @RespID,
+                    ModifiedOn = GETUTCDATE()
+                WHERE RfqSubcontractorResponseID = @ID
+            ", new
+                    {
+                        ID = responseRecordId,
+                        RespID = responseId
+                    }, transaction);
+                }
 
                 transaction.Commit();
                 return true;
@@ -290,38 +211,109 @@ WHERE rwim.RfqID = @RfqID";
                     await file.CopyToAsync(stream);
                 }
 
-                // 2️⃣ Read file data for DB
+                // 2️⃣ Read file bytes
                 byte[] fileBytes;
-                using (var memoryStream = new MemoryStream())
+                using (var ms = new MemoryStream())
                 {
-                    await file.CopyToAsync(memoryStream);
-                    fileBytes = memoryStream.ToArray();
+                    await file.CopyToAsync(ms);
+                    fileBytes = ms.ToArray();
                 }
 
-                // 3️⃣ Insert into DB
-                using (var connection = new SqlConnection(_connectionString))
-                using (var command = new SqlCommand(@"
-            INSERT INTO [dbo].[RfqResponseDocuments]
-            (RfqResponseDocumentID, RfqID, SubcontractorID, FileName, FileData, UploadedOn)
-            VALUES (@RfqResponseDocumentID, @RfqID, @SubcontractorID, @FileName, @FileData, @UploadedOn);
-        ", connection))
+                using (var conn = new SqlConnection(_connectionString))
                 {
-                    command.Parameters.AddWithValue("@RfqResponseDocumentID", Guid.NewGuid());
-                    command.Parameters.AddWithValue("@RfqID", rfqId);
-                    command.Parameters.AddWithValue("@SubcontractorID", subcontractorId);
-                    command.Parameters.AddWithValue("@FileName", file.FileName);
-                    command.Parameters.AddWithValue("@FileData", fileBytes);
-                    command.Parameters.AddWithValue("@UploadedOn", DateTime.UtcNow);
+                    await conn.OpenAsync();
+                    using (var tx = conn.BeginTransaction())
+                    {
+                        // 3️⃣ Insert into RfqResponseDocuments
+                        var insertDocCmd = new SqlCommand(@"
+                    INSERT INTO [dbo].[RfqResponseDocuments]
+                    (RfqResponseDocumentID, RfqID, SubcontractorID, FileName, FileData, UploadedOn)
+                    VALUES (@ID, @RfqID, @SubID, @FileName, @Data, @UploadedOn);
+                ", conn, tx);
 
-                    await connection.OpenAsync();
-                    int rows = await command.ExecuteNonQueryAsync();
-                    return rows > 0;
+                        insertDocCmd.Parameters.AddWithValue("@ID", Guid.NewGuid());
+                        insertDocCmd.Parameters.AddWithValue("@RfqID", rfqId);
+                        insertDocCmd.Parameters.AddWithValue("@SubID", subcontractorId);
+                        insertDocCmd.Parameters.AddWithValue("@FileName", file.FileName);
+                        insertDocCmd.Parameters.AddWithValue("@Data", fileBytes);
+                        insertDocCmd.Parameters.AddWithValue("@UploadedOn", DateTime.UtcNow);
+                        await insertDocCmd.ExecuteNonQueryAsync();
+
+                        // 4️⃣ Get SubcontractorResponseID
+                        var getResponseCmd = new SqlCommand(@"
+                    SELECT RfqSubcontractorResponseID
+                    FROM RfqSubcontractorResponse
+                    WHERE RfqID = @RfqID AND SubcontractorID = @SubID;
+                ", conn, tx);
+
+                        getResponseCmd.Parameters.AddWithValue("@RfqID", rfqId);
+                        getResponseCmd.Parameters.AddWithValue("@SubID", subcontractorId);
+
+                        var responseId = (Guid?)await getResponseCmd.ExecuteScalarAsync();
+
+                        if (responseId != null)
+                        {
+                            // 5️⃣ Mark status as Responded
+                            var updateStatusCmd = new SqlCommand(@"
+                        UPDATE RfqResponseStatus
+                        SET RfqResponseStatusName = 'Responded'
+                        WHERE RfqResponseID = @RespID;
+                    ", conn, tx);
+
+                            updateStatusCmd.Parameters.AddWithValue("@RespID", responseId);
+                            await updateStatusCmd.ExecuteNonQueryAsync();
+                        }
+
+                        tx.Commit();
+                    }
                 }
+
+                return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Error saving uploaded quote: " + ex.Message);
+                Console.WriteLine("UPLOAD ERROR: " + ex.Message);
                 return false;
+            }
+        }
+
+
+        public async Task<(byte[] FileBytes, string FileName)?> GetQuoteAsync(Guid rfqId, Guid subcontractorId)
+        {
+            try
+            {
+                using (var conn = new SqlConnection(_connectionString))
+                {
+                    await conn.OpenAsync();
+
+                    var cmd = new SqlCommand(@"
+                SELECT TOP 1 FileName, FileData
+                FROM RfqResponseDocuments
+                WHERE RfqID = @RfqID AND SubcontractorID = @SubID
+                ORDER BY UploadedOn DESC;
+            ", conn);
+
+                    cmd.Parameters.AddWithValue("@RfqID", rfqId);
+                    cmd.Parameters.AddWithValue("@SubID", subcontractorId);
+
+                    using (var reader = await cmd.ExecuteReaderAsync())
+                    {
+                        if (await reader.ReadAsync())
+                        {
+                            return (
+                                (byte[])reader["FileData"],
+                                reader["FileName"].ToString()
+                            );
+                        }
+                    }
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("DOWNLOAD ERROR: " + ex.Message);
+                return null;
             }
         }
 
@@ -330,6 +322,15 @@ WHERE rwim.RfqID = @RfqID";
             using var conn = new SqlConnection(_connectionString);
 
             var sql = @"
+WITH LatestResponse AS (
+    SELECT 
+        r.*,
+        ROW_NUMBER() OVER (
+            PARTITION BY r.RfqID, r.SubcontractorID 
+            ORDER BY r.ModifiedOn DESC
+        ) AS rn
+    FROM RfqSubcontractorResponse r
+)
 SELECT 
     wi.WorkItemID,
     wi.Name AS WorkItemName,
@@ -338,24 +339,36 @@ SELECT
     s.Name AS SubcontractorName,
     ISNULL(s.Rating,0) AS Rating,
     rs.RfqResponseStatusName AS StatusName,
-    r.CreatedOn AS ResponseDate
+    lr.CreatedOn AS ResponseDate,
+
+    -- ⭐ ADD ONLY THIS FOR DOCUMENT CHECK
+    CASE WHEN doc.RfqResponseDocumentID IS NULL THEN 0 ELSE 1 END AS HasDocument
+
 FROM Projects p
 INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
 INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
 INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
-LEFT JOIN RfqSubcontractorWorkItemResponse wr 
-    ON wr.WorkItemID = wi.WorkItemID AND wr.RfqID = rfq.RfqID
-LEFT JOIN RfqSubcontractorResponse r 
-    ON r.RfqSubcontractorResponseID = wr.RfqSubcontractorResponseID
-LEFT JOIN RfqResponseStatus rs 
-    ON rs.RfqResponseID = r.RfqResponseID
+
+LEFT JOIN LatestResponse lr
+    ON lr.RfqID = rfq.RfqID AND lr.rn = 1  
+
 LEFT JOIN Subcontractors s 
-    ON s.SubcontractorID = r.SubcontractorID
+    ON s.SubcontractorID = lr.SubcontractorID
+
+LEFT JOIN RfqResponseStatus rs 
+    ON rs.RfqResponseID = lr.RfqResponseID
+
+-- ⭐ NEW JOIN FOR DOCUMENT CHECK
+LEFT JOIN RfqResponseDocuments doc
+    ON doc.RfqID = rfq.RfqID AND doc.SubcontractorID = s.SubcontractorID
+
 WHERE p.ProjectID = @ProjectID
-ORDER BY wi.Name, rfq.RfqID, s.Name;";
+ORDER BY wi.Name, rfq.RfqID, s.Name;
+";
 
             var rows = (await conn.QueryAsync(sql, new { ProjectID = projectId })).ToList();
             if (!rows.Any()) return null;
+
             var result = rows
                 .GroupBy(r => new { r.WorkItemID, r.WorkItemName, r.RfqID })
                 .Select(g =>
@@ -364,9 +377,11 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;";
                     {
                         string status = r.StatusName ?? "Not Responded";
 
-                        bool interested = status == "Interested";
-                        bool viewed = status == "Viewed" || interested;
-                        bool responded = status != "Not Responded";
+                        // ⭐ ONLY THIS LINE CHANGED
+                        bool responded = status == "Responded" || r.HasDocument == 1;
+
+                        bool interested = status == "Interested" || responded;
+                        bool viewed = status == "Viewed" || interested || responded;
 
                         return new
                         {
@@ -376,9 +391,9 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;";
                             date = r.ResponseDate?.ToString("dd/MM/yyyy") ?? "—",
                             rfqId = g.Key.RfqID.ToString(),
 
+                            responded = responded,
                             interested = interested,
                             viewed = viewed,
-                            responded = responded,
 
                             quote = "—",
                             actions = new[] { "pdf", "chat" }
@@ -396,24 +411,64 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;";
 
             return result;
         }
+
+
         public async Task<bool> MarkRfqViewedAsync(Guid rfqId, Guid subcontractorId, Guid workItemId)
         {
             using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
 
-            // Step 1: Fetch the status ID for "Viewed"
-            var viewedStatusId = await conn.ExecuteScalarAsync<Guid?>(@"
-        SELECT RfqResponseID
-        FROM RfqResponseStatus
-        WHERE RfqResponseStatusName = 'Viewed';
-    ");
+            using var tx = conn.BeginTransaction();
 
-            if (viewedStatusId == null)
-                throw new Exception("Viewed status not found in database.");
+            try
+            {
+                // Ensure mapping exists
+                await conn.ExecuteAsync(@"
+            IF NOT EXISTS(
+                SELECT 1 FROM RfqSubcontractorMapping
+                WHERE RfqID = @RfqID AND SubcontractorID = @SubID
+            )
+            INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID)
+            VALUES (@RfqID, @SubID);
+        ", new { RfqID = rfqId, SubID = subcontractorId }, tx);
 
-            // Step 2: Since RfqResponseStatus is a master table and cannot be updated,
-            // we simply return true and let you use the ID in frontend/backend logic.
-            return true;
+                await conn.ExecuteAsync(@"
+            IF NOT EXISTS(
+                SELECT 1 FROM RfqWorkItemMapping
+                WHERE RfqID = @RfqID AND WorkItemID = @WorkItemID
+            )
+            INSERT INTO RfqWorkItemMapping (RfqID, WorkItemID)
+            VALUES (@RfqID, @WorkItemID);
+        ", new { RfqID = rfqId, WorkItemID = workItemId }, tx);
+
+                // Get "Viewed" ID
+                var viewedId = await GetResponseIdAsync(conn, tx, "Viewed");
+
+                // Insert into RfqSubcontractorResponse only if NOT exists already for same RFQ/Sub
+                var existing = await conn.ExecuteScalarAsync<int>(@"
+            SELECT COUNT(*) FROM RfqSubcontractorResponse
+            WHERE RfqID = @RfqID AND SubcontractorID = @SubID
+        ", new { RfqID = rfqId, SubID = subcontractorId }, tx);
+
+                if (existing == 0)
+                {
+                    await conn.ExecuteAsync(@"
+                INSERT INTO RfqSubcontractorResponse
+                (RfqSubcontractorResponseID, RfqID, SubcontractorID, RfqResponseID, CreatedOn)
+                VALUES (NEWID(), @RfqID, @SubID, @ViewedID, GETUTCDATE());
+            ", new { RfqID = rfqId, SubID = subcontractorId, ViewedID = viewedId }, tx);
+                }
+
+                tx.Commit();
+                return true;
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
         }
 
+       
     }
 }

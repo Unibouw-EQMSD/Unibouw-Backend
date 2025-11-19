@@ -1,12 +1,17 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using iText.Kernel.Pdf.Canvas.Parser;
+using iText.Kernel.Pdf;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using OfficeOpenXml;
 using System;
 using System.Data.SqlClient;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories;
 using UnibouwAPI.Repositories.Interfaces;
+
 
 namespace UnibouwAPI.Controllers
 {
@@ -129,11 +134,12 @@ namespace UnibouwAPI.Controllers
             }
         }
 
+
         [HttpPost("UploadQuote")]
         public async Task<IActionResult> UploadQuote(
-    [FromQuery] Guid rfqId,
-    [FromQuery] Guid subcontractorId,
-    IFormFile file)
+     [FromQuery] Guid rfqId,
+     [FromQuery] Guid subcontractorId,
+     IFormFile file)
         {
             if (rfqId == Guid.Empty || subcontractorId == Guid.Empty)
                 return BadRequest("Invalid RFQ ID or Subcontractor ID.");
@@ -141,13 +147,139 @@ namespace UnibouwAPI.Controllers
             if (file == null || file.Length == 0)
                 return BadRequest("No file uploaded.");
 
-            var success = await _responseRepo.UploadQuoteAsync(rfqId, subcontractorId, file);
+            try
+            {
+                // --------------------------
+                // 1️⃣ Read file bytes and get extension
+                // --------------------------
+                byte[] fileBytes;
+                using (var ms = new MemoryStream())
+                {
+                    await file.CopyToAsync(ms);
+                    fileBytes = ms.ToArray();
+                }
+                string extension = Path.GetExtension(file.FileName).ToLower();
 
-            if (!success)
-                return BadRequest("Upload failed");
+                // --------------------------
+                // 2️⃣ Extract quote amount from bytes
+                // --------------------------
+                string extractedAmount = ExtractQuoteAmount(fileBytes, extension);
 
-            return Ok(new { Message = "Quote uploaded successfully" });
+                // --------------------------
+                // 3️⃣ Save file to DB via repository
+                // --------------------------
+                var success = await _responseRepo.UploadQuoteAsync(rfqId, subcontractorId, file);
+
+                if (!success)
+                    return BadRequest("Upload failed");
+
+                // --------------------------
+                // 4️⃣ Return response with amount
+                // --------------------------
+                return Ok(new
+                {
+                    message = "Quote uploaded successfully",
+                    quoteAmount = extractedAmount
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"UploadQuote Error: {ex}");
+                return StatusCode(500, new { message = "Internal server error", error = ex.Message });
+            }
         }
+
+        public static string ExtractQuoteAmount(byte[] fileBytes, string extension)
+        {
+            string pattern = @"€?\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?\s?€?";
+            var regex = new Regex(pattern, RegexOptions.IgnoreCase);
+
+            // -------------------------
+            // PDF
+            // -------------------------
+            if (extension == ".pdf")
+            {
+                using (var ms = new MemoryStream(fileBytes))
+                using (var reader = new PdfReader(ms))
+                using (var pdf = new PdfDocument(reader))
+                {
+                    string fullText = "";
+                    for (int i = 1; i <= pdf.GetNumberOfPages(); i++)
+                    {
+                        fullText += PdfTextExtractor.GetTextFromPage(pdf.GetPage(i));
+                    }
+
+                    var match = regex.Match(fullText);
+                    return match.Success ? match.Value.Trim() : "Amount Not Found";
+                }
+            }
+
+            // -------------------------
+            // Excel (.xlsx)
+            // -------------------------
+            if (extension == ".xlsx")
+            {
+                ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+                using (var ms = new MemoryStream(fileBytes))
+                using (var package = new ExcelPackage(ms))
+                {
+                    var sheet = package.Workbook.Worksheets[0];
+
+                    for (int row = 1; row <= sheet.Dimension.Rows; row++)
+                    {
+                        for (int col = 1; col <= sheet.Dimension.Columns; col++)
+                        {
+                            string cellValue = sheet.Cells[row, col].Text;
+                            if (!string.IsNullOrWhiteSpace(cellValue))
+                            {
+                                var match = regex.Match(cellValue);
+                                if (match.Success)
+                                    return match.Value.Trim();
+                            }
+                        }
+                    }
+                }
+            }
+
+            return "Amount Not Found";
+        }
+
+        [HttpGet("GetQuoteAmount")]
+        public async Task<IActionResult> GetQuoteAmount(Guid rfqId, Guid subcontractorId)
+        {
+            var quote = await _responseRepo.GetQuoteAsync(rfqId, subcontractorId);
+
+            if (quote == null)
+                return Ok(new { quoteAmount = "-" }); // no file uploaded
+
+            // Retrieve file extension (you might need to store it in DB when uploading)
+            string extension = ".pdf"; // <-- or quote.Value.FileName extension
+
+            // Extract amount from saved PDF/Excel bytes
+            string amount = ExtractQuoteAmount(quote.Value.FileBytes, extension);
+
+            return Ok(new { quoteAmount = amount });
+        }
+
+        [HttpGet("DownloadQuote")]
+        public async Task<IActionResult> DownloadQuote(
+     [FromQuery] Guid rfqId,
+     [FromQuery] Guid subcontractorId)
+        {
+            if (rfqId == Guid.Empty || subcontractorId == Guid.Empty)
+                return BadRequest("Invalid RFQ ID or Subcontractor ID.");
+
+            var fileData = await _responseRepo.GetQuoteAsync(rfqId, subcontractorId);
+
+            if (fileData == null)
+                return NotFound("No quote uploaded for this RFQ.");
+
+            // Deconstruct tuple
+            var (bytes, fileName) = fileData.Value;
+
+            return File(bytes, "application/octet-stream", fileName);
+        }
+
 
         [HttpGet("responses/project/{projectId}")]
         public async Task<IActionResult> GetResponsesByProject(Guid projectId)

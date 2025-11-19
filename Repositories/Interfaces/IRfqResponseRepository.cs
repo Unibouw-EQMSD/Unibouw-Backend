@@ -23,6 +23,8 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         // NEWLY ADDED
         Task<bool> MarkRfqViewedAsync(Guid rfqId, Guid subcontractorId, Guid workItemId);
+        Task<(byte[] FileBytes, string FileName)?> GetQuoteAsync(Guid rfqId, Guid subcontractorId);
+
 
 
     }

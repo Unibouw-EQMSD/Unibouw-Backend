@@ -113,48 +113,7 @@ namespace UnibouwAPI.Controllers
         }
 
 
-        [HttpPut("{id}/duedate")]
-        [Authorize]
-        public async Task<IActionResult> UpdateRfqDueDate(Guid id, [FromBody] Rfq updatedRfq)
-        {
-            if (updatedRfq == null || updatedRfq.DueDate == null)
-            {
-                return BadRequest(new { message = "Invalid request. DueDate is required." });
-            }
-
-            try
-            {
-                var existingRfq = await _repository.GetRfqById(id);
-                if (existingRfq == null)
-                {
-                    return NotFound(new { message = $"RFQ with ID {id} not found." });
-                }
-
-                var modifiedBy = string.IsNullOrEmpty(updatedRfq.ModifiedBy) ? "System" : updatedRfq.ModifiedBy;
-                var result = await _repository.UpdateRfqDueDate(id, updatedRfq.DueDate.Value, modifiedBy);
-
-                if (!result)
-                {
-                    return StatusCode(500, new { message = "Failed to update due date. Please try again later." });
-                }
-
-                return Ok(new
-                {
-                    message = "RFQ due date updated successfully.",
-                    data = new
-                    {
-                        rfqId = id,
-                        dueDate = updatedRfq.DueDate,
-                        modifiedBy = modifiedBy
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "An error occurred while updating DueDate for RFQ ID: {Id}.", id);
-                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
-            }
-        }
+        
         [HttpPost("create-simple")]
         public async Task<IActionResult> CreateRfqSimple(
      [FromBody] Rfq rfq,
