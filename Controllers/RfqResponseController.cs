@@ -11,6 +11,13 @@ using System.Threading.Tasks;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories;
 using UnibouwAPI.Repositories.Interfaces;
+using System.Text;
+using iText.Kernel.Pdf;
+using iText.Kernel.Pdf.Canvas.Parser;
+using OfficeOpenXml;
+using System.Text.RegularExpressions;
+using System.Globalization;
+using Microsoft.AspNetCore.Authorization;
 
 
 namespace UnibouwAPI.Controllers
@@ -35,6 +42,7 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpGet("GetProjectSummary")]
+        [Authorize]
         public async Task<IActionResult> GetProjectSummary(Guid rfqId)
         {
             try
@@ -53,6 +61,7 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpGet]
+        [Authorize]
         [Route("")]
         [Route("respond")]
         public async Task<IActionResult> RespondToRfq(
@@ -82,30 +91,9 @@ namespace UnibouwAPI.Controllers
         }
 
 
-     //   [HttpPost("upload")]
-     //   public async Task<IActionResult> UploadQuoteFile(
-     //[FromForm] Guid rfqId,
-     //[FromForm] Guid subcontractorId,
-     //[FromForm] Guid workItemId,
-     //[FromForm] IFormFile file)
-     //   {
-     //       if (file == null) return BadRequest("No file provided.");
-
-     //       using var ms = new MemoryStream();
-     //       await file.CopyToAsync(ms);
-     //       var fileBytes = ms.ToArray();
-
-     //       bool success = await _responseRepo.UploadQuoteFileAsync(
-     //           rfqId, subcontractorId, workItemId, file.FileName, fileBytes);
-
-     //       if (success) return Ok(new { success = true, message = "File uploaded successfully." });
-
-     //       return StatusCode(500, new { success = false, message = "Error uploading file." });
-     //   }
-
-
         // ✅ POST endpoint for file/form submissions
         [HttpPost("submit")]
+        [Authorize]
         public async Task<IActionResult> SubmitResponse(
      [FromForm] Guid rfqId,
      [FromForm] Guid subcontractorId,
@@ -136,6 +124,7 @@ namespace UnibouwAPI.Controllers
 
 
         [HttpPost("UploadQuote")]
+        [Authorize]
         public async Task<IActionResult> UploadQuote(
      [FromQuery] Guid rfqId,
      [FromQuery] Guid subcontractorId,
@@ -189,62 +178,129 @@ namespace UnibouwAPI.Controllers
             }
         }
 
-        public static string ExtractQuoteAmount(byte[] fileBytes, string extension)
+        private string ExtractQuoteAmount(byte[] fileBytes, string extension)
         {
-            string pattern = @"€?\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?\s?€?";
-            var regex = new Regex(pattern, RegexOptions.IgnoreCase);
-
-            // -------------------------
-            // PDF
-            // -------------------------
-            if (extension == ".pdf")
+            // ---------- Normalize helper ----------
+            string Normalize(string s)
             {
-                using (var ms = new MemoryStream(fileBytes))
-                using (var reader = new PdfReader(ms))
-                using (var pdf = new PdfDocument(reader))
-                {
-                    string fullText = "";
-                    for (int i = 1; i <= pdf.GetNumberOfPages(); i++)
-                    {
-                        fullText += PdfTextExtractor.GetTextFromPage(pdf.GetPage(i));
-                    }
-
-                    var match = regex.Match(fullText);
-                    return match.Success ? match.Value.Trim() : "Amount Not Found";
-                }
+                if (s == null) return "";
+                return s.Replace("\u00A0", " ").Trim().ToLower();
             }
 
-            // -------------------------
-            // Excel (.xlsx)
-            // -------------------------
+            // ---------- Euro Regex ----------
+            string euroPattern = @"€?\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?\s?€?";
+            var regex = new Regex(euroPattern, RegexOptions.IgnoreCase);
+
+            // =====================================================================
+            // 1️⃣ PDF EXTRACTION (iText7)
+            // =====================================================================
+            if (extension == ".pdf")
+            {
+                using var ms = new MemoryStream(fileBytes);
+                using var reader = new PdfReader(ms);
+                using var pdf = new PdfDocument(reader);
+
+                StringBuilder sb = new StringBuilder();
+
+                for (int i = 1; i <= pdf.GetNumberOfPages(); i++)
+                    sb.AppendLine(PdfTextExtractor.GetTextFromPage(pdf.GetPage(i)));
+
+                // Get the *largest* euro amount (usually quote)
+                var matches = regex.Matches(sb.ToString());
+
+                if (matches.Count == 0)
+                    return "Amount Not Found";
+
+                return matches
+                    .Select(m => m.Value)
+                    .OrderByDescending(v => ParseEuro(v))
+                    .First();
+            }
+
+            // =====================================================================
+            // 2️⃣ EXCEL EXTRACTION (EPPlus)
+            // =====================================================================
             if (extension == ".xlsx")
             {
                 ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-                using (var ms = new MemoryStream(fileBytes))
-                using (var package = new ExcelPackage(ms))
-                {
-                    var sheet = package.Workbook.Worksheets[0];
 
-                    for (int row = 1; row <= sheet.Dimension.Rows; row++)
+                using var ms = new MemoryStream(fileBytes);
+                using var package = new ExcelPackage(ms);
+
+                var sheet = package.Workbook.Worksheets[0];
+
+                int rows = sheet.Dimension.Rows;
+                int cols = sheet.Dimension.Columns;
+
+                int quoteAmountColumn = -1;
+
+                // -----------------------------
+                // FIND CORRECT QUOTE AMOUNT COLUMN
+                // -----------------------------
+                for (int col = 1; col <= cols; col++)
+                {
+                    string header = Normalize(sheet.Cells[1, col].Text);
+
+                    if (header == "quote amount" ||
+                        header.Contains("quote") && header.Contains("amount"))
                     {
-                        for (int col = 1; col <= sheet.Dimension.Columns; col++)
-                        {
-                            string cellValue = sheet.Cells[row, col].Text;
-                            if (!string.IsNullOrWhiteSpace(cellValue))
-                            {
-                                var match = regex.Match(cellValue);
-                                if (match.Success)
-                                    return match.Value.Trim();
-                            }
-                        }
+                        quoteAmountColumn = col;
+                        break;
                     }
                 }
+
+                if (quoteAmountColumn == -1)
+                    return "Quote Amount Column Not Found";
+
+                // -----------------------------
+                // READ values in this column
+                // -----------------------------
+                List<string> euroValues = new List<string>();
+
+                for (int row = 2; row <= rows; row++)
+                {
+                    string val = sheet.Cells[row, quoteAmountColumn].Text.Trim();
+
+                    if (string.IsNullOrWhiteSpace(val)) continue;
+
+                    var match = regex.Match(val);
+                    if (match.Success)
+                        euroValues.Add(match.Value);
+                }
+
+                if (!euroValues.Any())
+                    return "Amount Not Found";
+
+                // Return the biggest EUR value (quote amount)
+                return euroValues
+                    .OrderByDescending(v => ParseEuro(v))
+                    .First();
             }
 
             return "Amount Not Found";
         }
 
+
+   
+        private decimal ParseEuro(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return 0;
+
+            string cleaned = value.Replace("€", "")
+                                  .Replace(",", ".")
+                                  .Trim();
+
+            decimal.TryParse(cleaned, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal result);
+
+            return result;
+        }
+
+
+
+
+
         [HttpGet("GetQuoteAmount")]
+        [Authorize]
         public async Task<IActionResult> GetQuoteAmount(Guid rfqId, Guid subcontractorId)
         {
             var quote = await _responseRepo.GetQuoteAsync(rfqId, subcontractorId);
@@ -262,6 +318,7 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpGet("DownloadQuote")]
+        [Authorize]
         public async Task<IActionResult> DownloadQuote(
      [FromQuery] Guid rfqId,
      [FromQuery] Guid subcontractorId)
@@ -282,6 +339,7 @@ namespace UnibouwAPI.Controllers
 
 
         [HttpGet("responses/project/{projectId}")]
+        [Authorize]
         public async Task<IActionResult> GetResponsesByProject(Guid projectId)
         {
             var result = await _responseRepo.GetRfqResponsesByProjectAsync(projectId) as IEnumerable<object>;
@@ -292,6 +350,7 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpPost("mark-viewed")]
+        [Authorize]
         public async Task<IActionResult> MarkViewed(
     [FromQuery] Guid rfqId,
     [FromQuery] Guid subcontractorId,

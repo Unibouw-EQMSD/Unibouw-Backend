@@ -115,6 +115,7 @@ namespace UnibouwAPI.Controllers
 
         
         [HttpPost("create-simple")]
+        [Authorize]
         public async Task<IActionResult> CreateRfqSimple(
      [FromBody] Rfq rfq,
      [FromQuery] List<Guid> subcontractorIds,
