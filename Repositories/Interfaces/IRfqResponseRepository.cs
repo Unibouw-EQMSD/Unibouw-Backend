@@ -20,6 +20,7 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         Task<bool> UploadQuoteAsync(Guid rfqId, Guid subcontractorId, IFormFile file);
         Task<object?> GetRfqResponsesByProjectAsync(Guid projectId);
+        Task<object?> GetRfqResponsesByProjectSubcontractorAsync(Guid projectId);
 
         // NEWLY ADDED
         Task<bool> MarkRfqViewedAsync(Guid rfqId, Guid subcontractorId, Guid workItemId);

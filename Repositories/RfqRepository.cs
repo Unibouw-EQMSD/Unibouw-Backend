@@ -55,7 +55,7 @@ namespace UnibouwAPI.Repositories
             return await _connection.QueryFirstOrDefaultAsync<Rfq>(query, new { Id = id });
         }
 
-        public async Task<Rfq?> GetRfqByProjectId(Guid projectId)
+        public async Task<IEnumerable<Rfq>> GetRfqByProjectId(Guid projectId)
         {
             var query = @"
                     SELECT 
@@ -69,7 +69,7 @@ namespace UnibouwAPI.Repositories
                     LEFT JOIN RfqResponseStatus rs ON r.RfqResponseID = rs.RfqResponseID
                     WHERE p.ProjectID = @projectId AND p.IsDeleted = 0";
 
-            return await _connection.QueryFirstOrDefaultAsync<Rfq>(query, new { projectId });
+            return await _connection.QueryAsync<Rfq>(query, new { projectId });
         }
 
         public async Task<bool> UpdateRfqDueDate(Guid rfqId, DateTime dueDate, string modifiedBy)
@@ -127,6 +127,27 @@ namespace UnibouwAPI.Repositories
             }
         }
 
+        public async Task<(string WorkItemName, int SubCount)> GetWorkItemInfoByRfqId(Guid rfqId)
+        {
+            var sql = @"
+        SELECT TOP 1 w.Name
+        FROM RfqWorkItemMapping m
+        JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
+        WHERE m.RfqID = @rfqId;
 
+        SELECT COUNT(*) 
+        FROM SubcontractorWorkItemsMapping s
+        WHERE s.WorkItemID IN (
+            SELECT WorkItemID FROM RfqWorkItemMapping WHERE RfqID = @rfqId
+        );
+    ";
+
+            using var multi = await _connection.QueryMultipleAsync(sql, new { rfqId });
+
+            var workItemName = await multi.ReadFirstOrDefaultAsync<string>() ?? "-";
+            var subcontractorCount = await multi.ReadFirstAsync<int>();
+
+            return (workItemName, subcontractorCount);
+        }
     }
 }

@@ -317,6 +317,107 @@ WHERE rwim.RfqID = @RfqID";
             }
         }
 
+        public async Task<object?> GetRfqResponsesByProjectSubcontractorAsync(Guid projectId)
+        {
+            using var conn = new SqlConnection(_connectionString);
+
+            var sql = @"
+WITH LatestResponse AS (
+    SELECT 
+        r.*,
+        ROW_NUMBER() OVER (
+            PARTITION BY r.RfqID, r.SubcontractorID 
+            ORDER BY r.ModifiedOn DESC
+        ) AS rn
+    FROM RfqSubcontractorResponse r
+)
+SELECT 
+    wi.WorkItemID,
+    wi.Name AS WorkItemName,
+    rfq.RfqID,
+    s.SubcontractorID,
+    s.Name AS SubcontractorName,
+    ISNULL(s.Rating,0) AS Rating,
+    rs.RfqResponseStatusName AS StatusName,
+    lr.CreatedOn AS ResponseDate,
+    CASE WHEN doc.RfqResponseDocumentID IS NULL THEN 0 ELSE 1 END AS HasDocument
+FROM Projects p
+INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
+INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
+INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
+
+LEFT JOIN LatestResponse lr
+    ON lr.RfqID = rfq.RfqID AND lr.rn = 1  
+LEFT JOIN Subcontractors s 
+    ON s.SubcontractorID = lr.SubcontractorID
+LEFT JOIN RfqResponseStatus rs 
+    ON rs.RfqResponseID = lr.RfqResponseID
+LEFT JOIN RfqResponseDocuments doc
+    ON doc.RfqID = rfq.RfqID AND doc.SubcontractorID = s.SubcontractorID
+
+WHERE p.ProjectID = @ProjectID
+ORDER BY s.Name, wi.Name;
+";
+
+            var rows = (await conn.QueryAsync(sql, new { ProjectID = projectId })).ToList();
+            if (!rows.Any()) return null;
+
+            // ---------------------------------------
+            // Reuse same status logic as your method
+            // ---------------------------------------
+            Func<dynamic, (bool responded, bool interested, bool viewed)> statusLogic = (r) =>
+            {
+                string status = r.StatusName ?? "Not Responded";
+                bool responded = status == "Responded" || r.HasDocument == 1;
+                bool interested = status == "Interested" || responded;
+                bool viewed =
+                    status == "Viewed" ||
+                    interested ||
+                    responded ||
+                    status == "Maybe Later" ||
+                    status == "Not Interested";
+
+                return (responded, interested, viewed);
+            };
+
+            // -------------------------------------------------------
+            // GROUP BY SUBCONTRACTOR (the new required structure)
+            // -------------------------------------------------------
+            var result = rows
+                .Where(r => r.SubcontractorID != null)
+                .GroupBy(r => new { r.SubcontractorID, r.SubcontractorName })
+                .Select(g =>
+                {
+                    var workItems = g.Select(r =>
+                    {
+                        var flags = statusLogic(r);
+
+                        return new
+                        {
+                            workItemId = r.WorkItemID,
+                            workItemName = r.WorkItemName,
+                            rfqId = r.RfqID.ToString(),
+
+                            responded = flags.responded,
+                            interested = flags.interested,
+                            viewed = flags.viewed,
+
+                            date = r.ResponseDate?.ToString("dd/MM/yyyy") ?? "—"
+                        };
+                    }).ToList();
+
+                    return new
+                    {
+                        subcontractorId = g.Key.SubcontractorID,
+                        subcontractorName = g.Key.SubcontractorName,
+                        workItems = workItems
+                    };
+                }).ToList();
+
+            return result;
+        }
+
+
         public async Task<object?> GetRfqResponsesByProjectAsync(Guid projectId)
         {
             using var conn = new SqlConnection(_connectionString);
@@ -381,8 +482,12 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
                         bool responded = status == "Responded" || r.HasDocument == 1;
 
                         bool interested = status == "Interested" || responded;
-                        bool viewed = status == "Viewed" || interested || responded;
-
+                        bool viewed =
+                            status == "Viewed" ||
+                            interested ||
+                            responded ||
+                            status == "Maybe Later" ||
+                            status == "Not Interested";
                         return new
                         {
                             subcontractorId = r.SubcontractorID,

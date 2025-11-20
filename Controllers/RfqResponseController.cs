@@ -42,7 +42,6 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpGet("GetProjectSummary")]
-        [Authorize]
         public async Task<IActionResult> GetProjectSummary(Guid rfqId)
         {
             try
@@ -61,7 +60,6 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpGet]
-        [Authorize]
         [Route("")]
         [Route("respond")]
         public async Task<IActionResult> RespondToRfq(
@@ -93,7 +91,6 @@ namespace UnibouwAPI.Controllers
 
         // ✅ POST endpoint for file/form submissions
         [HttpPost("submit")]
-        [Authorize]
         public async Task<IActionResult> SubmitResponse(
      [FromForm] Guid rfqId,
      [FromForm] Guid subcontractorId,
@@ -124,7 +121,6 @@ namespace UnibouwAPI.Controllers
 
 
         [HttpPost("UploadQuote")]
-        [Authorize]
         public async Task<IActionResult> UploadQuote(
      [FromQuery] Guid rfqId,
      [FromQuery] Guid subcontractorId,
@@ -300,7 +296,6 @@ namespace UnibouwAPI.Controllers
 
 
         [HttpGet("GetQuoteAmount")]
-        [Authorize]
         public async Task<IActionResult> GetQuoteAmount(Guid rfqId, Guid subcontractorId)
         {
             var quote = await _responseRepo.GetQuoteAsync(rfqId, subcontractorId);
@@ -318,7 +313,6 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpGet("DownloadQuote")]
-        [Authorize]
         public async Task<IActionResult> DownloadQuote(
      [FromQuery] Guid rfqId,
      [FromQuery] Guid subcontractorId)
@@ -339,7 +333,6 @@ namespace UnibouwAPI.Controllers
 
 
         [HttpGet("responses/project/{projectId}")]
-        [Authorize]
         public async Task<IActionResult> GetResponsesByProject(Guid projectId)
         {
             var result = await _responseRepo.GetRfqResponsesByProjectAsync(projectId) as IEnumerable<object>;
@@ -349,8 +342,18 @@ namespace UnibouwAPI.Controllers
             return Ok(result);
         }
 
+        [HttpGet("responses/project/{projectId}/subcontractors")]
+        public async Task<IActionResult> GetResponsesByProjectSubcontractors(Guid projectId)
+        {
+            var result = await _responseRepo.GetRfqResponsesByProjectSubcontractorAsync(projectId);
+
+            if (result == null)
+                return NotFound("No subcontractor responses found for this project.");
+
+            return Ok(result);
+        }
+
         [HttpPost("mark-viewed")]
-        [Authorize]
         public async Task<IActionResult> MarkViewed(
     [FromQuery] Guid rfqId,
     [FromQuery] Guid subcontractorId,

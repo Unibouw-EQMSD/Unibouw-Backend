@@ -159,6 +159,18 @@ namespace UnibouwAPI.Controllers
             }
         }
 
+        [HttpGet("{rfqId}/workitem-info")]
+        [Authorize]
+        public async Task<IActionResult> GetWorkItemInfo(Guid rfqId)
+        {
+            var result = await _repository.GetWorkItemInfoByRfqId(rfqId);
+            return Ok(new
+            {
+                workItem = result.WorkItemName,
+                subcontractorCount = result.SubCount
+            });
+        }
+
 
 
     }
