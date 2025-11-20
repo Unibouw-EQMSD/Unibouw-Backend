@@ -26,6 +26,8 @@ builder.Services.AddScoped<IWorkItems, WorkItemsRepository>();
 builder.Services.AddScoped<ISubcontractors, SubcontractorsRepository>();
 builder.Services.AddScoped<IProjects, ProjectsRepository>();
 builder.Services.AddScoped<IRfq, RfqRepository>();
+builder.Services.AddScoped<IEmail, EmailRepository>();
+builder.Services.AddScoped<IRfqResponse, RfqResponseRepository>();
 
 // Configure Azure AD authentication with custom Unauthorized/Forbidden responses
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
