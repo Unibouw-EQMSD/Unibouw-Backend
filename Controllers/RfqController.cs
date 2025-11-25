@@ -4,6 +4,7 @@ using UnibouwAPI.Models;
 using System;
 using System.Threading.Tasks;
 using UnibouwAPI.Repositories.Interfaces;
+using UnibouwAPI.Repositories;
 
 namespace UnibouwAPI.Controllers
 {
@@ -12,11 +13,13 @@ namespace UnibouwAPI.Controllers
     public class RfqController : ControllerBase
     {
         private readonly IRfq _repository;
+        private readonly IEmail _emailRepository;
         private readonly ILogger<RfqController> _logger;
 
-        public RfqController(IRfq repository, ILogger<RfqController> logger)
+        public RfqController(IRfq repository,IEmail emailRepository, ILogger<RfqController> logger)
         {
             _repository = repository;
+            _emailRepository = emailRepository;
             _logger = logger;
         }
 
@@ -108,6 +111,59 @@ namespace UnibouwAPI.Controllers
             }
         }
 
+        [HttpPost("create-simple")]
+        [Authorize]
+        public async Task<IActionResult> CreateRfqSimple([FromBody] Rfq rfq, [FromQuery] List<Guid> subcontractorIds, [FromQuery] List<Guid> workItems)
+        {
+            try
+            {
+                if (rfq == null || subcontractorIds == null || !subcontractorIds.Any())
+                    return BadRequest(new { message = "RFQ data and subcontractor IDs are required." });
+
+                // 1️⃣ Create RFQ
+                var rfqId = await _repository.CreateRfqAsync(rfq);
+
+                // 2️⃣ Insert RFQ → WorkItem mappings
+                if (workItems != null && workItems.Any())
+                    await _repository.InsertRfqWorkItemsAsync(rfqId, workItems);
+
+                // 3️⃣ Prepare email request
+                var emailRequest = new EmailRequest
+                {
+                    RfqID = rfqId,
+                    SubcontractorIDs = subcontractorIds,
+                    WorkItems = workItems ?? new List<Guid>(),
+                    Subject = rfq.CustomerNote ?? "RFQ Invitation - Unibouw"
+                };
+
+                await _emailRepository.SendRfqEmailAsync(emailRequest);
+
+                // 4️⃣ Return created RFQ
+                var createdRfq = await _repository.GetRfqById(rfqId);
+                return Ok(new
+                {
+                    message = "RFQ created successfully and emails sent to subcontractors.",
+                    data = createdRfq
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating RFQ");
+                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
+            }
+        }
+
+        [HttpGet("{rfqId}/workitem-info")]
+        [Authorize]
+        public async Task<IActionResult> GetWorkItemInfo(Guid rfqId)
+        {
+            var result = await _repository.GetWorkItemInfoByRfqId(rfqId);
+            return Ok(new
+            {
+                workItem = result.WorkItemName,
+                subcontractorCount = result.SubCount
+            });
+        }
 
 
     }
