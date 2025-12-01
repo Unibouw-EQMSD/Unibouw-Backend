@@ -10,11 +10,13 @@ namespace UnibouwAPI.Controllers
     public class EmailController : ControllerBase
     {
         private readonly IEmail _emailRepository;
+        private readonly ISubcontractors _subcontractorRepository;
         private readonly ILogger<EmailController> _logger;
 
-        public EmailController(IEmail emailRepository, ILogger<EmailController> logger)
+        public EmailController(IEmail emailRepository, ISubcontractors subcontractorRepository, ILogger<EmailController> logger)
         {
             _emailRepository = emailRepository;
+            _subcontractorRepository = subcontractorRepository;
             _logger = logger;
         }
 
@@ -48,6 +50,37 @@ namespace UnibouwAPI.Controllers
                 });
             }
         }
+
+        [HttpPost("send-reminder")]
+        public async Task<IActionResult> SendReminder([FromBody] ReminderRequest req)
+        {
+            try
+            {
+                if (req.SubcontractorId == null) return BadRequest();
+                // Get subcontractor details
+                var sub = await _subcontractorRepository.GetSubcontractorById(req.SubcontractorId);
+
+                if (sub == null)
+                    return BadRequest("Subcontractor not found.");
+
+                var result = await _emailRepository.SendReminderEmailAsync(
+                    sub.SubcontractorID,
+                    sub.EmailID,
+                    sub.Name,
+                    req.RfqID
+                );
+
+                return Ok(new { success = result });
+            }
+            catch(Exception ex)
+            {
+                return StatusCode(500, new
+                {
+                    ex.Message,
+                });
+            }
+        }
+
 
     }
 }
