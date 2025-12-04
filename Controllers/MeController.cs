@@ -1,10 +1,5 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Security.Claims;
 
 [ApiController]
@@ -19,29 +14,6 @@ public class MeController : ControllerBase
         _logger = logger;
         _configuration = configuration;
     }
-
-    /*[AllowAnonymous]
-    [HttpGet("GetMe1")]
-    public IActionResult GetMe1()
-    {
-        try
-        {
-            return Ok(new
-            {
-                name = "Ashwini P",
-                email = "ashwini.p@flatworldsolutions.com",
-                roles = "Admin",
-                scopes = new[] { "Api.Read", "Api.Write" }
-            });
-        }
-
-        catch (Exception ex)
-        {
-            Console.WriteLine($"GetMe() failed: {ex.Message}\n{ex.StackTrace}");
-            _logger.LogError(ex, "An error occurred in GetMe");
-            return StatusCode(500, $"An unexpected error occurred: {ex.Message}");
-        }
-    }*/
 
     [HttpGet("GetMe")]
     [Authorize]

@@ -9,6 +9,7 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         Task<IEnumerable<Person>> GetAllPerson();
         Task<Person?> GetPersonById(Guid id);
+        Task<int> CreatePerson(Person person);
 
         Task<IEnumerable<SubcontractorWorkItemMapping>> GetAllSubcontractorWorkItemMapping();
         Task<List<SubcontractorWorkItemMapping?>> GetSubcontractorWorkItemMappingById(Guid id);

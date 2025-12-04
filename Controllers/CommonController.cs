@@ -101,6 +101,21 @@ namespace UnibouwAPI.Controllers
             }
         }
 
+        [HttpPost("create")]
+        public async Task<IActionResult> CreatePerson([FromBody] Person person)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var result = await _repositoryCommon.CreatePerson(person);
+
+            if (result > 0)
+                return Ok(new { message = "Person created successfully", personID = person.PersonID });
+
+            return StatusCode(500, "Failed to create person.");
+        }
+
+
         //--- Subcontractor WorkItem Mapping
         [HttpGet("subcontractorworkitemmapping")]
         [Authorize]

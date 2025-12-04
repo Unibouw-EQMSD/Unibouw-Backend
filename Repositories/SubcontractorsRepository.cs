@@ -1,9 +1,9 @@
 ﻿using Dapper;
 using Microsoft.Data.SqlClient;
 using System.Data;
+using System.Security.Claims;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
-using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
 
 namespace UnibouwAPI.Repositories
 {
@@ -83,6 +83,86 @@ namespace UnibouwAPI.Repositories
             return await _connection.ExecuteAsync(query, parameters);
         }
 
+        /* public async Task<bool> CreateSubcontractorWithMappings(Subcontractor subcontractor)
+         {
+             using (var connection = new SqlConnection(_connectionString))
+             {
+                 await connection.OpenAsync();
+                 using (var transaction = connection.BeginTransaction())
+                 {
+                     try
+                     {
+
+                         // ✅ Step 1: Check for duplicate EmailID
+                         string duplicateEmailQuery = @"
+                     SELECT COUNT(1) 
+                     FROM Subcontractors 
+                     WHERE LOWER(EmailID) = LOWER(@EmailID)
+                       AND IsDeleted = 0;
+                 ";
+
+                         int existingEmailCount = await connection.ExecuteScalarAsync<int>(
+                             duplicateEmailQuery,
+                             new { subcontractor.EmailID },
+                             transaction
+                         );
+
+                         if (existingEmailCount > 0)
+                             throw new InvalidOperationException("A subcontractor with this email address already exists.");
+
+                         // ✅ Step 2: Generate new ID if not already present
+                         subcontractor.SubcontractorID = Guid.NewGuid();
+
+                         subcontractor.CreatedOn = DateTime.UtcNow;
+                         subcontractor.IsActive ??= true;
+                         subcontractor.IsDeleted = false;
+
+                         // ✅ Step 3: Insert subcontractor
+                         string insertSubcontractorQuery = @"
+                             INSERT INTO Subcontractors 
+                             (SubcontractorID, ERP_ID, Name, Rating, EmailID, PhoneNumber1, PhoneNumber2, 
+                              Location, Country, OfficeAdress, BillingAddress, RegisteredDate, PersonID, 
+                              IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
+                             VALUES 
+                             (@SubcontractorID, @ERP_ID, @Name, @Rating, @EmailID, @PhoneNumber1, @PhoneNumber2, 
+                              @Location, @Country, @OfficeAdress, @BillingAddress, @RegisteredDate, @PersonID, 
+                              @IsActive, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
+                         ";
+
+                         await connection.ExecuteAsync(insertSubcontractorQuery, subcontractor, transaction);
+
+                         // ✅ Step 4: Insert WorkItem Mappings if provided
+                         if (subcontractor.WorkItemIDs != null && subcontractor.WorkItemIDs.Any())
+                         {
+                             string insertMappingQuery = @"
+                                 INSERT INTO SubcontractorWorkItemsMapping (SubcontractorID, WorkItemID)
+                                 VALUES (@SubcontractorID, @WorkItemID);
+                             ";
+
+                             foreach (var workItemId in subcontractor.WorkItemIDs)
+                             {
+                                 await connection.ExecuteAsync(insertMappingQuery, new
+                                 {
+                                     SubcontractorID = subcontractor.SubcontractorID,
+                                     WorkItemID = workItemId
+                                 }, transaction);
+                             }
+                         }
+
+                         // ✅ Step 5: Commit
+                         transaction.Commit();
+                         return true;
+                     }
+                     catch (Exception)
+                     {
+                         transaction.Rollback();
+                         throw;
+                     }
+                 }
+             }
+         }
+ */
+
         public async Task<bool> CreateSubcontractorWithMappings(Subcontractor subcontractor)
         {
             using (var connection = new SqlConnection(_connectionString))
@@ -93,7 +173,9 @@ namespace UnibouwAPI.Repositories
                     try
                     {
 
-                        // ✅ Step 1: Check for duplicate EmailID
+                        // ============================
+                        //  STEP 1: CHECK DUPLICATE EMAIL
+                        // ============================
                         string duplicateEmailQuery = @"
                     SELECT COUNT(1) 
                     FROM Subcontractors 
@@ -108,52 +190,90 @@ namespace UnibouwAPI.Repositories
                         );
 
                         if (existingEmailCount > 0)
-                            throw new InvalidOperationException("A subcontractor with this email address already exists.");
+                            throw new InvalidOperationException("A subcontractor with this email already exists");
 
-                        // ✅ Step 2: Generate new ID if not already present
+
+                        // ============================
+                        //  STEP 2: CREATE CONTACT PERSON
+                        // ============================
+                        var person = new Person
+                        {
+                            PersonID = Guid.NewGuid(),
+                            Name = subcontractor.ContactName,
+                            Mail = subcontractor.ContactEmailID,
+                            PhoneNumber1 = subcontractor.ContactPhone,
+                            Address = subcontractor.OfficeAddress,
+                            Country = subcontractor.Country,
+                            City = subcontractor.Location,
+                            CreatedOn = DateTime.UtcNow,
+                            CreatedBy = subcontractor.CreatedBy,
+                            IsDeleted = false
+                        };
+
+                        string insertPersonQuery = @"
+                    INSERT INTO Persons
+                    (PersonID, ERP_ID, Name, Mail, PhoneNumber1, PhoneNumber2, Address, State, City, Country, PostalCode, 
+                     CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
+                    VALUES
+                    (@PersonID, @ERP_ID, @Name, @Mail, @PhoneNumber1, @PhoneNumber2, @Address, @State, @City, @Country, @PostalCode,
+                     @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
+                ";
+
+                        await connection.ExecuteAsync(insertPersonQuery, person, transaction);
+
+                        // Store generated PersonID in subcontractor
+                        subcontractor.PersonID = person.PersonID;
+
+
+                        // ============================
+                        //  STEP 3: INSERT SUBCONTRACTOR
+                        // ============================
                         subcontractor.SubcontractorID = Guid.NewGuid();
-
                         subcontractor.CreatedOn = DateTime.UtcNow;
                         subcontractor.IsActive ??= true;
                         subcontractor.IsDeleted = false;
 
-                        // ✅ Step 3: Insert subcontractor
                         string insertSubcontractorQuery = @"
-                            INSERT INTO Subcontractors 
-                            (SubcontractorID, ERP_ID, Name, Rating, EmailID, PhoneNumber1, PhoneNumber2, 
-                             Location, Country, OfficeAdress, BillingAddress, RegisteredDate, PersonID, 
-                             IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
-                            VALUES 
-                            (@SubcontractorID, @ERP_ID, @Name, @Rating, @EmailID, @PhoneNumber1, @PhoneNumber2, 
-                             @Location, @Country, @OfficeAdress, @BillingAddress, @RegisteredDate, @PersonID, 
-                             @IsActive, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
-                        ";
+                    INSERT INTO Subcontractors 
+                    (SubcontractorID, ERP_ID, Name, Rating, EmailID, PhoneNumber1, PhoneNumber2, 
+                     Location, Country, OfficeAddress, BillingAddress, RegisteredDate, PersonID, 
+                     IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
+                    VALUES 
+                    (@SubcontractorID, @ERP_ID, @Name, @Rating, @EmailID, @PhoneNumber1, @PhoneNumber2, 
+                     @Location, @Country, @OfficeAddress, @BillingAddress, @RegisteredDate, @PersonID, 
+                     @IsActive, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
+                ";
 
                         await connection.ExecuteAsync(insertSubcontractorQuery, subcontractor, transaction);
 
-                        // ✅ Step 4: Insert WorkItem Mappings if provided
+
+                        // ============================
+                        //  STEP 4: INSERT WORKITEM MAPPINGS
+                        // ============================
                         if (subcontractor.WorkItemIDs != null && subcontractor.WorkItemIDs.Any())
                         {
                             string insertMappingQuery = @"
-                                INSERT INTO SubcontractorWorkItemsMapping (SubcontractorID, WorkItemID)
-                                VALUES (@SubcontractorID, @WorkItemID);
-                            ";
+                        INSERT INTO SubcontractorWorkItemsMapping 
+                        (SubcontractorID, WorkItemID)
+                        VALUES (@SubcontractorID, @WorkItemID);
+                    ";
 
                             foreach (var workItemId in subcontractor.WorkItemIDs)
                             {
-                                await connection.ExecuteAsync(insertMappingQuery, new
-                                {
-                                    SubcontractorID = subcontractor.SubcontractorID,
-                                    WorkItemID = workItemId
-                                }, transaction);
+                                await connection.ExecuteAsync(insertMappingQuery,
+                                    new { SubcontractorID = subcontractor.SubcontractorID, WorkItemID = workItemId },
+                                    transaction
+                                );
                             }
                         }
 
-                        // ✅ Step 5: Commit
+                        // ============================
+                        //  STEP 5: COMMIT
+                        // ============================
                         transaction.Commit();
                         return true;
                     }
-                    catch (Exception)
+                    catch
                     {
                         transaction.Rollback();
                         throw;

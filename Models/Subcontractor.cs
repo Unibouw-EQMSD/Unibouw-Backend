@@ -17,7 +17,7 @@ public partial class Subcontractor
     public string? PhoneNumber2 { get; set; }
     public string? Location { get; set; }
     public string? Country { get; set; }
-    public string? OfficeAdress { get; set; }
+    public string? OfficeAddress { get; set; }
     public string? BillingAddress { get; set; }
     public DateTime? RegisteredDate { get; set; }
     public Guid? PersonID { get; set; }
@@ -41,4 +41,8 @@ public partial class Subcontractor
     public string? PersonName { get; set; }
 
     public List<Guid>? WorkItemIDs { get; set; }
+
+    public string? ContactName { get; set; }        // INPUT from form
+    public string? ContactEmailID { get; set; }     // INPUT from form
+    public string? ContactPhone { get; set; }       // INPUT from form
 }

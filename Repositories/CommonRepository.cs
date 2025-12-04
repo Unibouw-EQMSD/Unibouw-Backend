@@ -48,6 +48,24 @@ namespace UnibouwAPI.Repositories
                 new { Id = id });
         }
 
+        public async Task<int> CreatePerson(Person person)
+        {
+            var sql = @"
+        INSERT INTO Persons 
+        (PersonID, ERP_ID, Name, Mail, PhoneNumber1, PhoneNumber2, Address, State, City, Country, PostalCode,
+         CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
+        VALUES 
+        (@PersonID, @ERP_ID, @Name, @Mail, @PhoneNumber1, @PhoneNumber2, @Address, @State, @City, @Country, @PostalCode,
+         @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted)";
+
+            person.PersonID = Guid.NewGuid();
+            person.CreatedOn = DateTime.UtcNow;
+            person.IsDeleted = false;
+
+            return await _connection.ExecuteAsync(sql, person);
+        }
+
+
         //------ SubcontractorWorkItemMapping
         public async Task<IEnumerable<SubcontractorWorkItemMapping>> GetAllSubcontractorWorkItemMapping()
         {
