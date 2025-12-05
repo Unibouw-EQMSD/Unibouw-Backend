@@ -301,6 +301,7 @@ SELECT
     wi.Name AS WorkItemName,
     rfq.RfqID,
     rfq.RfqNumber,               -- ✅ Add this
+    rfq.DueDate AS DueDate, 
     s.SubcontractorID,
     s.Name AS SubcontractorName,
     ISNULL(s.Rating,0) AS Rating,
@@ -366,6 +367,7 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
                             notInterested,
 
                             quote = "—",
+                            dueDate = r.DueDate?.ToString("dd/MM/yyyy") ?? "—",
                             actions = new[] { "pdf", "chat" }
                         };
                     }).ToList();
