@@ -62,7 +62,7 @@ namespace UnibouwAPI.Repositories
                        AND EmailID <> '' AND IsActive = 1 AND IsDeleted = 0";
 
                 var subcontractors = (await _connection.QueryAsync<(Guid Id, string Email, string Name)>(
-                                       query, new { Ids = request.SubcontractorIDs })).ToList();
+                                        query, new { Ids = request.SubcontractorIDs })).ToList();
 
                 if (!subcontractors.Any())
                     throw new Exception("No valid subcontractor emails found.");
@@ -72,7 +72,20 @@ namespace UnibouwAPI.Repositories
                     string projectSummaryUrl =
                         $"{webBaseUrl}/project-summary?rfqId={request.RfqID}&subId={sub.Id}&workItemId={workItemId}";
 
-                    string htmlBody = $@"
+                    // 🔹 Use request.Body if provided, else fallback
+                    string emailBody = request.Body;
+                    if (!string.IsNullOrWhiteSpace(emailBody))
+                    {
+                        // Inject the project summary link dynamically if you want it included
+                        emailBody += $@"
+                <p><a href='{projectSummaryUrl}'
+                  style='padding:12px 20px;background-color:#f97316;color:white;text-decoration:none;border-radius:6px;'>
+                  View Project Summary</a></p>";
+                    }
+                    else
+                    {
+                        // Default body if none provided
+                        emailBody = $@"
                 <p>Dear {WebUtility.HtmlEncode(sub.Name)},</p>
                 <p>You have been invited to participate in a Quote Request (RFQ).</p>
                 <p>Please click the link below to view project details and respond:</p>
@@ -80,12 +93,17 @@ namespace UnibouwAPI.Repositories
                       style='padding:12px 20px;background-color:#f97316;color:white;text-decoration:none;border-radius:6px;'>
                       View Project Summary</a></p>
                 <p>Thank you,<br/>Unibouw Team</p>";
+                    }
+                    var subject = "RFQ Invitation - Unibouw";
+
+                    // Remove newlines and trim
+                    subject = subject.Replace("\r", " ").Replace("\n", " ").Trim();
 
                     var mail = new MailMessage()
                     {
                         From = new MailAddress(fromEmail, displayName),
-                        Subject = request.Subject ?? "RFQ Invitation - Unibouw",
-                        Body = htmlBody,
+                        Subject = subject,
+                        Body = emailBody,   // This can contain multiline text
                         IsBodyHtml = true
                     };
 
@@ -98,20 +116,18 @@ namespace UnibouwAPI.Repositories
             }
             catch (SmtpException smtpEx)
             {
-                // SMTP-specific errors
                 throw new Exception($"SMTP error occurred: {smtpEx.Message}", smtpEx);
             }
             catch (SqlException sqlEx)
             {
-                // SQL-specific errors
                 throw new Exception($"Database error occurred: {sqlEx.Message}", sqlEx);
             }
             catch (Exception ex)
             {
-                // General errors
                 throw new Exception($"Failed to send RFQ emails: {ex.Message}", ex);
             }
         }
+
 
 
         private bool IsValidEmail(string email)
