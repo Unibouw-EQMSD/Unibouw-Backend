@@ -305,7 +305,7 @@ namespace UnibouwAPI.Controllers
                 subcontractorId,
                 file,
                 totalAmount,
-                comment // ← save it
+                comment
             );
 
             if (!success)
