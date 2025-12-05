@@ -232,9 +232,9 @@ namespace UnibouwAPI.Controllers
             {
                 bool success = await _repository.SaveResponseAsync(rfqId, subId, workItemId, status);
 
-            if (success)
-            {
-                string htmlContent = $@"
+                if (success)
+                {
+                    string htmlContent = $@"
                     <html>
                         <body style='font-family:Arial;text-align:center;padding:40px'>
                             <h2>Thank you for your response!</h2>
@@ -243,10 +243,10 @@ namespace UnibouwAPI.Controllers
                         </body>
                     </html>";
 
-                return Content(htmlContent, "text/html");
-            }
+                    return Content(htmlContent, "text/html");
+                }
 
-            return BadRequest("Unable to save your response. Please try again later.");
+                return BadRequest("Unable to save your response. Please try again later.");
             }
             catch (Exception ex)
             {
@@ -287,46 +287,31 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpPost("UploadQuote")]
-        public async Task<IActionResult> UploadQuote([FromQuery] Guid rfqId,[FromQuery] Guid subcontractorId, IFormFile file)
+        public async Task<IActionResult> UploadQuote(
+     [FromQuery] Guid rfqId,
+     [FromQuery] Guid subcontractorId,
+     [FromForm] decimal totalAmount,
+     [FromForm] string comment,
+     IFormFile file)
         {
-            try
-            {
-                if (rfqId == Guid.Empty || subcontractorId == Guid.Empty)
-                    return BadRequest("Invalid RFQ ID or Subcontractor ID.");
+            if (rfqId == Guid.Empty || subcontractorId == Guid.Empty)
+                return BadRequest("Invalid RFQ or Subcontractor ID.");
 
-                if (file == null || file.Length == 0)
-                    return BadRequest("No file uploaded.");
+            if (file == null || file.Length == 0)
+                return BadRequest("No file uploaded.");
 
-                // 1️ Read file bytes and get extension
-                byte[] fileBytes;
-                using (var ms = new MemoryStream())
-                {
-                    await file.CopyToAsync(ms);
-                    fileBytes = ms.ToArray();
-                }
-                string extension = Path.GetExtension(file.FileName).ToLower();
+            var success = await _repository.UploadQuoteAsync(
+                rfqId,
+                subcontractorId,
+                file,
+                totalAmount,
+                comment // ← save it
+            );
 
-                // 2️ Extract quote amount from bytes
-                string extractedAmount = ExtractQuoteAmount(fileBytes, extension);
+            if (!success)
+                return BadRequest("Upload failed.");
 
-                // 3️ Save file to DB via repository
-                var success = await _repository.UploadQuoteAsync(rfqId, subcontractorId, file);
-
-                if (!success)
-                    return BadRequest("Upload failed");
-
-                // 4 Return response with amount
-                return Ok(new
-                {
-                    message = "Quote uploaded successfully",
-                    quoteAmount = extractedAmount
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"UploadQuote Error: {ex}");
-                return StatusCode(500, new { message = "Internal server error", error = ex.Message });
-            }
+            return Ok(new { message = "Quote uploaded successfully", totalAmount, comment });
         }
 
         private string ExtractQuoteAmount(byte[] fileBytes, string extension)
@@ -458,7 +443,8 @@ namespace UnibouwAPI.Controllers
 
                 return result;
             }
-            catch {
+            catch
+            {
                 // If parsing fails for any reason, safely return 0.
                 return 0;
             }
@@ -470,23 +456,16 @@ namespace UnibouwAPI.Controllers
         {
             try
             {
-                var quote = await _repository.GetQuoteAsync(rfqId, subcontractorId);
+                var totalAmount = await _repository.GetTotalQuoteAmountAsync(rfqId, subcontractorId);
 
-                if (quote == null)
-                    return Ok(new { quoteAmount = "-" }); // no file uploaded
+                if (totalAmount == null)
+                    return Ok(new { quoteAmount = "-" }); // no quote submitted yet
 
-                // Retrieve file extension (you might need to store it in DB when uploading)
-                string extension = ".pdf"; // <-- or quote.Value.FileName extension
-
-                // Extract amount from saved PDF/Excel bytes
-                string amount = ExtractQuoteAmount(quote.Value.FileBytes, extension);
-
-                return Ok(new { quoteAmount = amount });
+                return Ok(new { quoteAmount = totalAmount });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ An error occurred while retrieving the quote amount.");
-
+                _logger.LogError(ex, "❌ Error retrieving total quote amount.");
                 return StatusCode(500, new
                 {
                     message = "An error occurred while retrieving the quote amount.",
@@ -495,37 +474,45 @@ namespace UnibouwAPI.Controllers
             }
         }
 
-        [HttpGet("DownloadQuote")]
-        [Authorize]
-        public async Task<IActionResult> DownloadQuote([FromQuery] Guid rfqId,[FromQuery] Guid subcontractorId)
+
+        [HttpGet("PreviousSubmissions")]
+        public async Task<IActionResult> PreviousSubmissions([FromQuery] Guid rfqId, [FromQuery] Guid subcontractorId)
         {
-            try
-            {
-                if (rfqId == Guid.Empty || subcontractorId == Guid.Empty)
-                    return BadRequest("Invalid RFQ ID or Subcontractor ID.");
-
-                var fileData = await _repository.GetQuoteAsync(rfqId, subcontractorId);
-
-                if (fileData == null)
-                    return NotFound("No quote uploaded for this RFQ.");
-
-                // Deconstruct tuple
-                var (bytes, fileName) = fileData.Value;
-
-                return File(bytes, "application/octet-stream", fileName);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "❌ An error occurred while downloading the quote.");
-
-                return StatusCode(500, new
-                {
-                    success = false,
-                    message = "An error occurred while downloading the quote.",
-                    details = ex.Message
-                });
-            }
+            var submissions = await _repository.GetPreviousSubmissionsAsync(rfqId, subcontractorId);
+            return Ok(submissions);
         }
+
+        //[HttpGet("DownloadQuote")]
+        //[Authorize]
+        //public async Task<IActionResult> DownloadQuote([FromQuery] Guid rfqId, [FromQuery] Guid subcontractorId)
+        //{
+        //    try
+        //    {
+        //        if (rfqId == Guid.Empty || subcontractorId == Guid.Empty)
+        //            return BadRequest("Invalid RFQ ID or Subcontractor ID.");
+
+        //        var fileData = await _repository.GetTotalQuoteAmountAsync(rfqId, subcontractorId);
+
+        //        if (fileData == null)
+        //            return NotFound("No quote uploaded for this RFQ.");
+
+        //        // Deconstruct tuple
+        //        var (bytes, fileName) = fileData.Value;
+
+        //        return File(bytes, "application/octet-stream", fileName);
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        _logger.LogError(ex, "❌ An error occurred while downloading the quote.");
+
+        //        return StatusCode(500, new
+        //        {
+        //            success = false,
+        //            message = "An error occurred while downloading the quote.",
+        //            details = ex.Message
+        //        });
+        //    }
+        //}
 
         [HttpGet("responses/project/{projectId}")]
         [Authorize]
@@ -541,7 +528,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                 _logger.LogError(ex, "Error in GetResponsesByProject");
+                _logger.LogError(ex, "Error in GetResponsesByProject");
                 return StatusCode(500, new
                 {
                     success = false,
@@ -578,7 +565,7 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpPost("mark-viewed")]
-        public async Task<IActionResult> MarkViewed([FromQuery] Guid rfqId,[FromQuery] Guid subcontractorId,[FromQuery] Guid workItemId)
+        public async Task<IActionResult> MarkViewed([FromQuery] Guid rfqId, [FromQuery] Guid subcontractorId, [FromQuery] Guid workItemId)
         {
             try
             {
@@ -599,5 +586,12 @@ namespace UnibouwAPI.Controllers
             }
         }
 
+
+        [HttpDelete("DeleteQuoteFile")]
+        public async Task<IActionResult> DeleteQuoteFile(Guid rfqId, Guid subcontractorId)
+        {
+            var result = await _repository.DeleteQuoteFile(rfqId, subcontractorId);
+            return result ? Ok() : NotFound();
+        }
     }
 }

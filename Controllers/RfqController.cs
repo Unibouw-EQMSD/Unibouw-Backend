@@ -88,20 +88,23 @@ namespace UnibouwAPI.Controllers
         {
             try
             {
-                var item = await _repository.GetRfqByProjectId(projectId);
+                // ⭐ CHANGE: Use GetAllRfqByProjectId to fetch ALL RFQs for the project
+                var items = await _repository.GetRfqByProjectId(projectId);
 
-                if (item == null)
+                if (items == null || !items.Any())
                 {
                     return NotFound(new
                     {
                         message = $"No RFQ found for Project ID: {projectId}.",
-                        data = (Rfq?)null
+                        // ⭐ Return an empty array here for consistency
+                        data = Array.Empty<Rfq>()
                     });
                 }
 
+                // ⭐ Return the collection of items
                 return Ok(new
                 {
-                    data = item
+                    data = items
                 });
             }
             catch (Exception ex)
@@ -113,42 +116,115 @@ namespace UnibouwAPI.Controllers
 
         [HttpPost("create-simple")]
         [Authorize]
-        public async Task<IActionResult> CreateRfqSimple([FromBody] Rfq rfq, [FromQuery] List<Guid> subcontractorIds, [FromQuery] List<Guid> workItems)
+        public async Task<IActionResult> CreateRfqSimple(
+     [FromBody] Rfq rfq,
+     [FromQuery] List<Guid> subcontractorIds,
+     [FromQuery] List<Guid> workItems,
+     [FromQuery] bool sendEmail = true)
         {
-            try
+            if (rfq == null || subcontractorIds == null || !subcontractorIds.Any())
+                return BadRequest(new { message = "RFQ data and subcontractor IDs are required." });
+
+            rfq.DeadLine = rfq.DueDate;
+            rfq.RfqSent = sendEmail ? 1 : 0;
+            rfq.Status = sendEmail ? "Sent" : "Draft";
+
+            var rfqId = await _repository.CreateRfqAsync(rfq);
+
+            if (workItems != null && workItems.Any())
+                await _repository.InsertRfqWorkItemsAsync(rfqId, workItems);
+
+            if (sendEmail)
             {
-                if (rfq == null || subcontractorIds == null || !subcontractorIds.Any())
-                    return BadRequest(new { message = "RFQ data and subcontractor IDs are required." });
-
-                // 1️⃣ Create RFQ
-                var rfqId = await _repository.CreateRfqAsync(rfq);
-
-                // 2️⃣ Insert RFQ → WorkItem mappings
-                if (workItems != null && workItems.Any())
-                    await _repository.InsertRfqWorkItemsAsync(rfqId, workItems);
-
-                // 3️⃣ Prepare email request
                 var emailRequest = new EmailRequest
                 {
                     RfqID = rfqId,
                     SubcontractorIDs = subcontractorIds,
                     WorkItems = workItems ?? new List<Guid>(),
-                    Subject = rfq.CustomerNote ?? "RFQ Invitation - Unibouw"
+                    Subject = rfq.CustomerNote ?? "RFQ Invitation - Unibouw",
+                    Body = rfq.CustomerNote
+                };
+                await _emailRepository.SendRfqEmailAsync(emailRequest);
+            }
+
+            var createdRfq = await _repository.GetRfqById(rfqId);
+            return Ok(new { message = "RFQ processed successfully.", data = createdRfq });
+        }
+
+
+        [HttpPut("{rfqId}")]
+        [Authorize]
+        public async Task<IActionResult> UpdateRfq(
+      Guid rfqId,
+      [FromBody] Rfq rfq,
+      [FromQuery] List<Guid> subcontractorIds,
+      [FromQuery] List<Guid> workItems,
+      [FromQuery] bool sendEmail = false)
+        {
+            if (rfq == null || rfqId == Guid.Empty)
+                return BadRequest(new { message = "RFQ data and ID are required." });
+
+            if (rfqId != rfq.RfqID)
+                return BadRequest(new { message = "Mismatched RFQ ID." });
+
+            // Match CreateRfqSimple logic
+            rfq.DeadLine = rfq.DueDate;
+            rfq.RfqSent = sendEmail ? 1 : rfq.RfqSent;
+            rfq.Status = sendEmail ? "Sent" : rfq.Status;
+
+            // 1️⃣ Update RFQ
+            var updateSuccess = await _repository.UpdateRfqAsync(rfq);
+            if (!updateSuccess)
+                return NotFound(new { message = $"RFQ with ID {rfqId} not found or update failed." });
+
+            // 2️⃣ Update WorkItems
+            if (workItems != null && workItems.Any())
+                await _repository.UpdateRfqWorkItemsAsync(rfqId, workItems);
+
+            // 3️⃣ Update Subcontractors
+            if (subcontractorIds != null && subcontractorIds.Any())
+                await _repository.UpdateRfqSubcontractorsAsync(rfqId, subcontractorIds);
+
+            // 4️⃣ Email sending (same pattern as CreateRfqSimple)
+            if (sendEmail)
+            {
+                var emailRequest = new EmailRequest
+                {
+                    RfqID = rfqId,
+                    SubcontractorIDs = subcontractorIds ?? new List<Guid>(),
+                    WorkItems = workItems ?? new List<Guid>(),
+                    Subject = rfq.CustomerNote ?? "RFQ Invitation - Unibouw",
+                    Body = rfq.CustomerNote
                 };
 
                 await _emailRepository.SendRfqEmailAsync(emailRequest);
+            }
 
-                // 4️⃣ Return created RFQ
-                var createdRfq = await _repository.GetRfqById(rfqId);
-                return Ok(new
-                {
-                    message = "RFQ created successfully and emails sent to subcontractors.",
-                    data = createdRfq
-                });
+            var updatedRfq = await _repository.GetRfqById(rfqId);
+
+            return Ok(new
+            {
+                message = sendEmail
+                    ? "RFQ updated successfully and emails sent."
+                    : "RFQ updated successfully.",
+                data = updatedRfq
+            });
+        }
+
+
+
+        [HttpGet("{rfqId}/subcontractor-duedates")]
+        [Authorize]
+        public async Task<IActionResult> GetRfqSubcontractorDueDates(Guid rfqId)
+        {
+            try
+            {
+                var dates = await _repository.GetRfqSubcontractorDueDatesAsync(rfqId);
+                return Ok(dates);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error creating RFQ");
+                _logger.LogError(ex, "Error fetching subcontractor due dates for RFQ {RfqId}", rfqId);
                 return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
             }
         }

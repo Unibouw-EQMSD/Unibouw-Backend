@@ -24,5 +24,9 @@
         public string? CustomerName { get; set; }
         public string? ProjectName { get; set; }
         public string? RfqResponseStatusName { get; set; }
+        public string? RfqNumber { get; set; }
+        public string? Status { get; set; }
+        public DateTime? GlobalDueDate { get; set; }
+
     }
 }
