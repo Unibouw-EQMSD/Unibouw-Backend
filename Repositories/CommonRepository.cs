@@ -251,6 +251,30 @@ namespace UnibouwAPI.Repositories
                 new { Id = id });
         }
 
+        //------ Global Rfq Reminder Set
+        // Get all reminder settings
+        public async Task<IEnumerable<RfqGolbalReminderSet>> GetRfqGolbalReminderSet()
+        {
+            string query = @"SELECT * FROM RfqGolbalReminderSet";
+            return await _connection.QueryAsync<RfqGolbalReminderSet>(query);
+        }
 
+        // Update reminder settings
+        public async Task<int> UpdateRfqGolbalReminderSet(RfqGolbalReminderSet reminder)
+        {
+            const string sql = @"
+        UPDATE TOP (1) RfqGolbalReminderSet
+        SET 
+            ReminderSequence = @ReminderSequence,
+            ReminderTime = @ReminderTime,
+            ReminderEmailBody = @ReminderEmailBody,
+            UpdatedBy = @UpdatedBy,
+            UpdatedAt = @UpdatedAt,
+            IsEnable = @IsEnable";
+
+            return await _connection.ExecuteAsync(sql, reminder);
+
+
+        }
     }
 }

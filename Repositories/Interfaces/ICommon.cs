@@ -32,5 +32,8 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         Task<IEnumerable<RfqResponseStatus>> GetAllRfqResponseStatus();
         Task<RfqResponseStatus?> GetRfqResponseStatusById(Guid id);
+
+        Task<IEnumerable<RfqGolbalReminderSet>> GetRfqGolbalReminderSet();
+        Task<int> UpdateRfqGolbalReminderSet(RfqGolbalReminderSet reminder);
     }
 }
