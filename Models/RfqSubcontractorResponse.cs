@@ -13,5 +13,7 @@
         public string Comment { get; set; } = string.Empty;
         public DateTime CreatedOn { get; set; } = DateTime.Now;
         public DateTime? ModifiedOn { get; set; }
+        public decimal? TotalQuoteAmount { get; set; }
+        public  int? SubmissionCount { get; set; }  
     }
 }

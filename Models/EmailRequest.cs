@@ -7,5 +7,7 @@
         public string ToEmail { get; set; } = string.Empty;
         public string Subject { get; set; } = "RFQ Invitation - Unibouw";
         public List<Guid> WorkItems { get; set; } = new();
+        public string Body { get; set; } // Editable email content
+
     }
 }

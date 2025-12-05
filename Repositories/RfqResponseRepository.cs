@@ -237,85 +237,50 @@ WHERE rwim.RfqID = @RfqID";
             };
         }
 
-        public async Task<bool> UploadQuoteAsync(Guid rfqId, Guid subcontractorId, IFormFile file)
+        public async Task<List<RfqResponseDocument>> GetPreviousSubmissionsAsync(Guid rfqId, Guid subcontractorId)
         {
-            try
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            var submissions = await conn.QueryAsync<RfqResponseDocument>(@"
+        SELECT *
+        FROM RfqResponseDocuments
+        WHERE RfqID = @RfqID
+          AND SubcontractorID = @SubID
+          AND (IsDeleted IS NULL OR IsDeleted = 0)
+        ORDER BY UploadedOn DESC
+    ", new { RfqID = rfqId, SubID = subcontractorId });
+
+            return submissions.ToList();
+        }
+
+
+        public async Task<bool> UploadQuoteAsync(Guid rfqId, Guid subcontractorId, IFormFile file, decimal totalAmount, string comment)
+        {
+            using (var conn = new SqlConnection(_connectionString))
             {
-                // 1️⃣ Save file to folder
-                var folderPath = Path.Combine("Uploads", "RFQQuotes", rfqId.ToString());
-                Directory.CreateDirectory(folderPath);
+                var query = @"
+UPDATE RfqSubcontractorResponse
+SET 
+    TotalQuoteAmount = @amount,
+    Comment = @comment,
+    ModifiedOn = GETDATE(),
+    SubmissionCount = SubmissionCount + 1
+WHERE RfqID = @rfqId AND SubcontractorID = @subId;
+";
 
-                var filePath = Path.Combine(folderPath, file.FileName);
-                using (var stream = new FileStream(filePath, FileMode.Create))
+                var result = await conn.ExecuteAsync(query, new
                 {
-                    await file.CopyToAsync(stream);
-                }
+                    amount = totalAmount,
+                    comment,
+                    rfqId,
+                    subId = subcontractorId
+                });
 
-                // 2️⃣ Read file bytes
-                byte[] fileBytes;
-                using (var ms = new MemoryStream())
-                {
-                    await file.CopyToAsync(ms);
-                    fileBytes = ms.ToArray();
-                }
-
-                using (var conn = new SqlConnection(_connectionString))
-                {
-                    await conn.OpenAsync();
-                    using (var tx = conn.BeginTransaction())
-                    {
-                        // 3️⃣ Insert into RfqResponseDocuments
-                        var insertDocCmd = new SqlCommand(@"
-                    INSERT INTO [dbo].[RfqResponseDocuments]
-                    (RfqResponseDocumentID, RfqID, SubcontractorID, FileName, FileData, UploadedOn)
-                    VALUES (@ID, @RfqID, @SubID, @FileName, @Data, @UploadedOn);
-                ", conn, tx);
-
-                        insertDocCmd.Parameters.AddWithValue("@ID", Guid.NewGuid());
-                        insertDocCmd.Parameters.AddWithValue("@RfqID", rfqId);
-                        insertDocCmd.Parameters.AddWithValue("@SubID", subcontractorId);
-                        insertDocCmd.Parameters.AddWithValue("@FileName", file.FileName);
-                        insertDocCmd.Parameters.AddWithValue("@Data", fileBytes);
-                        insertDocCmd.Parameters.AddWithValue("@UploadedOn", DateTime.UtcNow);
-                        await insertDocCmd.ExecuteNonQueryAsync();
-
-                        // 4️⃣ Get SubcontractorResponseID
-                        var getResponseCmd = new SqlCommand(@"
-                    SELECT RfqSubcontractorResponseID
-                    FROM RfqSubcontractorResponse
-                    WHERE RfqID = @RfqID AND SubcontractorID = @SubID;
-                ", conn, tx);
-
-                        getResponseCmd.Parameters.AddWithValue("@RfqID", rfqId);
-                        getResponseCmd.Parameters.AddWithValue("@SubID", subcontractorId);
-
-                        var responseId = (Guid?)await getResponseCmd.ExecuteScalarAsync();
-
-                        if (responseId != null)
-                        {
-                            // 5️⃣ Mark status as Responded
-                            var updateStatusCmd = new SqlCommand(@"
-                        UPDATE RfqResponseStatus
-                        SET RfqResponseStatusName = 'Responded'
-                        WHERE RfqResponseID = @RespID;
-                    ", conn, tx);
-
-                            updateStatusCmd.Parameters.AddWithValue("@RespID", responseId);
-                            await updateStatusCmd.ExecuteNonQueryAsync();
-                        }
-
-                        tx.Commit();
-                    }
-                }
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("UPLOAD ERROR: " + ex.Message);
-                return false;
+                return result > 0;
             }
         }
+
 
         public async Task<object?> GetRfqResponsesByProjectAsync(Guid projectId)
         {
@@ -335,35 +300,28 @@ SELECT
     wi.WorkItemID,
     wi.Name AS WorkItemName,
     rfq.RfqID,
+    rfq.RfqNumber,               -- ✅ Add this
     s.SubcontractorID,
     s.Name AS SubcontractorName,
     ISNULL(s.Rating,0) AS Rating,
     rs.RfqResponseStatusName AS StatusName,
     lr.CreatedOn AS ResponseDate,
-
-    -- ⭐ ADD ONLY THIS FOR DOCUMENT CHECK
     CASE WHEN doc.RfqResponseDocumentID IS NULL THEN 0 ELSE 1 END AS HasDocument
-
 FROM Projects p
 INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
 INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
 INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
-
 LEFT JOIN LatestResponse lr
     ON lr.RfqID = rfq.RfqID AND lr.rn = 1  
-
 LEFT JOIN Subcontractors s 
     ON s.SubcontractorID = lr.SubcontractorID
-
 LEFT JOIN RfqResponseStatus rs 
     ON rs.RfqResponseID = lr.RfqResponseID
-
--- ⭐ NEW JOIN FOR DOCUMENT CHECK
 LEFT JOIN RfqResponseDocuments doc
     ON doc.RfqID = rfq.RfqID AND doc.SubcontractorID = s.SubcontractorID
-
 WHERE p.ProjectID = @ProjectID
 ORDER BY wi.Name, rfq.RfqID, s.Name;
+
 ";
 
             var rows = (await conn.QueryAsync(sql, new { ProjectID = projectId })).ToList();
@@ -378,15 +336,21 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
                         string status = r.StatusName ?? "Not Responded";
 
                         // ⭐ ONLY THIS LINE CHANGED
-                        bool responded = status == "Responded" || r.HasDocument == 1;
+                        bool responded =
+                            status == "Interested" ||
+                            status == "Maybe Later" ||
+                            status == "Not Interested";
+                        bool interested = status == "Interested";
+                        bool maybeLater = status == "Maybe Later";
+                        bool notInterested = status == "Not Interested";
 
-                        bool interested = status == "Interested" || responded;
+                        // ⭐ Viewed should be TRUE for all statuses that imply they saw the RFQ
                         bool viewed =
                             status == "Viewed" ||
                             interested ||
-                            responded ||
-                            status == "Maybe Later" ||
-                            status == "Not Interested";
+                            maybeLater ||
+                            notInterested ||
+                            responded;
                         return new
                         {
                             subcontractorId = r.SubcontractorID,
@@ -395,9 +359,11 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
                             date = r.ResponseDate?.ToString("dd/MM/yyyy") ?? "—",
                             rfqId = g.Key.RfqID.ToString(),
 
-                            responded = responded,
-                            interested = interested,
-                            viewed = viewed,
+                            responded,
+                            interested,
+                            maybeLater,
+                            viewed,
+                            notInterested,
 
                             quote = "—",
                             actions = new[] { "pdf", "chat" }
@@ -409,7 +375,8 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
                         workItemId = g.Key.WorkItemID,
                         workItemName = g.Key.WorkItemName,
                         rfqId = g.Key.RfqID.ToString(),
-                        subcontractors = subcontractors
+                        subcontractors = subcontractors,
+                        rfqNumber = g.First().RfqNumber,
                     };
                 }).ToList();
 
@@ -434,6 +401,7 @@ SELECT
     wi.WorkItemID,
     wi.Name AS WorkItemName,
     rfq.RfqID,
+    rfq.RfqNumber,               -- ✅ Add this
     s.SubcontractorID,
     s.Name AS SubcontractorName,
     ISNULL(s.Rating,0) AS Rating,
@@ -444,7 +412,6 @@ FROM Projects p
 INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
 INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
 INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
-
 LEFT JOIN LatestResponse lr
     ON lr.RfqID = rfq.RfqID AND lr.rn = 1  
 LEFT JOIN Subcontractors s 
@@ -453,68 +420,57 @@ LEFT JOIN RfqResponseStatus rs
     ON rs.RfqResponseID = lr.RfqResponseID
 LEFT JOIN RfqResponseDocuments doc
     ON doc.RfqID = rfq.RfqID AND doc.SubcontractorID = s.SubcontractorID
-
 WHERE p.ProjectID = @ProjectID
-ORDER BY s.Name, wi.Name;
+ORDER BY wi.Name;
+
 ";
 
             var rows = (await conn.QueryAsync(sql, new { ProjectID = projectId })).ToList();
-            if (!rows.Any()) return null;
+            if (!rows.Any())
+                return null;
 
-            // ---------------------------------------
-            // Reuse same status logic as your method
-            // ---------------------------------------
-            Func<dynamic, (bool responded, bool interested, bool viewed)> statusLogic = (r) =>
+            // Flattened list — no grouping by subcontractor
+            var result = rows.Select(r =>
             {
                 string status = r.StatusName ?? "Not Responded";
-                bool responded = status == "Responded" || r.HasDocument == 1;
-                bool interested = status == "Interested" || responded;
+
+                bool responded =
+                           status == "Interested" ||
+                           status == "Maybe Later" ||
+                           status == "Not Interested";
+                bool interested = status == "Interested";
+                bool maybeLater = status == "Maybe Later";
+                bool notInterested = status == "Not Interested";
+
+                // ⭐ Viewed should be TRUE for all statuses that imply they saw the RFQ
                 bool viewed =
                     status == "Viewed" ||
                     interested ||
-                    responded ||
-                    status == "Maybe Later" ||
-                    status == "Not Interested";
+                    maybeLater ||
+                    notInterested ||
+                    responded;
 
-                return (responded, interested, viewed);
-            };
-
-            // -------------------------------------------------------
-            // GROUP BY SUBCONTRACTOR (the new required structure)
-            // -------------------------------------------------------
-            var result = rows
-                .Where(r => r.SubcontractorID != null)
-                .GroupBy(r => new { r.SubcontractorID, r.SubcontractorName })
-                .Select(g =>
+                return new
                 {
-                    var workItems = g.Select(r =>
-                    {
-                        var flags = statusLogic(r);
-
-                        return new
-                        {
-                            workItemId = r.WorkItemID,
-                            workItemName = r.WorkItemName,
-                            rfqId = r.RfqID.ToString(),
-
-                            responded = flags.responded,
-                            interested = flags.interested,
-                            viewed = flags.viewed,
-
-                            date = r.ResponseDate?.ToString("dd/MM/yyyy") ?? "—"
-                        };
-                    }).ToList();
-
-                    return new
-                    {
-                        subcontractorId = g.Key.SubcontractorID,
-                        subcontractorName = g.Key.SubcontractorName,
-                        workItems = workItems
-                    };
-                }).ToList();
+                    workItemId = r.WorkItemID,
+                    workItemName = r.WorkItemName,
+                    rfqId = r.RfqID.ToString(),
+                    rfqNumber = r.RfqNumber,
+                    subcontractorId = r.SubcontractorID,
+                    subcontractorName = r.SubcontractorName,
+                    responded,
+                    interested,
+                    maybeLater,
+                    viewed,
+                    notInterested,
+                    date = r.ResponseDate?.ToString("dd/MM/yyyy") ?? "—"
+                };
+            }).ToList();
 
             return result;
         }
+
+
 
         public async Task<bool> MarkRfqViewedAsync(Guid rfqId, Guid subcontractorId, Guid workItemId)
         {
@@ -572,44 +528,53 @@ ORDER BY s.Name, wi.Name;
             }
         }
 
-        public async Task<(byte[] FileBytes, string FileName)?> GetQuoteAsync(Guid rfqId, Guid subcontractorId)
+        public async Task<decimal?> GetTotalQuoteAmountAsync(Guid rfqId, Guid subcontractorId)
         {
             try
             {
-                using (var conn = new SqlConnection(_connectionString))
-                {
-                    await conn.OpenAsync();
+                using var conn = new SqlConnection(_connectionString);
+                await conn.OpenAsync();
 
-                    var cmd = new SqlCommand(@"
-                SELECT TOP 1 FileName, FileData
-                FROM RfqResponseDocuments
-                WHERE RfqID = @RfqID AND SubcontractorID = @SubID
-                ORDER BY UploadedOn DESC;
-            ", conn);
+                var cmd = new SqlCommand(@"
+            SELECT TotalQuoteAmount
+            FROM RfqSubcontractorResponse
+            WHERE RfqID = @RfqID AND SubcontractorID = @SubID
+        ", conn);
 
-                    cmd.Parameters.AddWithValue("@RfqID", rfqId);
-                    cmd.Parameters.AddWithValue("@SubID", subcontractorId);
+                cmd.Parameters.AddWithValue("@RfqID", rfqId);
+                cmd.Parameters.AddWithValue("@SubID", subcontractorId);
 
-                    using (var reader = await cmd.ExecuteReaderAsync())
-                    {
-                        if (await reader.ReadAsync())
-                        {
-                            return (
-                                (byte[])reader["FileData"],
-                                reader["FileName"].ToString()
-                            );
-                        }
-                    }
-                }
+                var result = await cmd.ExecuteScalarAsync();
+                if (result != null && result != DBNull.Value)
+                    return Convert.ToDecimal(result);
 
                 return null;
             }
             catch (Exception ex)
             {
-                Console.WriteLine("DOWNLOAD ERROR: " + ex.Message);
                 return null;
             }
         }
+
+
+        public async Task<bool> DeleteQuoteFile(Guid rfqId, Guid subcontractorId)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            var sql = @"
+        DELETE FROM RfqResponseDocuments
+        WHERE RfqID = @RfqID AND SubcontractorID = @SubID";
+
+            var rows = await conn.ExecuteAsync(sql, new
+            {
+                RfqID = rfqId,
+                SubID = subcontractorId
+            });
+
+            return rows > 0;
+        }
+
 
     }
 }
