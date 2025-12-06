@@ -9,6 +9,7 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         Task<IEnumerable<Person>> GetAllPerson();
         Task<Person?> GetPersonById(Guid id);
+        Task<int> CreatePerson(Person person);
 
         Task<IEnumerable<SubcontractorWorkItemMapping>> GetAllSubcontractorWorkItemMapping();
         Task<List<SubcontractorWorkItemMapping?>> GetSubcontractorWorkItemMappingById(Guid id);
@@ -31,5 +32,8 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         Task<IEnumerable<RfqResponseStatus>> GetAllRfqResponseStatus();
         Task<RfqResponseStatus?> GetRfqResponseStatusById(Guid id);
+
+        Task<IEnumerable<RfqGolbalReminderSet>> GetRfqGolbalReminderSet();
+        Task<int> UpdateRfqGolbalReminderSet(RfqGolbalReminderSet reminder);
     }
 }

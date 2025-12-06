@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using System.Security.Claims;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 
@@ -100,6 +101,21 @@ namespace UnibouwAPI.Controllers
                 return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
             }
         }
+
+        [HttpPost("create")]
+        public async Task<IActionResult> CreatePerson([FromBody] Person person)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var result = await _repositoryCommon.CreatePerson(person);
+
+            if (result > 0)
+                return Ok(new { message = "Person created successfully", personID = person.PersonID });
+
+            return StatusCode(500, "Failed to create person.");
+        }
+
 
         //--- Subcontractor WorkItem Mapping
         [HttpGet("subcontractorworkitemmapping")]
@@ -340,6 +356,61 @@ namespace UnibouwAPI.Controllers
             {
                 _logger.LogError(ex, "Error fetching work planner by ID: {Id}", id);
                 return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
+            }
+        }
+
+        //------------ Global RFQ Reminder set
+        // GET: api/RfqGolbalReminderSet
+        [HttpGet("GetRfqGolbalReminderSet")]
+        [Authorize]
+        public async Task<IActionResult> GetRfqGolbalReminderSet()
+        {
+            try
+            {
+                var data = await _repositoryCommon.GetRfqGolbalReminderSet();
+                return Ok(data);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error fetching reminder values", error = ex.Message });
+            }
+        }
+
+        // PUT: api/RfqGolbalReminderSet/update
+        [HttpPost("UpdateRfqGolbalReminderSet")]
+        [Authorize]
+        public async Task<IActionResult> UpdateRfqGolbalReminderSet([FromBody] RfqGolbalReminderSet reminder)
+        {
+            if (reminder == null)
+                return BadRequest("Invalid data");
+
+            try
+            {
+                // Get logged-in user's email
+                var userEmail =
+                       HttpContext.User.FindFirst("preferred_username")?.Value
+                    ?? HttpContext.User.FindFirst(ClaimTypes.Email)?.Value
+                    ?? HttpContext.User.FindFirst("emails")?.Value
+                    ?? HttpContext.User.Identity?.Name;
+
+                if (string.IsNullOrWhiteSpace(userEmail))
+                    userEmail = "System"; // fallback if claims missing
+
+                // Set createdBy in subcontractor
+                reminder.UpdatedBy = userEmail;
+
+                reminder.UpdatedAt = DateTime.UtcNow;
+
+                var result = await _repositoryCommon.UpdateRfqGolbalReminderSet(reminder);
+
+                if (result > 0)
+                    return Ok(new { message = "Reminder configuration updated successfully" });
+
+                return NotFound(new { message = "Record not found" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Error updating reminder configuration", error = ex.Message });
             }
         }
     }
