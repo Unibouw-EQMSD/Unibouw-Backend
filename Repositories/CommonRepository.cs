@@ -48,6 +48,24 @@ namespace UnibouwAPI.Repositories
                 new { Id = id });
         }
 
+        public async Task<int> CreatePerson(Person person)
+        {
+            var sql = @"
+        INSERT INTO Persons 
+        (PersonID, ERP_ID, Name, Mail, PhoneNumber1, PhoneNumber2, Address, State, City, Country, PostalCode,
+         CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
+        VALUES 
+        (@PersonID, @ERP_ID, @Name, @Mail, @PhoneNumber1, @PhoneNumber2, @Address, @State, @City, @Country, @PostalCode,
+         @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted)";
+
+            person.PersonID = Guid.NewGuid();
+            person.CreatedOn = DateTime.UtcNow;
+            person.IsDeleted = false;
+
+            return await _connection.ExecuteAsync(sql, person);
+        }
+
+
         //------ SubcontractorWorkItemMapping
         public async Task<IEnumerable<SubcontractorWorkItemMapping>> GetAllSubcontractorWorkItemMapping()
         {
@@ -233,6 +251,30 @@ namespace UnibouwAPI.Repositories
                 new { Id = id });
         }
 
+        //------ Global Rfq Reminder Set
+        // Get all reminder settings
+        public async Task<IEnumerable<RfqGolbalReminderSet>> GetRfqGolbalReminderSet()
+        {
+            string query = @"SELECT * FROM RfqGolbalReminderSet";
+            return await _connection.QueryAsync<RfqGolbalReminderSet>(query);
+        }
 
+        // Update reminder settings
+        public async Task<int> UpdateRfqGolbalReminderSet(RfqGolbalReminderSet reminder)
+        {
+            const string sql = @"
+        UPDATE TOP (1) RfqGolbalReminderSet
+        SET 
+            ReminderSequence = @ReminderSequence,
+            ReminderTime = @ReminderTime,
+            ReminderEmailBody = @ReminderEmailBody,
+            UpdatedBy = @UpdatedBy,
+            UpdatedAt = @UpdatedAt,
+            IsEnable = @IsEnable";
+
+            return await _connection.ExecuteAsync(sql, reminder);
+
+
+        }
     }
 }

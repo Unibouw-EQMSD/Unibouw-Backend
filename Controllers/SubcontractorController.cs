@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 
@@ -110,6 +111,7 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpPost("createSubcontractorWithMappings")]
+        [Authorize]
         public async Task<IActionResult> CreateSubcontractorWithMappings([FromBody] Subcontractor subcontractor)
         {
             if (subcontractor == null)
@@ -117,6 +119,22 @@ namespace UnibouwAPI.Controllers
 
             try
             {
+                // Get logged-in user's email
+                var userEmail =
+                       HttpContext.User.FindFirst("preferred_username")?.Value
+                    ?? HttpContext.User.FindFirst(ClaimTypes.Email)?.Value
+                    ?? HttpContext.User.FindFirst("emails")?.Value
+                    ?? HttpContext.User.Identity?.Name;
+
+                if (string.IsNullOrWhiteSpace(userEmail))
+                    userEmail = "System"; // fallback if claims missing
+
+                // Set createdBy in subcontractor
+                subcontractor.CreatedBy = userEmail;
+                subcontractor.CreatedOn = DateTime.UtcNow;
+                subcontractor.RegisteredDate = DateTime.UtcNow;
+
+                // Now pass it to repository
                 var success = await _repository.CreateSubcontractorWithMappings(subcontractor);
 
                 if (success)
@@ -134,9 +152,9 @@ namespace UnibouwAPI.Controllers
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("email", StringComparison.OrdinalIgnoreCase))
             {
-                //Handle duplicate email specifically
                 return Conflict(new
                 {
+                    Field = "email",
                     Message = "A subcontractor with this email address already exists.",
                     Error = ex.Message
                 });
