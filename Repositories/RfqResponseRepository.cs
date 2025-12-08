@@ -219,7 +219,7 @@ WHERE r.RfqID = @RfqID";
 SELECT 
     w.WorkItemID,
     w.Name,
-    w.Description
+    w.Number
 FROM WorkItems w
 INNER JOIN RfqWorkItemMapping rwim ON rwim.WorkItemID = w.WorkItemID
 WHERE rwim.RfqID = @RfqID";
@@ -233,7 +233,8 @@ WHERE rwim.RfqID = @RfqID";
             return new
             {
                 Project = project,
-                WorkItems = workItems
+                WorkItems = workItems,
+
             };
         }
 
@@ -259,17 +260,36 @@ WHERE rwim.RfqID = @RfqID";
         {
             using (var conn = new SqlConnection(_connectionString))
             {
-                var query = @"
+                // Check if the mapping exists first
+                var mappingQuery = @"
+SELECT COUNT(1)
+FROM RfqSubcontractorMapping
+WHERE RfqID = @rfqId AND SubcontractorID = @subId;
+";
+
+                var mappingExists = await conn.ExecuteScalarAsync<int>(mappingQuery, new
+                {
+                    rfqId,
+                    subId = subcontractorId
+                });
+
+                if (mappingExists == 0)
+                {
+                    throw new Exception("Cannot upload quote: subcontractor is not mapped to this RFQ.");
+                }
+
+                // Now update the response
+                var updateQuery = @"
 UPDATE RfqSubcontractorResponse
 SET 
     TotalQuoteAmount = @amount,
     Comment = @comment,
     ModifiedOn = GETDATE(),
-    SubmissionCount = SubmissionCount + 1
+    SubmissionCount = ISNULL(SubmissionCount, 0) + 1
 WHERE RfqID = @rfqId AND SubcontractorID = @subId;
 ";
 
-                var result = await conn.ExecuteAsync(query, new
+                var rowsAffected = await conn.ExecuteAsync(updateQuery, new
                 {
                     amount = totalAmount,
                     comment,
@@ -277,10 +297,14 @@ WHERE RfqID = @rfqId AND SubcontractorID = @subId;
                     subId = subcontractorId
                 });
 
-                return result > 0;
+                if (rowsAffected == 0)
+                {
+                    throw new Exception("No existing response found for this subcontractor. Ensure an initial response record exists.");
+                }
+
+                return true;
             }
         }
-
 
         public async Task<object?> GetRfqResponsesByProjectAsync(Guid projectId)
         {
