@@ -67,7 +67,8 @@ namespace UnibouwAPI.Controllers
                     sub.SubcontractorID,
                     sub.EmailID,
                     sub.Name,
-                    req.RfqID
+                    req.RfqID,
+                    req.EmailBody
                 );
 
                 return Ok(new { success = result });

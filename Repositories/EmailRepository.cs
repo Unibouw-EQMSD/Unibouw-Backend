@@ -223,7 +223,7 @@ namespace UnibouwAPI.Repositories
             }
         }
 
-        public async Task<bool> SendReminderEmailAsync(Guid subcontractorId, string email, string name, Guid rfqId)
+        /*public async Task<bool> SendReminderEmailAsync(Guid subcontractorId, string email, string name, Guid rfqId)
         {
             try
             {
@@ -254,6 +254,64 @@ namespace UnibouwAPI.Repositories
             <p>Dear {WebUtility.HtmlEncode(name)},</p>
             <p>This is a reminder to upload your quote before the due date. 
                Please ensure all required documents are submitted on time.</p>
+            <p>Thank you.<br/>Unibouw Team</p>
+        ";
+
+                var mail = new MailMessage()
+                {
+                    From = new MailAddress(fromEmail, displayName),
+                    Subject = "Reminder: Upload Your Quote - Unibouw",
+                    Body = htmlBody,
+                    IsBodyHtml = true
+                };
+
+                mail.To.Add(email);
+
+                await client.SendMailAsync(mail);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Failed to send reminder email: {ex.Message}", ex);
+            }
+        }
+*/
+
+        public async Task<bool> SendReminderEmailAsync(
+    Guid subcontractorId,
+    string email,
+    string name,
+    Guid rfqId,
+    string emailBody)
+        {
+            try
+            {
+                var smtpSettings = _configuration.GetSection("SmtpSettings");
+                string host = smtpSettings["Host"];
+                int port = int.Parse(smtpSettings["Port"]);
+                bool enableSsl = bool.Parse(smtpSettings["EnableSsl"] ?? "true");
+                string username = smtpSettings["Username"];
+                string password = smtpSettings["Password"];
+                string fromEmail = smtpSettings["FromEmail"];
+                string displayName = smtpSettings["DisplayName"];
+
+                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+
+                using var client = new SmtpClient(host, port)
+                {
+                    EnableSsl = enableSsl,
+                    UseDefaultCredentials = false,
+                    Credentials = new NetworkCredential(username, password),
+                    DeliveryMethod = SmtpDeliveryMethod.Network
+                };
+
+                // Build dynamic email message
+
+                string htmlBody = $@"
+            <p>Dear {WebUtility.HtmlEncode(name)},</p>
+
+            <p>{emailBody}</p>
+
             <p>Thank you.<br/>Unibouw Team</p>
         ";
 
