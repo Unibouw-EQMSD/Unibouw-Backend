@@ -56,8 +56,8 @@ namespace UnibouwAPI.Repositories
 
                 // Fetch RFQ details
                 var rfqQuery = @" SELECT RfqID, RfqNumber, DueDate, GlobalDueDate, ProjectID
-                                    FROM Rfq
-                                    WHERE RfqID = @RfqID AND IsDeleted = 0";
+                          FROM Rfq
+                          WHERE RfqID = @RfqID AND IsDeleted = 0";
 
                 var rfq = await _connection.QuerySingleOrDefaultAsync(rfqQuery, new { RfqID = request.RfqID });
                 if (rfq == null)
@@ -65,26 +65,35 @@ namespace UnibouwAPI.Repositories
 
                 // Fetch Project name
                 var projectQuery = @"SELECT Name
-                                        FROM Projects
-                                        WHERE ProjectID = @ProjectID AND IsDeleted = 0";
+                             FROM Projects
+                             WHERE ProjectID = @ProjectID AND IsDeleted = 0";
 
                 string projectName = await _connection.QuerySingleOrDefaultAsync<string>(projectQuery, new { ProjectID = rfq.ProjectID });
 
                 if (string.IsNullOrEmpty(projectName))
                     throw new Exception("Project not found for this RFQ.");
 
-                // Fetch WorkItem details
-                var workItemId = request.WorkItems.FirstOrDefault();
-                if (workItemId == null)
+                // ✅ Fix for WorkItem not found
+                if (request.WorkItems == null || !request.WorkItems.Any())
+                {
                     throw new Exception("WorkItem ID is required.");
+                }
+
+                var workItemId = request.WorkItems.FirstOrDefault();
+
+                // Check for null/empty GUID
+                if (workItemId == Guid.Empty)
+                {
+                    throw new Exception("WorkItem ID is invalid.");
+                }
 
                 var workItemQuery = @"SELECT Name, Number
-                                        FROM WorkItems
-                                        WHERE WorkItemID = @WorkItemID AND IsDeleted = 0";
+                              FROM WorkItems
+                              WHERE WorkItemID = @WorkItemID AND IsDeleted = 0";
 
                 var workItem = await _connection.QuerySingleOrDefaultAsync(workItemQuery, new { WorkItemID = workItemId });
                 if (workItem == null)
-                    throw new Exception("WorkItem not found.");
+                    throw new Exception($"WorkItem not found for ID: {workItemId}");
 
                 // Compute Project Summary link validity
                 var now = DateTime.UtcNow;
@@ -93,9 +102,9 @@ namespace UnibouwAPI.Repositories
 
                 // Fetch subcontractors
                 var subQuery = @"SELECT SubcontractorID AS Id, EmailID AS Email, ISNULL(Name, 'Subcontractor') AS Name
-                                    FROM Subcontractors 
-                                    WHERE SubcontractorID IN @Ids
-                                    AND EmailID <> '' AND IsActive = 1 AND IsDeleted = 0";
+                         FROM Subcontractors 
+                         WHERE SubcontractorID IN @Ids
+                         AND EmailID <> '' AND IsActive = 1 AND IsDeleted = 0";
 
                 var subcontractors = (await _connection.QueryAsync<(Guid Id, string Email, string Name)>(
                     subQuery, new { Ids = request.SubcontractorIDs })).ToList();
@@ -106,32 +115,30 @@ namespace UnibouwAPI.Repositories
                 // Ensure mappings exist AND create initial response row
                 foreach (var sub in subcontractors)
                 {
-                    // 1️⃣ Ensure mapping exists
                     var mappingQuery = @"
-                                    IF NOT EXISTS (
-                                        SELECT 1 
-                                        FROM RfqSubcontractorMapping 
-                                        WHERE RfqID = @RfqID AND SubcontractorID = @SubId
-                                    )
-                                    BEGIN
-                                        INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID)
-                                        VALUES (@RfqID, @SubId)
-                                    END";
+                IF NOT EXISTS (
+                    SELECT 1 
+                    FROM RfqSubcontractorMapping 
+                    WHERE RfqID = @RfqID AND SubcontractorID = @SubId
+                )
+                BEGIN
+                    INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID)
+                    VALUES (@RfqID, @SubId)
+                END";
                     await _connection.ExecuteAsync(mappingQuery, new { RfqID = rfq.RfqID, SubId = sub.Id });
 
-                    // 2️⃣ Ensure initial response row exists
                     var responseQuery = @"
-                                    IF NOT EXISTS (
-                                        SELECT 1 
-                                        FROM RfqSubcontractorResponse
-                                        WHERE RfqID = @RfqID AND SubcontractorID = @SubId
-                                    )
-                                    BEGIN
-                                        INSERT INTO RfqSubcontractorResponse (RfqID, SubcontractorID, CreatedOn, SubmissionCount)
-                                        VALUES (@RfqID, @SubId, GETDATE(), 0)
-                                    END";
-                                        await _connection.ExecuteAsync(responseQuery, new { RfqID = rfq.RfqID, SubId = sub.Id });
-                                    }
+                IF NOT EXISTS (
+                    SELECT 1 
+                    FROM RfqSubcontractorResponse
+                    WHERE RfqID = @RfqID AND SubcontractorID = @SubId
+                )
+                BEGIN
+                    INSERT INTO RfqSubcontractorResponse (RfqID, SubcontractorID, CreatedOn, SubmissionCount)
+                    VALUES (@RfqID, @SubId, GETDATE(), 0)
+                END";
+                    await _connection.ExecuteAsync(responseQuery, new { RfqID = rfq.RfqID, SubId = sub.Id });
+                }
 
                 // Send emails
                 foreach (var sub in subcontractors)
@@ -141,42 +148,39 @@ namespace UnibouwAPI.Repositories
                         : null;
 
                     string emailBody = $@" 
-                       <p>Dear {WebUtility.HtmlEncode(sub.Name)},</p>
+                <p>Dear {WebUtility.HtmlEncode(sub.Name)},</p>
 
-                       <p>You are invited to submit a quotation for the following work item under the <strong>{WebUtility.HtmlEncode(projectName)}</strong> project.</p>
-                       
-                       <h4><b>Project & RFQ Details</b></h4>
-                       <ul>
-                       <li><strong>Project Name:</strong> {WebUtility.HtmlEncode(projectName)}</li>
-                       <li><strong>RFQ ID:</strong> {rfq.RfqNumber ?? rfq.RfqID}</li>
-                       <li><strong>Work Item:</strong> {WebUtility.HtmlEncode(workItem.Name)}</li>
-                       <li><strong>Due Date:</strong> ({rfq.DueDate:dd-MMM-yyyy})</li>
-                       </ul>";
+                <p>You are invited to submit a quotation for the following work item under the <strong>{WebUtility.HtmlEncode(projectName)}</strong> project.</p>
+                
+                <h4><b>Project & RFQ Details</b></h4>
+                <ul>
+                    <li><strong>Project Name:</strong> {WebUtility.HtmlEncode(projectName)}</li>
+                    <li><strong>RFQ ID:</strong> {rfq.RfqNumber ?? rfq.RfqID}</li>
+                    <li><strong>Work Item:</strong> {WebUtility.HtmlEncode(workItem.Name)}</li>
+                    <li><strong>Due Date:</strong> ({rfq.DueDate:dd-MMM-yyyy})</li>
+                </ul>";
 
-               
                     if (!string.IsNullOrEmpty(projectSummaryUrl))
                     {
                         emailBody += $@"
-                                <p>
-                                    <br/>
-                                    <a href='{projectSummaryUrl}' 
-                                       style='padding:12px 20px;background-color:#f97316;color:white;text-decoration:none;border-radius:6px;'>
-                                       View Project Summary
-                                    </a>                     
-                                </p>
-                                <br/><br/>
-                                <p><strong>Expiry Information</strong><br/>
-                                This link is valid until the due date ({rfq.DueDate:dd-MMM-yyyy}).
-                                After this time, it will automatically expire and you won't be able to submit your quote.
-                                </p>";
-
+                    <p>
+                        <br/>
+                        <a href='{projectSummaryUrl}' 
+                           style='padding:12px 20px;background-color:#f97316;color:white;text-decoration:none;border-radius:6px;'>
+                           View Project Summary
+                        </a>                     
+                    </p>
+                    <br/><br/>
+                    <p><strong>Expiry Information</strong><br/>
+                    This link is valid until the due date ({rfq.DueDate:dd-MMM-yyyy}).
+                    After this time, it will automatically expire and you won't be able to submit your quote.
+                    </p>";
                     }
                     else
                     {
-                        emailBody += 
+                        emailBody +=
                             $@"<p><em>Please note that the <strong>Project Summary link has expired</strong>, and you will not be able to access the project summary through the previous link.</em></p>
-
-                               <p>If you still require the project details or need assistance in order to submit your quotation, please contact us and we will be happy to help.</p>";
+                       <p>If you still require the project details or need assistance in order to submit your quotation, please contact us and we will be happy to help.</p>";
                     }
 
                     emailBody += "<p>Thank you,<br/>Unibouw Team</p>";

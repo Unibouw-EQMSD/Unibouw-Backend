@@ -528,19 +528,33 @@ ORDER BY wi.Name;
                 // Get "Viewed" ID
                 var viewedId = await GetResponseIdAsync(conn, tx, "Viewed");
 
-                // Insert into RfqSubcontractorResponse only if NOT exists already for same RFQ/Sub
-                var existing = await conn.ExecuteScalarAsync<int>(@"
-            SELECT COUNT(*) FROM RfqSubcontractorResponse
+                // CASE 1: No RFQ response exists → insert
+                var existingResponseId = await conn.ExecuteScalarAsync<Guid?>(@"
+            SELECT TOP 1 RfqSubcontractorResponseID 
+            FROM RfqSubcontractorResponse
             WHERE RfqID = @RfqID AND SubcontractorID = @SubID
         ", new { RfqID = rfqId, SubID = subcontractorId }, tx);
 
-                if (existing == 0)
+                if (existingResponseId == null)
                 {
                     await conn.ExecuteAsync(@"
                 INSERT INTO RfqSubcontractorResponse
                 (RfqSubcontractorResponseID, RfqID, SubcontractorID, RfqResponseID, CreatedOn)
                 VALUES (NEWID(), @RfqID, @SubID, @ViewedID, GETUTCDATE());
             ", new { RfqID = rfqId, SubID = subcontractorId, ViewedID = viewedId }, tx);
+                }
+                else
+                {
+                    // CASE 2: Already exists → update ONLY IF not already responded
+                    await conn.ExecuteAsync(@"
+                UPDATE RfqSubcontractorResponse
+                SET RfqResponseID = @ViewedID, ModifiedOn = GETUTCDATE()
+                WHERE RfqSubcontractorResponseID = @ID
+                AND RfqResponseID NOT IN (
+                    SELECT RfqResponseID FROM RfqResponseStatus 
+                    WHERE RfqResponseStatusName IN ('Interested','Maybe Later','Not Interested')
+                );
+            ", new { ID = existingResponseId, ViewedID = viewedId }, tx);
                 }
 
                 tx.Commit();
@@ -552,6 +566,7 @@ ORDER BY wi.Name;
                 throw;
             }
         }
+
 
         public async Task<decimal?> GetTotalQuoteAmountAsync(Guid rfqId, Guid subcontractorId)
         {

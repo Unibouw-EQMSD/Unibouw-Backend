@@ -176,7 +176,6 @@ VALUES
 
         public async Task<bool> UpdateRfqAsync(Rfq rfq)
         {
-            // Update logic for main RFQ fields
             var query = @"
         UPDATE Rfq
         SET 
@@ -192,12 +191,12 @@ VALUES
             ModifiedOn = GETUTCDATE(),
             ModifiedBy = @ModifiedBy,
             Status = @Status,
-GlobalDueDate = @GlobalDueDate,
+            GlobalDueDate = @GlobalDueDate
         WHERE 
             RfqID = @RfqID AND IsDeleted = 0";
 
-            rfq.ModifiedOn = DateTime.UtcNow; // Set value for Dapper
-            rfq.ModifiedBy = rfq.ModifiedBy ?? "System"; // Ensure ModifiedBy is set
+            rfq.ModifiedOn = DateTime.UtcNow;
+            rfq.ModifiedBy = rfq.ModifiedBy ?? "System";
 
             using var connection = _connection;
             var rowsAffected = await connection.ExecuteAsync(query, rfq);
