@@ -257,53 +257,127 @@ WHERE rwim.RfqID = @RfqID";
 
 
         public async Task<bool> UploadQuoteAsync(Guid rfqId, Guid subcontractorId, IFormFile file, decimal totalAmount, string comment)
+
         {
+
             using (var conn = new SqlConnection(_connectionString))
+
             {
-                // Check if the mapping exists first
+
+                // Check mapping
+
                 var mappingQuery = @"
+
 SELECT COUNT(1)
+
 FROM RfqSubcontractorMapping
+
 WHERE RfqID = @rfqId AND SubcontractorID = @subId;
+
 ";
 
-                var mappingExists = await conn.ExecuteScalarAsync<int>(mappingQuery, new
-                {
-                    rfqId,
-                    subId = subcontractorId
-                });
+                var mappingExists = await conn.ExecuteScalarAsync<int>(mappingQuery, new { rfqId, subId = subcontractorId });
 
                 if (mappingExists == 0)
+
+                    throw new Exception("Subcontractor is not mapped to this RFQ.");
+
+                // Read file bytes
+
+                byte[] fileBytes;
+
+                using (var ms = new MemoryStream())
+
                 {
-                    throw new Exception("Cannot upload quote: subcontractor is not mapped to this RFQ.");
+
+                    await file.CopyToAsync(ms);
+
+                    fileBytes = ms.ToArray();
+
                 }
 
-                // Now update the response
-                var updateQuery = @"
-UPDATE RfqSubcontractorResponse
-SET 
-    TotalQuoteAmount = @amount,
-    Comment = @comment,
-    ModifiedOn = GETDATE(),
-    SubmissionCount = ISNULL(SubmissionCount, 0) + 1
-WHERE RfqID = @rfqId AND SubcontractorID = @subId;
+                // Insert into RfqResponseDocuments
+
+                var insertQuery = @"
+
+INSERT INTO RfqResponseDocuments
+
+(
+
+    RfqID,
+
+    SubcontractorID,
+
+    FileName,
+
+    FileData,
+
+    UploadedOn,
+
+    IsDeleted
+
+)
+
+VALUES
+
+(
+
+    @rfqId,
+
+    @subId,
+
+    @fileName,
+
+    @fileData,
+
+    GETDATE(),
+
+    0
+
+)
+
 ";
 
-                var rowsAffected = await conn.ExecuteAsync(updateQuery, new
+                var rowsAffected = await conn.ExecuteAsync(insertQuery, new
+
                 {
-                    amount = totalAmount,
-                    comment,
+
                     rfqId,
-                    subId = subcontractorId
+
+                    subId = subcontractorId,
+
+                    fileName = file.FileName,
+
+                    fileData = fileBytes
+
                 });
 
-                if (rowsAffected == 0)
-                {
-                    throw new Exception("No existing response found for this subcontractor. Ensure an initial response record exists.");
-                }
+                // Also update response table if needed
 
-                return true;
+                var updateQuery = @"
+
+UPDATE RfqSubcontractorResponse
+
+SET 
+
+    TotalQuoteAmount = @amount,
+
+    Comment = @comment,
+
+    ModifiedOn = GETDATE(),
+
+    SubmissionCount = ISNULL(SubmissionCount, 0) + 1
+
+WHERE RfqID = @rfqId AND SubcontractorID = @subId;
+
+";
+
+                await conn.ExecuteAsync(updateQuery, new { amount = totalAmount, comment, rfqId, subId = subcontractorId });
+
+                return rowsAffected > 0;
+
             }
+
         }
 
         public async Task<object?> GetRfqResponsesByProjectAsync(Guid projectId)
@@ -324,13 +398,14 @@ SELECT
     wi.WorkItemID,
     wi.Name AS WorkItemName,
     rfq.RfqID,
-    rfq.RfqNumber,               -- ✅ Add this
+    rfq.RfqNumber,              
     rfq.DueDate AS DueDate, 
     s.SubcontractorID,
     s.Name AS SubcontractorName,
     ISNULL(s.Rating,0) AS Rating,
     rs.RfqResponseStatusName AS StatusName,
     lr.CreatedOn AS ResponseDate,
+doc.RfqResponseDocumentID AS DocumentId,
     CASE WHEN doc.RfqResponseDocumentID IS NULL THEN 0 ELSE 1 END AS HasDocument
 FROM Projects p
 INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
@@ -383,7 +458,7 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
                             rating = r.Rating,
                             date = r.ResponseDate?.ToString("dd/MM/yyyy") ?? "—",
                             rfqId = g.Key.RfqID.ToString(),
-
+                            documentId = r.DocumentId,
                             responded,
                             interested,
                             maybeLater,

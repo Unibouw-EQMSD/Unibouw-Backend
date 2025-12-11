@@ -482,37 +482,94 @@ namespace UnibouwAPI.Controllers
             return Ok(submissions);
         }
 
-        //[HttpGet("DownloadQuote")]
-        //[Authorize]
-        //public async Task<IActionResult> DownloadQuote([FromQuery] Guid rfqId, [FromQuery] Guid subcontractorId)
-        //{
-        //    try
-        //    {
-        //        if (rfqId == Guid.Empty || subcontractorId == Guid.Empty)
-        //            return BadRequest("Invalid RFQ ID or Subcontractor ID.");
+        [HttpGet("DownloadQuote")]
 
-        //        var fileData = await _repository.GetTotalQuoteAmountAsync(rfqId, subcontractorId);
+        [Authorize]
 
-        //        if (fileData == null)
-        //            return NotFound("No quote uploaded for this RFQ.");
+        public async Task<IActionResult> DownloadQuote([FromQuery] Guid documentId)
 
-        //        // Deconstruct tuple
-        //        var (bytes, fileName) = fileData.Value;
+        {
 
-        //        return File(bytes, "application/octet-stream", fileName);
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        _logger.LogError(ex, "❌ An error occurred while downloading the quote.");
+            if (documentId == Guid.Empty)
 
-        //        return StatusCode(500, new
-        //        {
-        //            success = false,
-        //            message = "An error occurred while downloading the quote.",
-        //            details = ex.Message
-        //        });
-        //    }
-        //}
+                return BadRequest("Invalid document ID.");
+
+            var document = await _repository.GetRfqResponseDocumentsById(documentId);
+
+            if (document == null)
+
+                return NotFound("No quote found for this document.");
+
+            // Return the PDF file to the client
+
+            return File(document.FileData, "application/pdf", document.FileName ?? "Quote.pdf");
+
+        }
+
+        // Static helper method to extract and save the document locally
+
+        static void ExtractDocument(string connectionString, Guid documentId)
+
+        {
+
+            using (SqlConnection conn = new SqlConnection(connectionString))
+
+            {
+
+                conn.Open();
+
+                string sql = @"
+
+SELECT RfqResponseDocumentID, RfqID, SubcontractorID, FileName, FileData, UploadedOn, IsDeleted, IsDeletedBy, DeletedOn
+
+FROM RfqResponseDocument
+
+WHERE RfqResponseDocumentID = @DocId";
+
+                using (SqlCommand cmd = new SqlCommand(sql, conn))
+
+                {
+
+                    cmd.Parameters.Add("@DocId", SqlDbType.UniqueIdentifier).Value = documentId;
+
+                    using (SqlDataReader reader = cmd.ExecuteReader())
+
+                    {
+
+                        if (reader.Read())
+
+                        {
+
+                            string fileName = reader["FileName"].ToString();
+
+                            byte[] fileData = (byte[])reader["FileData"];
+
+                            // Save the file locally
+
+                            string savePath = Path.Combine(Environment.CurrentDirectory, fileName);
+
+                            System.IO.File.WriteAllBytes(savePath, fileData);
+
+                            Console.WriteLine($"Document saved successfully: {savePath}");
+
+                        }
+
+                        else
+
+                        {
+
+                            Console.WriteLine("Document not found.");
+
+                        }
+
+                    }
+
+                }
+
+            }
+
+        }
+
 
         [HttpGet("responses/project/{projectId}")]
         [Authorize]
