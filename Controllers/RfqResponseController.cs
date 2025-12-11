@@ -564,6 +564,60 @@ namespace UnibouwAPI.Controllers
             }
         }
 
+        [HttpGet("DownloadQuote")]
+        [Authorize]
+        public async Task<IActionResult> DownloadQuote([FromQuery] Guid documentId)
+        {
+            if (documentId == Guid.Empty)
+                return BadRequest("Invalid document ID.");
+
+            var document = await _repository.GetRfqResponseDocumentsById(documentId);
+
+            if (document == null)
+                return NotFound("No quote found for this document.");
+
+            // Return the PDF file to the client
+            return File(document.FileData, "application/pdf", document.FileName ?? "Quote.pdf");
+        }
+
+        // Static helper method to extract and save the document locally
+        static void ExtractDocument(string connectionString, Guid documentId)
+        {
+            using (SqlConnection conn = new SqlConnection(connectionString))
+            {
+                conn.Open();
+
+                string sql = @"
+      SELECT RfqResponseDocumentID, RfqID, SubcontractorID, FileName, FileData, UploadedOn, IsDeleted, IsDeletedBy, DeletedOn
+      FROM RfqResponseDocument
+      WHERE RfqResponseDocumentID = @DocId";
+
+                using (SqlCommand cmd = new SqlCommand(sql, conn))
+                {
+                    cmd.Parameters.Add("@DocId", SqlDbType.UniqueIdentifier).Value = documentId;
+
+                    using (SqlDataReader reader = cmd.ExecuteReader())
+                    {
+                        if (reader.Read())
+                        {
+                            string fileName = reader["FileName"].ToString();
+                            byte[] fileData = (byte[])reader["FileData"];
+
+                            // Save the file locally
+                            string savePath = Path.Combine(Environment.CurrentDirectory, fileName);
+                            System.IO.File.WriteAllBytes(savePath, fileData);
+
+                            Console.WriteLine($"Document saved successfully: {savePath}");
+                        }
+                        else
+                        {
+                            Console.WriteLine("Document not found.");
+                        }
+                    }
+                }
+            }
+        }
+
         [HttpPost("mark-viewed")]
         public async Task<IActionResult> MarkViewed([FromQuery] Guid rfqId, [FromQuery] Guid subcontractorId, [FromQuery] Guid workItemId)
         {

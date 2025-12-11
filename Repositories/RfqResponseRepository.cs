@@ -260,25 +260,54 @@ WHERE rwim.RfqID = @RfqID";
         {
             using (var conn = new SqlConnection(_connectionString))
             {
-                // Check if the mapping exists first
+                // Check mapping
                 var mappingQuery = @"
 SELECT COUNT(1)
 FROM RfqSubcontractorMapping
 WHERE RfqID = @rfqId AND SubcontractorID = @subId;
 ";
-
-                var mappingExists = await conn.ExecuteScalarAsync<int>(mappingQuery, new
-                {
-                    rfqId,
-                    subId = subcontractorId
-                });
-
+                var mappingExists = await conn.ExecuteScalarAsync<int>(mappingQuery, new { rfqId, subId = subcontractorId });
                 if (mappingExists == 0)
+                    throw new Exception("Subcontractor is not mapped to this RFQ.");
+
+                // Read file bytes
+                byte[] fileBytes;
+                using (var ms = new MemoryStream())
                 {
-                    throw new Exception("Cannot upload quote: subcontractor is not mapped to this RFQ.");
+                    await file.CopyToAsync(ms);
+                    fileBytes = ms.ToArray();
                 }
 
-                // Now update the response
+                // Insert into RfqResponseDocuments
+                var insertQuery = @"
+INSERT INTO RfqResponseDocuments
+(
+    RfqID,
+    SubcontractorID,
+    FileName,
+    FileData,
+    UploadedOn,
+    IsDeleted
+)
+VALUES
+(
+    @rfqId,
+    @subId,
+    @fileName,
+    @fileData,
+    GETDATE(),
+    0
+)
+";
+                var rowsAffected = await conn.ExecuteAsync(insertQuery, new
+                {
+                    rfqId,
+                    subId = subcontractorId,
+                    fileName = file.FileName,
+                    fileData = fileBytes
+                });
+
+                // Also update response table if needed
                 var updateQuery = @"
 UPDATE RfqSubcontractorResponse
 SET 
@@ -288,21 +317,9 @@ SET
     SubmissionCount = ISNULL(SubmissionCount, 0) + 1
 WHERE RfqID = @rfqId AND SubcontractorID = @subId;
 ";
+                await conn.ExecuteAsync(updateQuery, new { amount = totalAmount, comment, rfqId, subId = subcontractorId });
 
-                var rowsAffected = await conn.ExecuteAsync(updateQuery, new
-                {
-                    amount = totalAmount,
-                    comment,
-                    rfqId,
-                    subId = subcontractorId
-                });
-
-                if (rowsAffected == 0)
-                {
-                    throw new Exception("No existing response found for this subcontractor. Ensure an initial response record exists.");
-                }
-
-                return true;
+                return rowsAffected > 0;
             }
         }
 
@@ -324,13 +341,14 @@ SELECT
     wi.WorkItemID,
     wi.Name AS WorkItemName,
     rfq.RfqID,
-    rfq.RfqNumber,               -- ✅ Add this
+    rfq.RfqNumber,
     rfq.DueDate AS DueDate, 
     s.SubcontractorID,
     s.Name AS SubcontractorName,
     ISNULL(s.Rating,0) AS Rating,
     rs.RfqResponseStatusName AS StatusName,
     lr.CreatedOn AS ResponseDate,
+    doc.RfqResponseDocumentID AS DocumentId,    -- ✅ add this
     CASE WHEN doc.RfqResponseDocumentID IS NULL THEN 0 ELSE 1 END AS HasDocument
 FROM Projects p
 INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
@@ -346,7 +364,6 @@ LEFT JOIN RfqResponseDocuments doc
     ON doc.RfqID = rfq.RfqID AND doc.SubcontractorID = s.SubcontractorID
 WHERE p.ProjectID = @ProjectID
 ORDER BY wi.Name, rfq.RfqID, s.Name;
-
 ";
 
             var rows = (await conn.QueryAsync(sql, new { ProjectID = projectId })).ToList();
@@ -360,7 +377,6 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
                     {
                         string status = r.StatusName ?? "Not Responded";
 
-                        // ⭐ ONLY THIS LINE CHANGED
                         bool responded =
                             status == "Interested" ||
                             status == "Maybe Later" ||
@@ -369,13 +385,13 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
                         bool maybeLater = status == "Maybe Later";
                         bool notInterested = status == "Not Interested";
 
-                        // ⭐ Viewed should be TRUE for all statuses that imply they saw the RFQ
                         bool viewed =
                             status == "Viewed" ||
                             interested ||
                             maybeLater ||
                             notInterested ||
                             responded;
+
                         return new
                         {
                             subcontractorId = r.SubcontractorID,
@@ -383,13 +399,12 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
                             rating = r.Rating,
                             date = r.ResponseDate?.ToString("dd/MM/yyyy") ?? "—",
                             rfqId = g.Key.RfqID.ToString(),
-
+                            documentId = r.DocumentId,  // ✅ include documentId
                             responded,
                             interested,
                             maybeLater,
                             viewed,
                             notInterested,
-
                             quote = "—",
                             dueDate = r.DueDate?.ToString("dd/MM/yyyy") ?? "—",
                             actions = new[] { "pdf", "chat" }
@@ -408,6 +423,7 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
 
             return result;
         }
+
 
         public async Task<object?> GetRfqResponsesByProjectSubcontractorAsync(Guid projectId)
         {
