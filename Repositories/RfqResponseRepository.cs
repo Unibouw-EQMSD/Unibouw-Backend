@@ -193,50 +193,178 @@ namespace UnibouwAPI.Repositories
             }
         }
 
-        public async Task<object?> GetProjectSummaryAsync(Guid rfqId, List<Guid>? workItemIds = null)
+        public async Task<object?> GetProjectSummaryAsync(Guid rfqId, Guid? subId = null, List<Guid>? workItemIds = null)
+
         {
-            const string projectSql = @"
-SELECT 
-    p.ProjectID, p.Name, p.Number, p.Company, p.SharepointURL, p.StartDate, p.CompletionDate
-FROM Projects p
-INNER JOIN Rfq r ON r.ProjectID = p.ProjectID
-WHERE r.RfqID = @RfqID";
 
             using var conn = new SqlConnection(_connectionString);
+
             await conn.OpenAsync();
 
-            // 🧩 Fetch project details
+            using var tran = conn.BeginTransaction();
+
+            // 1️⃣ Auto-detect subcontractor if not passed
+
+            if (!subId.HasValue)
+
+            {
+
+                subId = await conn.QueryFirstOrDefaultAsync<Guid?>(
+
+                    @"SELECT SubcontractorID 
+
+              FROM RfqSubcontractorResponse 
+
+              WHERE RfqID = @RfqID",
+
+                    new { RfqID = rfqId },
+
+                    tran
+
+                );
+
+                Console.WriteLine($"📌 Auto-detected SubId: {subId}");
+
+            }
+
+            // 2️⃣ Fetch project
+
+            const string projectSql = @"
+
+SELECT 
+
+    p.ProjectID, p.Name, p.Number, p.Company, p.SharepointURL, 
+
+    p.StartDate, p.CompletionDate
+
+FROM Projects p
+
+INNER JOIN Rfq r ON r.ProjectID = p.ProjectID
+
+WHERE r.RfqID = @RfqID";
+
             var project = await conn.QueryFirstOrDefaultAsync<Project>(
+
                 projectSql,
-                new { RfqID = rfqId }
+
+                new { RfqID = rfqId },
+
+                tran
+
             );
 
             if (project == null)
+
                 return null;
 
-            // 🧩 Fetch related work items from RfqWorkItemMapping
+            // 3️⃣ Fetch work items
+
             const string workItemSql = @"
+
 SELECT 
+
     w.WorkItemID,
+
     w.Name,
+
     w.Number
+
 FROM WorkItems w
-INNER JOIN RfqWorkItemMapping rwim ON rwim.WorkItemID = w.WorkItemID
+
+INNER JOIN RfqWorkItemMapping rwim 
+
+    ON rwim.WorkItemID = w.WorkItemID
+
 WHERE rwim.RfqID = @RfqID";
 
             var workItems = (await conn.QueryAsync<WorkItem>(
+
                 workItemSql,
-                new { RfqID = rfqId }
+
+                new { RfqID = rfqId },
+
+                tran
+
             )).ToList();
 
-            // ✅ Return combined summary
-            return new
+            // 4️⃣ Update Viewed status
+
+            if (subId.HasValue)
+
             {
+
+                const string markViewedSql = @"
+
+UPDATE r
+
+SET 
+
+    r.RfqResponseID = rs.RfqResponseID,
+
+    r.Viewed = 1,
+
+    r.ViewedOn = GETUTCDATE(),
+
+    r.ModifiedOn = GETUTCDATE()
+
+FROM RfqSubcontractorResponse r
+
+INNER JOIN RfqResponseStatus rs
+
+    ON rs.RfqResponseStatusName = 'Viewed'
+
+WHERE r.RfqID = @RfqID
+
+  AND r.SubcontractorID = @SubcontractorID;
+
+";
+
+                Console.WriteLine($"🔍 Updating Viewed → RFQ: {rfqId}, SubId: {subId.Value}");
+
+                var rows = await conn.ExecuteAsync(
+
+                    markViewedSql,
+
+                    new
+
+                    {
+
+                        RfqID = rfqId,
+
+                        SubcontractorID = subId.Value
+
+                    },
+
+                    tran
+
+                );
+
+                Console.WriteLine($"✔️ Rows updated: {rows}");
+
+            }
+
+            else
+
+            {
+
+                Console.WriteLine("⚠️ No subcontractor found. Skipping update.");
+
+            }
+
+            tran.Commit();
+
+            return new
+
+            {
+
                 Project = project,
-                WorkItems = workItems,
+
+                WorkItems = workItems
 
             };
+
         }
+
 
         public async Task<List<RfqResponseDocument>> GetPreviousSubmissionsAsync(Guid rfqId, Guid subcontractorId)
         {
