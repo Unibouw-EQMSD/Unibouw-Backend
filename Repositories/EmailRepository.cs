@@ -253,7 +253,7 @@ namespace UnibouwAPI.Repositories
        style='padding:12px 20px;background-color:#f97316;color:white;text-decoration:none;border-radius:6px;'>
 
        View Project Summary
-</a></p>";
+</a></p><br/>";
 
                     }
 
