@@ -206,11 +206,14 @@ namespace UnibouwAPI.Controllers
         //---------------------------------------------------------
 
         [HttpGet("GetProjectSummary")]
-        public async Task<IActionResult> GetProjectSummary(Guid rfqId)
+        public async Task<IActionResult> GetProjectSummary(
+           [FromQuery] Guid rfqId,
+           [FromQuery] Guid subId)   // ✅ REQUIRED
         {
             try
             {
-                var result = await _repository.GetProjectSummaryAsync(rfqId);
+                var result = await _repository.GetProjectSummaryAsync(rfqId, subId);
+
                 if (result == null)
                     return NotFound("No data found for the given RFQ.");
 
@@ -219,9 +222,13 @@ namespace UnibouwAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "❌ Error in GetProjectSummary.");
-                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
+                return StatusCode(500, new
+                {
+                    message = "An unexpected error occurred. Try again later."
+                });
             }
         }
+
 
         [HttpGet]
         [Route("")]
