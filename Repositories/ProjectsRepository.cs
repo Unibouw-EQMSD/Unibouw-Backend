@@ -21,46 +21,6 @@ namespace UnibouwAPI.Repositories
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
-        /* public async Task<IEnumerable<Project>> GetAllProject()
-         {
-             var query = @"
-                 SELECT 
-                     p.*, 
-                     c.CustomerName,
-                     wp.WorkPlannerName,
-                     pm.ProjectManagerName,
-                     per.Name AS PersonName
-                 FROM Projects p
-                 LEFT JOIN Customers c ON p.CustomerID = c.CustomerID
-                 LEFT JOIN WorkPlanners wp ON p.WorkPlannerID = wp.WorkPlannerID
-                 LEFT JOIN ProjectManagers pm ON p.ProjectManagerID = pm.ProjectManagerID
-                 LEFT JOIN Persons per ON p.PersonID = per.PersonID
-                 WHERE p.IsDeleted = 0";
-
-             return await _connection.QueryAsync<Project>(query);
-         }*/
-
-        /*
-                public async Task<Project?> GetProjectById(Guid id)
-                {
-                    var query = @"
-                        SELECT 
-                            p.*, 
-                            c.CustomerName,
-                            wp.WorkPlannerName,
-                            pm.ProjectManagerName,
-                            per.Name AS PersonName
-                        FROM Projects p
-                        LEFT JOIN Customers c ON p.CustomerID = c.CustomerID
-                        LEFT JOIN WorkPlanners wp ON p.WorkPlannerID = wp.WorkPlannerID
-                        LEFT JOIN ProjectManagers pm ON p.ProjectManagerID = pm.ProjectManagerID
-                        LEFT JOIN Persons per ON p.PersonID = per.PersonID
-                        WHERE p.ProjectID = @Id AND p.IsDeleted = 0";
-
-                    return await _connection.QueryFirstOrDefaultAsync<Project>(query, new { Id = id });
-                }*/
-
-
         public async Task<IEnumerable<Project>> GetAllProject(string loggedInEmail, string role)
         {
             var isAdmin = role.Equals("Admin", StringComparison.OrdinalIgnoreCase);
