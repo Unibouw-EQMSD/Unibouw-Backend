@@ -92,7 +92,12 @@ namespace UnibouwAPI.Repositories
         }
 
         // ✅ GET (Simple link click, no workItem/file)
-        public async Task<bool> SaveResponseAsync(Guid rfqId, Guid subcontractorId, Guid workItemId, string status)
+        public async Task<bool> SaveResponseAsync(
+     Guid rfqId,
+     Guid subcontractorId,
+     Guid workItemId,
+     string status
+ )
         {
             using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync();
@@ -100,85 +105,84 @@ namespace UnibouwAPI.Repositories
 
             try
             {
-                // Validate RFQ + subcontractor
                 if (!await ValidateRfqAsync(connection, transaction, rfqId))
-                    throw new Exception($"RFQ {rfqId} does not exist.");
+                    throw new Exception("Invalid RFQ");
 
                 if (!await ValidateSubcontractorAsync(connection, transaction, subcontractorId))
-                    throw new Exception($"Subcontractor {subcontractorId} does not exist.");
-
-                // Ensure mappings
-                await connection.ExecuteAsync(@"
-            IF NOT EXISTS (
-                SELECT 1 FROM RfqSubcontractorMapping
-                WHERE RfqID = @RfqID AND SubcontractorID = @SubID
-            )
-            INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID)
-            VALUES (@RfqID, @SubID);
-        ", new { RfqID = rfqId, SubID = subcontractorId }, transaction);
+                    throw new Exception("Invalid Subcontractor");
 
                 await connection.ExecuteAsync(@"
-            IF NOT EXISTS (
-                SELECT 1 FROM RfqWorkItemMapping
-                WHERE RfqID = @RfqID AND WorkItemID = @WorkItemID
-            )
-            INSERT INTO RfqWorkItemMapping (RfqID, WorkItemID)
-            VALUES (@RfqID, @WorkItemID);
-        ", new { RfqID = rfqId, WorkItemID = workItemId }, transaction);
+IF NOT EXISTS (
+    SELECT 1 FROM RfqSubcontractorMapping
+    WHERE RfqID = @RfqID AND SubcontractorID = @SubID
+)
+INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID)
+VALUES (@RfqID, @SubID);",
+                new { RfqID = rfqId, SubID = subcontractorId }, transaction);
 
-                // Map status → RfqResponseID
+                await connection.ExecuteAsync(@"
+IF NOT EXISTS (
+    SELECT 1 FROM RfqWorkItemMapping
+    WHERE RfqID = @RfqID AND WorkItemID = @WorkItemID
+)
+INSERT INTO RfqWorkItemMapping (RfqID, WorkItemID)
+VALUES (@RfqID, @WorkItemID);",
+                new { RfqID = rfqId, WorkItemID = workItemId }, transaction);
+
                 var responseId = await GetResponseIdAsync(connection, transaction, status);
 
-                // Check if response already exists for this RFQ & Subcontractor
                 var existing = await connection.QuerySingleOrDefaultAsync<Guid?>(@"
-            SELECT RfqSubcontractorResponseID
-            FROM RfqSubcontractorResponse
-            WHERE RfqID = @RfqID AND SubcontractorID = @SubID
-        ", new { RfqID = rfqId, SubID = subcontractorId }, transaction);
-
-                Guid responseRecordId;
+SELECT RfqSubcontractorResponseID
+FROM RfqSubcontractorResponse
+WHERE RfqID = @RfqID
+  AND SubcontractorID = @SubID
+  AND WorkItemID = @WorkItemID",
+                new
+                {
+                    RfqID = rfqId,
+                    SubID = subcontractorId,
+                    WorkItemID = workItemId
+                }, transaction);
 
                 if (existing == null)
                 {
-                    // INSERT new record
-                    responseRecordId = Guid.NewGuid();
-
                     await connection.ExecuteAsync(@"
-                INSERT INTO RfqSubcontractorResponse
-                (RfqSubcontractorResponseID, RfqID, SubcontractorID, RfqResponseID, CreatedOn)
-                VALUES (@ID, @RfqID, @SubID, @RespID, GETUTCDATE());
-            ", new
+INSERT INTO RfqSubcontractorResponse
+(
+    RfqSubcontractorResponseID,
+    RfqID,
+    SubcontractorID,
+    WorkItemID,
+    RfqResponseID,
+    CreatedOn
+)
+VALUES
+(
+    NEWID(),
+    @RfqID,
+    @SubID,
+    @WorkItemID,
+    @RespID,
+    GETUTCDATE()
+);",
+                    new
                     {
-                        ID = responseRecordId,
                         RfqID = rfqId,
                         SubID = subcontractorId,
+                        WorkItemID = workItemId,
                         RespID = responseId
-                    }, transaction);
-
-                    await connection.ExecuteAsync(@"
-                INSERT INTO RfqSubcontractorWorkItemResponse
-                (RfqSubcontractorWorkItemResponseID, RfqSubcontractorResponseID, RfqID, WorkItemID, IsReviewed, CreatedOn)
-                VALUES (NEWID(), @RespID, @RfqID, @WorkItemID, 0, GETUTCDATE());
-            ", new
-                    {
-                        RespID = responseRecordId,
-                        RfqID = rfqId,
-                        WorkItemID = workItemId
                     }, transaction);
                 }
                 else
                 {
-                    // UPDATE existing record
-                    responseRecordId = existing.Value;
-
                     await connection.ExecuteAsync(@"
-                UPDATE RfqSubcontractorResponse
-                SET RfqResponseID = @RespID,
-                    ModifiedOn = GETUTCDATE()
-                WHERE RfqSubcontractorResponseID = @ID
-            ", new
+UPDATE RfqSubcontractorResponse
+SET RfqResponseID = @RespID,
+    ModifiedOn = GETUTCDATE()
+WHERE RfqSubcontractorResponseID = @ID;",
+                    new
                     {
-                        ID = responseRecordId,
+                        ID = existing.Value,
                         RespID = responseId
                     }, transaction);
                 }
@@ -193,32 +197,38 @@ namespace UnibouwAPI.Repositories
             }
         }
 
+
+
+
         public async Task<object?> GetProjectSummaryAsync(
      Guid rfqId,
      Guid? subcontractorId = null,
-     List<Guid>? workItemIds = null)
+     List<Guid>? workItemIds = null,
+     Guid? workItemId = null
+ )
         {
             using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync();
-
             using var tran = conn.BeginTransaction();
 
             try
             {
-                // ❌ DO NOT auto-detect subcontractor
                 if (!subcontractorId.HasValue)
                     throw new Exception("Missing subcontractorId.");
 
-                // 1️⃣ Fetch project
+                if ((workItemIds == null || !workItemIds.Any()) && workItemId.HasValue)
+                {
+                    workItemIds = new List<Guid> { workItemId.Value };
+                }
+
+                /* ---------------- PROJECT ---------------- */
                 const string projectSql = @"
 SELECT 
     p.ProjectID,
     p.Name,
     p.Number,
     p.Company,
-    p.SharepointURL,
-    p.StartDate,
-    p.CompletionDate
+    p.SharepointURL
 FROM Projects p
 INNER JOIN Rfq r ON r.ProjectID = p.ProjectID
 WHERE r.RfqID = @RfqID";
@@ -235,8 +245,25 @@ WHERE r.RfqID = @RfqID";
                     return null;
                 }
 
-                // 2️⃣ Fetch work items
-                const string workItemSql = @"
+                /* ---------------- RFQ (CRITICAL) ---------------- */
+                const string rfqSql = @"
+SELECT 
+    RfqID,
+    RfqNumber,
+    DueDate,
+    GlobalDueDate,
+    SentDate
+FROM Rfq
+WHERE RfqID = @RfqID";
+
+                var rfq = await conn.QueryFirstOrDefaultAsync<Rfq>(
+                    rfqSql,
+                    new { RfqID = rfqId },
+                    tran
+                );
+
+                /* ---------------- WORK ITEMS ---------------- */
+                string workItemSql = @"
 SELECT 
     w.WorkItemID,
     w.Name,
@@ -246,50 +273,22 @@ INNER JOIN RfqWorkItemMapping rwim
     ON rwim.WorkItemID = w.WorkItemID
 WHERE rwim.RfqID = @RfqID";
 
+                if (workItemIds != null && workItemIds.Any())
+                    workItemSql += " AND w.WorkItemID IN @WorkItemIds";
+
                 var workItems = (await conn.QueryAsync<WorkItem>(
                     workItemSql,
-                    new { RfqID = rfqId },
+                    new { RfqID = rfqId, WorkItemIds = workItemIds },
                     tran
                 )).ToList();
 
-                // 3️⃣ Mark THIS subcontractor as Viewed
-                const string markViewedSql = @"
-UPDATE r
-SET 
-    r.RfqResponseID = rs.RfqResponseID,
-    r.Viewed = 1,
-    r.ViewedOn = GETUTCDATE(),
-    r.ModifiedOn = GETUTCDATE()
-FROM RfqSubcontractorResponse r
-INNER JOIN RfqResponseStatus rs
-    ON rs.RfqResponseStatusName = 'Viewed'
-WHERE r.RfqID = @RfqID
-  AND r.SubcontractorID = @SubcontractorID
-  AND (
-        r.RfqResponseID IS NULL OR
-        r.RfqResponseID NOT IN (
-            SELECT RfqResponseID
-            FROM RfqResponseStatus
-            WHERE RfqResponseStatusName IN
-                ('Interested','Maybe Later','Not Interested')
-        )
-      );";
-
-                await conn.ExecuteAsync(
-                    markViewedSql,
-                    new
-                    {
-                        RfqID = rfqId,
-                        SubcontractorID = subcontractorId.Value
-                    },
-                    tran
-                );
-
                 tran.Commit();
 
+                /* ---------------- RETURN EVERYTHING ---------------- */
                 return new
                 {
                     Project = project,
+                    Rfq = rfq,          // ✅ THIS FIXES YOUR DATE PICKER
                     WorkItems = workItems
                 };
             }
@@ -453,7 +452,7 @@ WITH LatestResponse AS (
     SELECT 
         r.*,
         ROW_NUMBER() OVER (
-            PARTITION BY r.RfqID, r.SubcontractorID
+            PARTITION BY r.RfqID, r.SubcontractorID, r.WorkItemID
             ORDER BY ISNULL(r.ModifiedOn, r.CreatedOn) DESC
         ) AS rn
     FROM RfqSubcontractorResponse r
@@ -462,35 +461,28 @@ SELECT
     wi.WorkItemID,
     wi.Name AS WorkItemName,
     rfq.RfqID,
-    rfq.RfqNumber,              
-    rfq.DueDate AS DueDate, 
+    rfq.RfqNumber,
+    rfq.DueDate,
     s.SubcontractorID,
     s.Name AS SubcontractorName,
     ISNULL(s.Rating,0) AS Rating,
     rs.RfqResponseStatusName AS StatusName,
     lr.CreatedOn AS ResponseDate,
+ lr.Viewed,  
     doc.RfqResponseDocumentID AS DocumentId,
-    CASE 
-        WHEN doc.RfqResponseDocumentID IS NULL THEN 0 
-        ELSE 1 
-    END AS HasDocument
+    CASE WHEN doc.RfqResponseDocumentID IS NULL THEN 0 ELSE 1 END AS HasDocument
 FROM Projects p
-INNER JOIN Rfq rfq 
-    ON rfq.ProjectID = p.ProjectID
-INNER JOIN RfqWorkItemMapping wim 
-    ON wim.RfqID = rfq.RfqID
-INNER JOIN WorkItems wi 
-    ON wi.WorkItemID = wim.WorkItemID
-INNER JOIN RfqSubcontractorMapping rsm 
-    ON rsm.RfqID = rfq.RfqID
-INNER JOIN Subcontractors s 
-    ON s.SubcontractorID = rsm.SubcontractorID
+INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
+INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
+INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
+INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = rfq.RfqID
+INNER JOIN Subcontractors s ON s.SubcontractorID = rsm.SubcontractorID
 LEFT JOIN LatestResponse lr
     ON lr.RfqID = rfq.RfqID
    AND lr.SubcontractorID = s.SubcontractorID
+   AND lr.WorkItemID = wi.WorkItemID
    AND lr.rn = 1
-LEFT JOIN RfqResponseStatus rs 
-    ON rs.RfqResponseID = lr.RfqResponseID
+LEFT JOIN RfqResponseStatus rs ON rs.RfqResponseID = lr.RfqResponseID
 LEFT JOIN RfqResponseDocuments doc
     ON doc.RfqID = rfq.RfqID
    AND doc.SubcontractorID = s.SubcontractorID
@@ -508,22 +500,10 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
                     var subcontractors = g.Select(r =>
                     {
                         string status = r.StatusName ?? "Not Responded";
+                        bool hasResponse = r.ResponseDate != null || r.DocumentId != null;
 
-                        bool responded =
-                            status == "Interested" ||
-                            status == "Maybe Later" ||
-                            status == "Not Interested";
-
-                        bool interested = status == "Interested";
-                        bool maybeLater = status == "Maybe Later";
-                        bool notInterested = status == "Not Interested";
-
-                        bool viewed =
-                            status == "Viewed" ||
-                            interested ||
-                            maybeLater ||
-                            notInterested ||
-                            responded;
+                        bool responded = hasResponse &&
+                            (status == "Interested" || status == "Maybe Later" || status == "Not Interested");
 
                         return new
                         {
@@ -534,10 +514,10 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
                             rfqId = g.Key.RfqID.ToString(),
                             documentId = r.DocumentId,
                             responded,
-                            interested,
-                            maybeLater,
-                            viewed,
-                            notInterested,
+                            interested = hasResponse && status == "Interested",
+                            maybeLater = hasResponse && status == "Maybe Later",
+                            notInterested = hasResponse && status == "Not Interested",
+                            viewed = r.Viewed == true,
                             quote = "—",
                             dueDate = r.DueDate?.ToString("dd/MM/yyyy") ?? "—",
                             actions = new[] { "pdf", "chat" }
@@ -549,13 +529,16 @@ ORDER BY wi.Name, rfq.RfqID, s.Name;
                         workItemId = g.Key.WorkItemID,
                         workItemName = g.Key.WorkItemName,
                         rfqId = g.Key.RfqID.ToString(),
-                        subcontractors,
-                        rfqNumber = g.First().RfqNumber
+                        rfqNumber = g.First().RfqNumber,
+                        subcontractors
                     };
                 }).ToList();
 
             return result;
         }
+
+
+
 
 
 
@@ -568,7 +551,7 @@ WITH LatestResponse AS (
     SELECT 
         r.*,
         ROW_NUMBER() OVER (
-            PARTITION BY r.RfqID, r.SubcontractorID
+            PARTITION BY r.RfqID, r.SubcontractorID, r.WorkItemID
             ORDER BY ISNULL(r.ModifiedOn, r.CreatedOn) DESC
         ) AS rn
     FROM RfqSubcontractorResponse r
@@ -580,33 +563,21 @@ SELECT
     rfq.RfqNumber,
     s.SubcontractorID,
     s.Name AS SubcontractorName,
-    ISNULL(s.Rating,0) AS Rating,
     rs.RfqResponseStatusName AS StatusName,
     lr.CreatedOn AS ResponseDate,
-    CASE 
-        WHEN doc.RfqResponseDocumentID IS NULL THEN 0 
-        ELSE 1 
-    END AS HasDocument
+   lr.Viewed   
 FROM Projects p
-INNER JOIN Rfq rfq 
-    ON rfq.ProjectID = p.ProjectID
-INNER JOIN RfqWorkItemMapping wim 
-    ON wim.RfqID = rfq.RfqID
-INNER JOIN WorkItems wi 
-    ON wi.WorkItemID = wim.WorkItemID
-INNER JOIN RfqSubcontractorMapping rsm 
-    ON rsm.RfqID = rfq.RfqID
-INNER JOIN Subcontractors s 
-    ON s.SubcontractorID = rsm.SubcontractorID
+INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
+INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
+INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
+INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = rfq.RfqID
+INNER JOIN Subcontractors s ON s.SubcontractorID = rsm.SubcontractorID
 LEFT JOIN LatestResponse lr
     ON lr.RfqID = rfq.RfqID
    AND lr.SubcontractorID = s.SubcontractorID
+   AND lr.WorkItemID = wi.WorkItemID
    AND lr.rn = 1
-LEFT JOIN RfqResponseStatus rs 
-    ON rs.RfqResponseID = lr.RfqResponseID
-LEFT JOIN RfqResponseDocuments doc
-    ON doc.RfqID = rfq.RfqID
-   AND doc.SubcontractorID = s.SubcontractorID
+LEFT JOIN RfqResponseStatus rs ON rs.RfqResponseID = lr.RfqResponseID
 WHERE p.ProjectID = @ProjectID
 ORDER BY wi.Name, s.Name;
 ";
@@ -614,25 +585,10 @@ ORDER BY wi.Name, s.Name;
             var rows = (await conn.QueryAsync(sql, new { ProjectID = projectId })).ToList();
             if (!rows.Any()) return null;
 
-            var result = rows.Select(r =>
+            return rows.Select(r =>
             {
                 string status = r.StatusName ?? "Not Responded";
-
-                bool responded =
-                    status == "Interested" ||
-                    status == "Maybe Later" ||
-                    status == "Not Interested";
-
-                bool interested = status == "Interested";
-                bool maybeLater = status == "Maybe Later";
-                bool notInterested = status == "Not Interested";
-
-                bool viewed =
-                    status == "Viewed" ||
-                    interested ||
-                    maybeLater ||
-                    notInterested ||
-                    responded;
+                bool hasResponse = r.ResponseDate != null;
 
                 return new
                 {
@@ -642,93 +598,85 @@ ORDER BY wi.Name, s.Name;
                     rfqNumber = r.RfqNumber,
                     subcontractorId = r.SubcontractorID,
                     subcontractorName = r.SubcontractorName,
-                    responded,
-                    interested,
-                    maybeLater,
-                    viewed,
-                    notInterested,
+                    responded = hasResponse,
+                    interested = hasResponse && status == "Interested",
+                    maybeLater = hasResponse && status == "Maybe Later",
+                    notInterested = hasResponse && status == "Not Interested",
+                    viewed = r.Viewed == true,
                     date = r.ResponseDate?.ToString("dd/MM/yyyy") ?? "—"
                 };
             }).ToList();
-
-            return result;
         }
 
-
-
-
         public async Task<bool> MarkRfqViewedAsync(
-     Guid rfqId,
-     Guid subcontractorId,
-     Guid workItemId
- )
+            Guid rfqId,
+            Guid subcontractorId,
+            Guid workItemId
+        )
         {
             using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync();
-
             using var tx = conn.BeginTransaction();
 
             try
             {
-                // Ensure subcontractor mapping exists
-                await conn.ExecuteAsync(@"
-            IF NOT EXISTS (
-                SELECT 1 FROM RfqSubcontractorMapping
-                WHERE RfqID = @RfqID AND SubcontractorID = @SubID
-            )
-            INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID)
-            VALUES (@RfqID, @SubID);
-        ", new { RfqID = rfqId, SubID = subcontractorId }, tx);
-
-                // Ensure work item mapping exists
-                await conn.ExecuteAsync(@"
-            IF NOT EXISTS (
-                SELECT 1 FROM RfqWorkItemMapping
-                WHERE RfqID = @RfqID AND WorkItemID = @WorkItemID
-            )
-            INSERT INTO RfqWorkItemMapping (RfqID, WorkItemID)
-            VALUES (@RfqID, @WorkItemID);
-        ", new { RfqID = rfqId, WorkItemID = workItemId }, tx);
-
-                // Get Viewed status ID
                 var viewedId = await GetResponseIdAsync(conn, tx, "Viewed");
 
-                // Get latest response for THIS subcontractor
-                var existing = await conn.QuerySingleOrDefaultAsync<(Guid? Id, string Status, bool Viewed)>(@"
-            SELECT TOP 1 
-                r.RfqSubcontractorResponseID,
-                rs.RfqResponseStatusName,
-                r.Viewed
-            FROM RfqSubcontractorResponse r
-            LEFT JOIN RfqResponseStatus rs ON rs.RfqResponseID = r.RfqResponseID
-            WHERE r.RfqID = @RfqID
-              AND r.SubcontractorID = @SubID
-            ORDER BY r.ModifiedOn DESC, r.CreatedOn DESC;
-        ", new { RfqID = rfqId, SubID = subcontractorId }, tx);
+                var existing = await conn.QuerySingleOrDefaultAsync<Guid?>(@"
+SELECT RfqSubcontractorResponseID
+FROM RfqSubcontractorResponse
+WHERE RfqID = @RfqID
+  AND SubcontractorID = @SubID
+  AND WorkItemID = @WorkItemID",
+                    new
+                    {
+                        RfqID = rfqId,
+                        SubID = subcontractorId,
+                        WorkItemID = workItemId
+                    }, tx);
 
-                if (existing.Id == null)
+                if (existing == null)
                 {
-                    // First time view → INSERT
                     await conn.ExecuteAsync(@"
-                INSERT INTO RfqSubcontractorResponse
-                (RfqSubcontractorResponseID, RfqID, SubcontractorID, RfqResponseID, Viewed, CreatedOn)
-                VALUES (NEWID(), @RfqID, @SubID, @ViewedID, 1, GETUTCDATE());
-            ", new { RfqID = rfqId, SubID = subcontractorId, ViewedID = viewedId }, tx);
+INSERT INTO RfqSubcontractorResponse
+(
+    RfqSubcontractorResponseID,
+    RfqID,
+    SubcontractorID,
+    WorkItemID,
+    RfqResponseID,
+    Viewed,
+    ViewedOn,
+    CreatedOn
+)
+VALUES
+(
+    NEWID(),
+    @RfqID,
+    @SubID,
+    @WorkItemID,
+    @ViewedID,
+    1,
+    GETUTCDATE(),
+    GETUTCDATE()
+);",
+                        new
+                        {
+                            RfqID = rfqId,
+                            SubID = subcontractorId,
+                            WorkItemID = workItemId,
+                            ViewedID = viewedId
+                        }, tx);
                 }
                 else
                 {
-                    // Do NOT overwrite real responses, only mark as viewed if not already
-                    if (!existing.Viewed)
-                    {
-                        await conn.ExecuteAsync(@"
-                    UPDATE RfqSubcontractorResponse
-                    SET Viewed = 1,
-                        ViewedOn = GETUTCDATE(),
-                        ModifiedOn = GETUTCDATE(),
-                        RfqResponseID = @ViewedID
-                    WHERE RfqSubcontractorResponseID = @Id;
-                ", new { Id = existing.Id, ViewedID = viewedId }, tx);
-                    }
+                    await conn.ExecuteAsync(@"
+UPDATE RfqSubcontractorResponse
+SET Viewed = 1,
+    ViewedOn = GETUTCDATE(),
+    ModifiedOn = GETUTCDATE()
+WHERE RfqSubcontractorResponseID = @ID",
+                        new { ID = existing.Value }, tx);
                 }
 
                 tx.Commit();
@@ -740,6 +688,7 @@ ORDER BY wi.Name, s.Name;
                 throw;
             }
         }
+
 
 
         public async Task<decimal?> GetTotalQuoteAmountAsync(Guid rfqId, Guid subcontractorId)

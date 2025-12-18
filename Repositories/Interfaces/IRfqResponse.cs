@@ -20,7 +20,7 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         // For GET button click responses
         Task<bool> SaveResponseAsync(Guid rfqId, Guid subcontractorId, Guid workItemId, string status);
-        Task<object?> GetProjectSummaryAsync(Guid rfqId, Guid? subId = null, List<Guid>? workItemIds = null);
+        Task<object?> GetProjectSummaryAsync( Guid rfqId,Guid? subcontractorId = null,List<Guid>? workItemIds = null,Guid? workItemId = null );
         Task<List<RfqResponseDocument>> GetPreviousSubmissionsAsync(Guid rfqId, Guid subcontractorId);
         Task<bool> UploadQuoteAsync(Guid rfqId, Guid subcontractorId, IFormFile file, decimal totalAmount, string comment);
         Task<object?> GetRfqResponsesByProjectAsync(Guid projectId);

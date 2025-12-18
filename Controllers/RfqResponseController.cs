@@ -204,15 +204,16 @@ namespace UnibouwAPI.Controllers
 
 
         //---------------------------------------------------------
-
         [HttpGet("GetProjectSummary")]
         public async Task<IActionResult> GetProjectSummary(
            [FromQuery] Guid rfqId,
-           [FromQuery] Guid subId)   // ✅ REQUIRED
+           [FromQuery] Guid subId,
+           [FromQuery] List<Guid>? workItemIds  // 👈 accept multiple IDs from query
+        )
         {
             try
             {
-                var result = await _repository.GetProjectSummaryAsync(rfqId, subId);
+                var result = await _repository.GetProjectSummaryAsync(rfqId, subId, workItemIds);
 
                 if (result == null)
                     return NotFound("No data found for the given RFQ.");
@@ -228,6 +229,7 @@ namespace UnibouwAPI.Controllers
                 });
             }
         }
+
 
 
         [HttpGet]
