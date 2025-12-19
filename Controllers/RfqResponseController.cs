@@ -204,15 +204,12 @@ namespace UnibouwAPI.Controllers
 
 
         //---------------------------------------------------------
-
         [HttpGet("GetProjectSummary")]
-        public async Task<IActionResult> GetProjectSummary(
-           [FromQuery] Guid rfqId,
-           [FromQuery] Guid subId)   // ✅ REQUIRED
+        public async Task<IActionResult> GetProjectSummary([FromQuery] Guid rfqId,[FromQuery] Guid subId,[FromQuery] List<Guid>? workItemIds)
         {
             try
             {
-                var result = await _repository.GetProjectSummaryAsync(rfqId, subId);
+                var result = await _repository.GetProjectSummaryAsync(rfqId, subId, workItemIds);
 
                 if (result == null)
                     return NotFound("No data found for the given RFQ.");
@@ -294,12 +291,7 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpPost("UploadQuote")]
-        public async Task<IActionResult> UploadQuote(
-     [FromQuery] Guid rfqId,
-     [FromQuery] Guid subcontractorId,
-     [FromForm] decimal totalAmount,
-     [FromForm] string comment,
-     IFormFile file)
+        public async Task<IActionResult> UploadQuote([FromQuery] Guid rfqId,[FromQuery] Guid subcontractorId,[FromForm] decimal totalAmount,[FromForm] string comment,IFormFile file)
         {
             if (rfqId == Guid.Empty || subcontractorId == Guid.Empty)
                 return BadRequest("Invalid RFQ or Subcontractor ID.");
@@ -526,55 +518,31 @@ namespace UnibouwAPI.Controllers
                 conn.Open();
 
                 string sql = @"
-
-SELECT RfqResponseDocumentID, RfqID, SubcontractorID, FileName, FileData, UploadedOn, IsDeleted, IsDeletedBy, DeletedOn
-
-FROM RfqResponseDocument
-
-WHERE RfqResponseDocumentID = @DocId";
+                        SELECT RfqResponseDocumentID, RfqID, SubcontractorID, FileName, FileData, UploadedOn, IsDeleted, IsDeletedBy, DeletedOn
+                        FROM RfqResponseDocument
+                        RfqResponseDocumentID = @DocId";
 
                 using (SqlCommand cmd = new SqlCommand(sql, conn))
-
                 {
-
                     cmd.Parameters.Add("@DocId", SqlDbType.UniqueIdentifier).Value = documentId;
-
                     using (SqlDataReader reader = cmd.ExecuteReader())
-
                     {
-
                         if (reader.Read())
-
                         {
-
                             string fileName = reader["FileName"].ToString();
-
                             byte[] fileData = (byte[])reader["FileData"];
-
                             // Save the file locally
-
                             string savePath = Path.Combine(Environment.CurrentDirectory, fileName);
-
                             System.IO.File.WriteAllBytes(savePath, fileData);
-
                             Console.WriteLine($"Document saved successfully: {savePath}");
-
                         }
-
                         else
-
                         {
-
                             Console.WriteLine("Document not found.");
-
                         }
-
                     }
-
                 }
-
             }
-
         }
 
 
