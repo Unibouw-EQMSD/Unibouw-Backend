@@ -238,7 +238,7 @@ namespace UnibouwAPI.Repositories
 <li><strong>Project Name:</strong> {WebUtility.HtmlEncode(projectName)}</li>
 <li><strong>RFQ ID:</strong> {rfq.RfqNumber ?? rfq.RfqID}</li>
 <li><strong>Work Item:</strong> {WebUtility.HtmlEncode(workItem.Name)}</li>
-<li><strong>Due Date:</strong> ({rfq.DueDate:dd-MMM-yyyy})</li>
+<li><strong>Due Date:</strong> {rfq.DueDate:dd-MMM-yyyy}</li>
 </ul>
 
 ";
