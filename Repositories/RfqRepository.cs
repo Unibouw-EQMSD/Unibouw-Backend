@@ -39,37 +39,94 @@ namespace UnibouwAPI.Repositories
         }
         public async Task<Rfq?> GetRfqById(Guid id)
         {
-            var query = @"
-        SELECT 
-            r.*, 
-            c.CustomerName,
-            p.Name AS ProjectName,
-            rs.RfqResponseStatusName               
-        FROM Rfq r
-        LEFT JOIN Customers c ON r.CustomerID = c.CustomerID
-        LEFT JOIN Projects p ON r.ProjectID = p.ProjectID
-        LEFT JOIN RfqResponseStatus rs ON r.RfqResponseID = rs.RfqResponseID
-        WHERE r.RfqID = @Id AND r.IsDeleted = 0";
+            var sql = @"
+SELECT 
+    r.*,
+    c.CustomerName,
+    p.Name AS ProjectName,
+    rs.RfqResponseStatusName,
+    wi.WorkItemID,
+    wi.Name AS WorkItemName
+FROM Rfq r
+LEFT JOIN Customers c ON r.CustomerID = c.CustomerID
+LEFT JOIN Projects p ON r.ProjectID = p.ProjectID
+LEFT JOIN RfqResponseStatus rs ON r.RfqResponseID = rs.RfqResponseID
+LEFT JOIN RfqWorkItemMapping rw ON r.RfqID = rw.RfqID
+LEFT JOIN WorkItems wi ON rw.WorkItemID = wi.WorkItemID
+WHERE r.RfqID = @Id AND r.IsDeleted = 0";
 
-            return await _connection.QueryFirstOrDefaultAsync<Rfq>(query, new { Id = id });
+            var rfqDictionary = new Dictionary<Guid, Rfq>();
+
+            var result = await _connection.QueryAsync<Rfq, WorkItem, Rfq>(
+                sql,
+                (rfq, workItem) =>
+                {
+                    if (!rfqDictionary.TryGetValue(rfq.RfqID, out var rfqEntry))
+                    {
+                        rfqEntry = rfq;
+                        rfqEntry.WorkItems = new List<WorkItem>();
+                        rfqDictionary.Add(rfq.RfqID, rfqEntry);
+                    }
+
+                    if (workItem != null)
+                        rfqEntry.WorkItems.Add(workItem);
+
+                    return rfqEntry;
+                },
+                new { Id = id },
+                splitOn: "WorkItemID"
+            );
+
+            return rfqDictionary.Values.FirstOrDefault();
         }
 
         public async Task<IEnumerable<Rfq>> GetRfqByProjectId(Guid projectId)
         {
-            var query = @"
-            SELECT 
-                r.*, 
-                c.CustomerName,
-                p.Name AS ProjectName,
-                rs.RfqResponseStatusName               
-            FROM Rfq r
-            LEFT JOIN Customers c ON r.CustomerID = c.CustomerID
-            LEFT JOIN Projects p ON r.ProjectID = p.ProjectID
-            LEFT JOIN RfqResponseStatus rs ON r.RfqResponseID = rs.RfqResponseID
-            WHERE p.ProjectID = @projectId AND p.IsDeleted = 0";
+            var sql = @"
+SELECT 
+    r.*,
+    c.CustomerName,
+    p.Name AS ProjectName,
+    rs.RfqResponseStatusName,
+    wi.WorkItemID,
+    wi.Name AS WorkItemName
+FROM Rfq r
+LEFT JOIN Customers c ON r.CustomerID = c.CustomerID
+LEFT JOIN Projects p ON r.ProjectID = p.ProjectID
+LEFT JOIN RfqResponseStatus rs ON r.RfqResponseID = rs.RfqResponseID
+LEFT JOIN RfqWorkItemMapping rw ON r.RfqID = rw.RfqID
+LEFT JOIN WorkItems wi ON rw.WorkItemID = wi.WorkItemID
+WHERE p.ProjectID = @projectId
+  AND r.IsDeleted = 0
+ORDER BY r.CreatedOn DESC";
 
-            return await _connection.QueryAsync<Rfq>(query, new { projectId });
+            var rfqDict = new Dictionary<Guid, Rfq>();
+
+            await _connection.QueryAsync<Rfq, WorkItem, Rfq>(
+                sql,
+                (rfq, workItem) =>
+                {
+                    if (!rfqDict.TryGetValue(rfq.RfqID, out var rfqEntry))
+                    {
+                        rfqEntry = rfq;
+                        rfqEntry.WorkItems = new List<WorkItem>();
+                        rfqDict.Add(rfq.RfqID, rfqEntry);
+                    }
+
+                    if (workItem != null)
+                    {
+                        rfqEntry.WorkItems.Add(workItem);
+                    }
+
+                    return rfqEntry;
+                },
+                new { projectId },
+                splitOn: "WorkItemID"
+            );
+
+            return rfqDict.Values;
         }
+
 
         public async Task<bool> UpdateRfqDueDate(Guid rfqId, DateTime dueDate, string modifiedBy)
         {
@@ -140,39 +197,61 @@ VALUES
             if (workItemIds == null || workItemIds.Count == 0)
                 return;
 
-            var query = @"
-        INSERT INTO RfqWorkItemMapping (RfqID, WorkItemID)
-        VALUES (@RfqID, @WorkItemID)";
+            const string sql = @"
+IF NOT EXISTS (
+    SELECT 1 FROM RfqWorkItemMapping 
+    WHERE RfqID = @RfqID AND WorkItemID = @WorkItemID
+)
+INSERT INTO RfqWorkItemMapping (RfqID, WorkItemID)
+VALUES (@RfqID, @WorkItemID);";
 
-            using var connection = _connection;
-            foreach (var workItemId in workItemIds)
+            using var connection = new SqlConnection(_connection.ConnectionString);
+            await connection.OpenAsync();
+
+            foreach (var id in workItemIds)
             {
-                await connection.ExecuteAsync(query, new { RfqID = rfqId, WorkItemID = workItemId });
+                await connection.ExecuteAsync(sql, new
+                {
+                    RfqID = rfqId,
+                    WorkItemID = id
+                });
             }
         }
 
-        public async Task<(string WorkItemName, int SubCount)> GetWorkItemInfoByRfqId(Guid rfqId)
+        public async Task<(string WorkItemNames, int SubCount)> GetWorkItemInfoByRfqId(Guid rfqId)
         {
             var sql = @"
-        SELECT TOP 1 w.Name
-        FROM RfqWorkItemMapping m
-        JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
-        WHERE m.RfqID = @rfqId;
+    -- 🔹 ALL work item names for RFQ
+    SELECT w.Name
+    FROM RfqWorkItemMapping m
+    JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
+    WHERE m.RfqID = @rfqId;
 
-        SELECT COUNT(*) 
-        FROM SubcontractorWorkItemsMapping s
-        WHERE s.WorkItemID IN (
-            SELECT WorkItemID FROM RfqWorkItemMapping WHERE RfqID = @rfqId
-        );
+    -- 🔹 Subcontractor count
+    SELECT COUNT(DISTINCT s.SubcontractorID)
+    FROM SubcontractorWorkItemsMapping s
+    WHERE s.WorkItemID IN (
+        SELECT WorkItemID 
+        FROM RfqWorkItemMapping 
+        WHERE RfqID = @rfqId
+    );
     ";
 
             using var multi = await _connection.QueryMultipleAsync(sql, new { rfqId });
 
-            var workItemName = await multi.ReadFirstOrDefaultAsync<string>() ?? "-";
+            var workItemNames = (await multi.ReadAsync<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct()
+                .ToList();
+
             var subcontractorCount = await multi.ReadFirstAsync<int>();
 
-            return (workItemName, subcontractorCount);
+            return (
+                workItemNames.Any() ? string.Join(", ", workItemNames) : "-",
+                subcontractorCount
+            );
         }
+
 
         public async Task<bool> UpdateRfqAsync(Rfq rfq)
         {
