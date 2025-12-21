@@ -156,7 +156,7 @@ namespace UnibouwAPI.Repositories
                                 View Project Summary
                                 </a>
                                 </p>
-
+                                <br/>
                                 <p>Regards,<br/>Unibouw Team</p>";
 
                     var mail = new MailMessage
