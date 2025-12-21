@@ -22,9 +22,9 @@ namespace UnibouwAPI.Repositories
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
-         public async Task<IEnumerable<Subcontractor>> GetAllSubcontractor()
-         {
-             var query = @"
+        public async Task<IEnumerable<Subcontractor>> GetAllSubcontractor()
+        {
+            var query = @"
          SELECT 
              s.*, 
              p.Name AS PersonName
@@ -32,11 +32,11 @@ namespace UnibouwAPI.Repositories
          LEFT JOIN Persons p ON s.PersonID = p.PersonID
          WHERE s.IsDeleted = 0";
 
-             return await _connection.QueryAsync<Subcontractor>(query);
+            return await _connection.QueryAsync<Subcontractor>(query);
 
-             //return await _connection.QueryAsync<Subcontractor>("SELECT * FROM Subcontractors");
-         }
- 
+            //return await _connection.QueryAsync<Subcontractor>("SELECT * FROM Subcontractors");
+        }
+
 
         public async Task<Subcontractor?> GetSubcontractorById(Guid id)
         {
@@ -97,11 +97,11 @@ namespace UnibouwAPI.Repositories
                         //  STEP 1: CHECK DUPLICATE EMAIL
                         // ============================
                         string duplicateEmailQuery = @"
-                    SELECT COUNT(1) 
-                    FROM Subcontractors 
-                    WHERE LOWER(EmailID) = LOWER(@EmailID)
-                      AND IsDeleted = 0;
-                ";
+                SELECT COUNT(1) 
+                FROM Subcontractors 
+                WHERE LOWER(EmailID) = LOWER(@EmailID)
+                  AND IsDeleted = 0;
+            ";
 
                         int existingEmailCount = await connection.ExecuteScalarAsync<int>(
                             duplicateEmailQuery,
@@ -122,22 +122,20 @@ namespace UnibouwAPI.Repositories
                             Name = subcontractor.ContactName,
                             Mail = subcontractor.ContactEmailID,
                             PhoneNumber1 = subcontractor.ContactPhone,
-                            Address = subcontractor.OfficeAddress,
-                            Country = subcontractor.Country,
-                            City = subcontractor.Location,
+                            //Address = subcontractor.OfficeAddress,
+                            //Country = subcontractor.Country,
+                            //City = subcontractor.Location,
                             CreatedOn = DateTime.UtcNow,
                             CreatedBy = subcontractor.CreatedBy,
                             IsDeleted = false
                         };
 
                         string insertPersonQuery = @"
-                    INSERT INTO Persons
-                    (PersonID, ERP_ID, Name, Mail, PhoneNumber1, PhoneNumber2, Address, State, City, Country, PostalCode, 
-                     CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
-                    VALUES
-                    (@PersonID, @ERP_ID, @Name, @Mail, @PhoneNumber1, @PhoneNumber2, @Address, @State, @City, @Country, @PostalCode,
-                     @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
-                ";
+                INSERT INTO Persons
+                (PersonID, ERP_ID, Name, Mail, PhoneNumber1, PhoneNumber2, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
+                VALUES
+                (@PersonID, @ERP_ID, @Name, @Mail, @PhoneNumber1, @PhoneNumber2, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
+            ";
 
                         await connection.ExecuteAsync(insertPersonQuery, person, transaction);
 
@@ -154,15 +152,15 @@ namespace UnibouwAPI.Repositories
                         subcontractor.IsDeleted = false;
 
                         string insertSubcontractorQuery = @"
-                    INSERT INTO Subcontractors 
-                    (SubcontractorID, ERP_ID, Name, Rating, EmailID, PhoneNumber1, PhoneNumber2, 
-                     Location, Country, OfficeAddress, BillingAddress, RegisteredDate, PersonID, 
-                     IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
-                    VALUES 
-                    (@SubcontractorID, @ERP_ID, @Name, @Rating, @EmailID, @PhoneNumber1, @PhoneNumber2, 
-                     @Location, @Country, @OfficeAddress, @BillingAddress, @RegisteredDate, @PersonID, 
-                     @IsActive, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
-                ";
+                INSERT INTO Subcontractors 
+                (SubcontractorID, ERP_ID, Name, Rating, EmailID, PhoneNumber1, PhoneNumber2, 
+                 Location, Country, OfficeAddress, BillingAddress, RegisteredDate, PersonID, 
+                 IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
+                VALUES 
+                (@SubcontractorID, @ERP_ID, @Name, @Rating, @EmailID, @PhoneNumber1, @PhoneNumber2, 
+                 @Location, @Country, @OfficeAddress, @BillingAddress, @RegisteredDate, @PersonID, 
+                 @IsActive, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
+            ";
 
                         await connection.ExecuteAsync(insertSubcontractorQuery, subcontractor, transaction);
 
@@ -173,10 +171,10 @@ namespace UnibouwAPI.Repositories
                         if (subcontractor.WorkItemIDs != null && subcontractor.WorkItemIDs.Any())
                         {
                             string insertMappingQuery = @"
-                        INSERT INTO SubcontractorWorkItemsMapping 
-                        (SubcontractorID, WorkItemID)
-                        VALUES (@SubcontractorID, @WorkItemID);
-                    ";
+                    INSERT INTO SubcontractorWorkItemsMapping 
+                    (SubcontractorID, WorkItemID)
+                    VALUES (@SubcontractorID, @WorkItemID);
+                ";
 
                             foreach (var workItemId in subcontractor.WorkItemIDs)
                             {
@@ -203,3 +201,5 @@ namespace UnibouwAPI.Repositories
         }
     }
 }
+
+
