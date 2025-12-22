@@ -211,15 +211,34 @@ namespace UnibouwAPI.Repositories
 
                 /* ---------------- PROJECT ---------------- */
                 const string projectSql = @"
-                    SELECT 
-                        p.ProjectID,
-                        p.Name,
-                        p.Number,
-                        p.Company,
-                        p.SharepointURL
-                    FROM Projects p
-                    INNER JOIN Rfq r ON r.ProjectID = p.ProjectID
-                    WHERE r.RfqID = @RfqID";
+    SELECT 
+    p.ProjectID,
+    p.Name,
+    p.Number,
+    p.Company,
+    p.StartDate,
+    p.CompletionDate,
+    p.Status,
+    p.SharepointURL,
+
+    p.CustomerID,
+    c.CustomerName,
+
+    p.ProjectManagerID,
+    pm.ProjectManagerName,
+    pm.Email AS ProjectManagerEmail
+
+FROM Projects p
+INNER JOIN Rfq r 
+    ON r.ProjectID = p.ProjectID
+
+LEFT JOIN Customers c
+    ON c.CustomerID = p.CustomerID
+
+LEFT JOIN ProjectManagers pm
+    ON pm.ProjectManagerID = p.ProjectManagerID
+
+WHERE r.RfqID = @RfqID";
 
                 var project = await conn.QueryFirstOrDefaultAsync<Project>(
                     projectSql,
@@ -366,91 +385,103 @@ namespace UnibouwAPI.Repositories
             using var conn = new SqlConnection(_connectionString);
 
             var sql = @"
-                    WITH LatestResponse AS (
-                        SELECT 
-                            r.*,
-                            ROW_NUMBER() OVER (
-                                PARTITION BY r.RfqID, r.SubcontractorID, r.WorkItemID
-                                ORDER BY ISNULL(r.ModifiedOn, r.CreatedOn) DESC
-                            ) AS rn
-                        FROM RfqSubcontractorResponse r
-                    )
-                    SELECT 
-                        wi.WorkItemID,
-                        wi.Name AS WorkItemName,
-                        rfq.RfqID,
-                        rfq.RfqNumber,
-                        rfq.DueDate,
-                        s.SubcontractorID,
-                        s.Name AS SubcontractorName,
-                        ISNULL(s.Rating,0) AS Rating,
-                        rs.RfqResponseStatusName AS StatusName,
-                        lr.CreatedOn AS ResponseDate,
-                     lr.Viewed,  
-                        doc.RfqResponseDocumentID AS DocumentId,
-                        CASE WHEN doc.RfqResponseDocumentID IS NULL THEN 0 ELSE 1 END AS HasDocument
-                    FROM Projects p
-                    INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
-                    INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
-                    INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
-                    INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = rfq.RfqID
-                    INNER JOIN Subcontractors s ON s.SubcontractorID = rsm.SubcontractorID
-                    LEFT JOIN LatestResponse lr
-                        ON lr.RfqID = rfq.RfqID
-                       AND lr.SubcontractorID = s.SubcontractorID
-                       AND lr.WorkItemID = wi.WorkItemID
-                       AND lr.rn = 1
-                    LEFT JOIN RfqResponseStatus rs ON rs.RfqResponseID = lr.RfqResponseID
-                    LEFT JOIN RfqResponseDocuments doc
-                        ON doc.RfqID = rfq.RfqID
-                       AND doc.SubcontractorID = s.SubcontractorID
-                    WHERE p.ProjectID = @ProjectID
-                    ORDER BY wi.Name, rfq.RfqID, s.Name;
-                    ";
+        WITH LatestResponse AS (
+            SELECT 
+                r.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY r.RfqID, r.SubcontractorID, r.WorkItemID
+                    ORDER BY ISNULL(r.ModifiedOn, r.CreatedOn) DESC
+                ) AS rn
+            FROM RfqSubcontractorResponse r
+        ),
+        DocumentFlag AS (
+            SELECT DISTINCT
+                RfqID,
+                SubcontractorID
+            FROM RfqResponseDocuments
+        )
+        SELECT 
+            wi.WorkItemID,
+            wi.Name AS WorkItemName,
+            rfq.RfqID,
+            rfq.RfqNumber,
+            rfq.DueDate,
+
+            s.SubcontractorID,
+            s.Name AS SubcontractorName,
+            ISNULL(s.Rating,0) AS Rating,
+
+            rs.RfqResponseStatusName AS StatusName,
+            lr.CreatedOn AS ResponseDate,
+            lr.Viewed,
+
+            CASE WHEN df.SubcontractorID IS NULL THEN 0 ELSE 1 END AS HasDocument
+        FROM Projects p
+        INNER JOIN Rfq rfq 
+            ON rfq.ProjectID = p.ProjectID
+        INNER JOIN RfqWorkItemMapping wim 
+            ON wim.RfqID = rfq.RfqID
+        INNER JOIN WorkItems wi 
+            ON wi.WorkItemID = wim.WorkItemID
+        INNER JOIN RfqSubcontractorMapping rsm 
+            ON rsm.RfqID = rfq.RfqID
+        INNER JOIN Subcontractors s 
+            ON s.SubcontractorID = rsm.SubcontractorID
+        LEFT JOIN LatestResponse lr
+            ON lr.RfqID = rfq.RfqID
+           AND lr.SubcontractorID = s.SubcontractorID
+           AND lr.WorkItemID = wi.WorkItemID
+           AND lr.rn = 1
+        LEFT JOIN RfqResponseStatus rs 
+            ON rs.RfqResponseID = lr.RfqResponseID
+        LEFT JOIN DocumentFlag df
+            ON df.RfqID = rfq.RfqID
+           AND df.SubcontractorID = s.SubcontractorID
+        WHERE p.ProjectID = @ProjectID
+        ORDER BY wi.Name, rfq.RfqID, s.Name;
+    ";
 
             var rows = (await conn.QueryAsync(sql, new { ProjectID = projectId })).ToList();
             if (!rows.Any()) return null;
 
             var result = rows
-                .GroupBy(r => new { r.WorkItemID, r.WorkItemName, r.RfqID })
-                .Select(g =>
+                .GroupBy(r => new { r.WorkItemID, r.WorkItemName, r.RfqID, r.RfqNumber })
+                .Select(g => new
                 {
-                    var subcontractors = g.Select(r =>
-                    {
-                        string status = r.StatusName ?? "Not Responded";
-                        bool hasResponse = r.ResponseDate != null || r.DocumentId != null;
+                    workItemId = g.Key.WorkItemID,
+                    workItemName = g.Key.WorkItemName,
+                    rfqId = g.Key.RfqID.ToString(),
+                    rfqNumber = g.Key.RfqNumber,
 
-                        bool responded = hasResponse &&
-                            (status == "Interested" || status == "Maybe Later" || status == "Not Interested");
-
-                        return new
+                    subcontractors = g
+                        .GroupBy(x => x.SubcontractorID)   // ✅ DOUBLE SAFETY
+                        .Select(r =>
                         {
-                            subcontractorId = r.SubcontractorID,
-                            name = r.SubcontractorName,
-                            rating = r.Rating,
-                            date = r.ResponseDate?.ToString("dd/MM/yyyy") ?? "—",
-                            rfqId = g.Key.RfqID.ToString(),
-                            documentId = r.DocumentId,
-                            responded,
-                            interested = hasResponse && status == "Interested",
-                            maybeLater = hasResponse && status == "Maybe Later",
-                            notInterested = hasResponse && status == "Not Interested",
-                            viewed = r.Viewed == true,
-                            quote = "—",
-                            dueDate = r.DueDate?.ToString("dd/MM/yyyy") ?? "—",
-                            actions = new[] { "pdf", "chat" }
-                        };
-                    }).ToList();
+                            var row = r.First();
 
-                    return new
-                    {
-                        workItemId = g.Key.WorkItemID,
-                        workItemName = g.Key.WorkItemName,
-                        rfqId = g.Key.RfqID.ToString(),
-                        rfqNumber = g.First().RfqNumber,
-                        subcontractors
-                    };
-                }).ToList();
+                            string status = row.StatusName ?? "Not Responded";
+                            bool hasResponse = row.ResponseDate != null || row.HasDocument == 1;
+
+                            return new
+                            {
+                                subcontractorId = row.SubcontractorID,
+                                name = row.SubcontractorName,
+                                rating = row.Rating,
+                                date = row.ResponseDate?.ToString("dd/MM/yyyy") ?? "—",
+                                rfqId = g.Key.RfqID.ToString(),
+                                responded = hasResponse,
+                                interested = hasResponse && status == "Interested",
+                                maybeLater = hasResponse && status == "Maybe Later",
+                                notInterested = hasResponse && status == "Not Interested",
+                                viewed = row.Viewed == true,
+                                quote = "—",
+                                dueDate = row.DueDate?.ToString("dd/MM/yyyy") ?? "—",
+                                actions = new[] { "pdf", "chat" }
+                            };
+                        })
+                        .ToList()
+                })
+                .ToList();
 
             return result;
         }
