@@ -242,6 +242,26 @@ namespace UnibouwAPI.Controllers
             });
         }
 
+        [HttpDelete("{id:guid}")]
+        public async Task<IActionResult> DeleteRfq(Guid id)
+        {
+            // You can replace this with User.Identity.Name if auth is enabled
+            var deletedBy = User?.Identity?.Name ?? "System";
+
+            var success = await _repository.DeleteRfqAsync(id, deletedBy);
+
+            if (!success)
+                return NotFound(new
+                {
+                    message = "RFQ not found or already deleted"
+                });
+
+            return Ok(new
+            {
+                message = "RFQ deleted successfully"
+            });
+        }
+
 
     }
 }
