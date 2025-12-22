@@ -23,8 +23,10 @@ namespace UnibouwAPI.Repositories
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
-        public async Task<bool> SendRfqEmailAsync(EmailRequest request)
+        public async Task<List<EmailRequest>> SendRfqEmailAsync(EmailRequest request)
         {
+            var sentEmails = new List<EmailRequest>();
+
             try
             {
                 if (request == null || request.SubcontractorIDs == null || !request.SubcontractorIDs.Any())
@@ -169,8 +171,19 @@ namespace UnibouwAPI.Repositories
 
                     mail.To.Add(sub.EmailID);
                     await client.SendMailAsync(mail);
+
+                    // ✅ CAPTURE EMAIL DETAILS
+                    sentEmails.Add(new EmailRequest
+                    {
+                        RfqID = request.RfqID,
+                        SubcontractorIDs = new List<Guid> { sub.SubcontractorID },
+                        ToEmail = sub.EmailID,
+                        Subject = request.Subject,
+                        WorkItems = request.WorkItems,
+                        Body = body
+                    });
                 }
-                return true;
+                return sentEmails;
             }
             catch (Exception ex)
             {
@@ -191,7 +204,7 @@ namespace UnibouwAPI.Repositories
             }
         }
 
-        public async Task<bool> SendReminderEmailAsync(Guid subcontractorId,string email,string name,Guid rfqId,string emailBody)
+        public async Task<bool> SendReminderEmailAsync(Guid subcontractorId, string email, string name, Guid rfqId, string emailBody)
         {
             try
             {
@@ -242,5 +255,6 @@ namespace UnibouwAPI.Repositories
             }
         }
 
+   
     }
 }

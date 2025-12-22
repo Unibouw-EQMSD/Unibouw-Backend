@@ -33,11 +33,17 @@ namespace UnibouwAPI.Controllers
                     return BadRequest(new { success = false, message = "Recipient email is required." });
 
                 // Call service
-                bool isSent = await _emailRepository.SendRfqEmailAsync(request);
+                var sentEmails = await _emailRepository.SendRfqEmailAsync(request);
 
-                return isSent
-                    ? Ok(new { success = true, message = "RFQ email sent successfully." })
-                    : StatusCode(500, new { success = false, message = "Failed to send RFQ email." });
+                if (sentEmails == null || !sentEmails.Any())
+                    return StatusCode(500, new { success = false, message = "Failed to send RFQ email." });
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "RFQ email sent successfully.",
+                    sentCount = sentEmails.Count
+                });
             }
             catch (Exception ex)
             {
