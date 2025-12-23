@@ -368,8 +368,32 @@ VALUES (@RfqID, @WorkItemID);";
             using var connection = _connection;
             await connection.ExecuteAsync(query, new { WorkItemID = workItemId, SubcontractorID = subcontractorId });
         }
-    
-}
+        public async Task<bool> DeleteRfqAsync(Guid rfqId, string deletedBy)
+        {
+            const string query = @"
+        UPDATE Rfq
+        SET 
+            IsDeleted = 1,
+            DeletedOn = GETUTCDATE(),
+            DeletedBy = @DeletedBy
+        WHERE 
+            RfqID = @RfqID
+            AND IsDeleted = 0;
+    ";
+
+            using var connection = _connection;
+
+            var rowsAffected = await connection.ExecuteAsync(query, new
+            {
+                RfqID = rfqId,
+                DeletedBy = deletedBy
+            });
+
+            return rowsAffected > 0;
+        }
+
+
+    }
 
 }
 
