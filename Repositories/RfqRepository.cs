@@ -368,32 +368,60 @@ VALUES (@RfqID, @WorkItemID);";
             using var connection = _connection;
             await connection.ExecuteAsync(query, new { WorkItemID = workItemId, SubcontractorID = subcontractorId });
         }
-        public async Task<bool> DeleteRfqAsync(Guid rfqId, string deletedBy)
+        public async Task<bool?> DeleteRfqAsync(Guid rfqId, string deletedBy)
         {
-            const string query = @"
-        UPDATE Rfq
-        SET 
-            IsDeleted = 1,
-            DeletedOn = GETUTCDATE(),
-            DeletedBy = @DeletedBy
-        WHERE 
-            RfqID = @RfqID
-            AND IsDeleted = 0;
-    ";
-
             using var connection = _connection;
 
-            var rowsAffected = await connection.ExecuteAsync(query, new
+            /* 1️⃣ Check RFQ exists & not already deleted */
+            const string rfqExistsSql = @"
+        SELECT COUNT(1)
+        FROM Rfq
+        WHERE RfqID = @RfqID
+          AND IsDeleted = 0";
+
+            var exists = await connection.ExecuteScalarAsync<int>(
+                rfqExistsSql,
+                new { RfqID = rfqId }
+            );
+
+            if (exists == 0)
+                return null; // RFQ not found or already deleted
+
+
+            /* 2️⃣ Check if ANY subcontractor submitted a quote */
+            const string quoteCheckSql = @"
+        SELECT COUNT(1)
+        FROM RfqSubcontractorResponse
+        WHERE RfqID = @RfqID
+          AND ISNULL(SubmissionCount, 0) > 0";
+
+            var submittedQuotes = await connection.ExecuteScalarAsync<int>(
+                quoteCheckSql,
+                new { RfqID = rfqId }
+            );
+
+            if (submittedQuotes > 0)
+                return false; // ❌ Block delete
+
+
+            /* 3️⃣ Soft delete RFQ */
+            const string deleteSql = @"
+        UPDATE Rfq
+        SET IsDeleted = 1,
+            DeletedOn = GETUTCDATE(),
+            DeletedBy = @DeletedBy
+        WHERE RfqID = @RfqID
+          AND IsDeleted = 0";
+
+            await connection.ExecuteAsync(deleteSql, new
             {
                 RfqID = rfqId,
                 DeletedBy = deletedBy
             });
 
-            return rowsAffected > 0;
+            return true; // ✅ Deleted successfully
         }
 
-
     }
-
 }
 

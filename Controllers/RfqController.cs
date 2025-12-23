@@ -242,26 +242,40 @@ namespace UnibouwAPI.Controllers
             });
         }
 
-        [HttpDelete("{id:guid}")]
+        [HttpPost("delete/{id:guid}")]
         public async Task<IActionResult> DeleteRfq(Guid id)
         {
-            // You can replace this with User.Identity.Name if auth is enabled
+            // 🔒 Role check (System Admin only)
+            if (!User.IsInRole("Admin"))
+            {
+                return Forbid("You do not have permission to delete this RFQ.");
+            }
+
             var deletedBy = User?.Identity?.Name ?? "System";
 
-            var success = await _repository.DeleteRfqAsync(id, deletedBy);
+            var result = await _repository.DeleteRfqAsync(id, deletedBy);
 
-            if (!success)
+            if (result == null)
+            {
                 return NotFound(new
                 {
-                    message = "RFQ not found or already deleted"
+                    message = "RFQ no longer exists."
                 });
+            }
+
+            if (result == false)
+            {
+                return BadRequest(new
+                {
+                    message = "This RFQ cannot be deleted because one or more subcontractors have submitted a quote."
+                });
+            }
 
             return Ok(new
             {
-                message = "RFQ deleted successfully"
+                message = "RFQ deleted successfully."
             });
         }
-
 
     }
 }
