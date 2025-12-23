@@ -16,7 +16,7 @@ namespace UnibouwAPI.Repositories.Interfaces
         Task UpdateRfqSubcontractorsAsync(Guid rfqId, List<Guid> subcontractorIds);
         Task EnsureGlobalSubcontractorWorkItemMapping(Guid workItemId, Guid subcontractorId);
         Task<IEnumerable<dynamic>> GetRfqSubcontractorDueDatesAsync(Guid rfqId);
-        Task<bool> DeleteRfqAsync(Guid rfqId, string deletedBy);
+        Task<bool?> DeleteRfqAsync(Guid rfqId, string deletedBy);
 
     }
 }
