@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using System.Net;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories;
 using UnibouwAPI.Repositories.Interfaces;
@@ -88,6 +89,48 @@ namespace UnibouwAPI.Controllers
             }
         }
 
+
+        [HttpPost("send-mail")]
+        public async Task<IActionResult> SendMail([FromBody] SendMailRequest req)
+        {
+            try
+            {
+                if (req.SubcontractorID == Guid.Empty)
+                    return BadRequest("SubcontractorID is required.");
+
+                if (string.IsNullOrWhiteSpace(req.Subject))
+                    return BadRequest("Subject is required.");
+
+                if (string.IsNullOrWhiteSpace(req.Body))
+                    return BadRequest("Body is required.");
+
+                // ✅ Fetch subcontractor details
+                var sub = await _subcontractorRepository
+                    .GetSubcontractorById(req.SubcontractorID);
+
+                if (sub == null)
+                    return BadRequest("Subcontractor not found.");
+
+                // ✅ Send mail using fetched values
+                var result = await _emailRepository.SendMailAsync(
+                    toEmail: sub.EmailID,
+                    subject: req.Subject,
+                    body: req.Body,
+                    name: sub.Name
+                );
+
+                return Ok(new { success = result });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new
+                {
+                    success = false,
+                    message = "An unexpected error occurred while sending the email",
+                    error = ex.Message // remove in prod if needed
+                });
+            }
+        }
 
     }
 }
