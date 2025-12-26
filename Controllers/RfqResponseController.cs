@@ -291,7 +291,7 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpPost("UploadQuote")]
-        public async Task<IActionResult> UploadQuote([FromQuery] Guid rfqId,[FromQuery] Guid subcontractorId,[FromForm] decimal totalAmount,[FromForm] string comment,IFormFile file)
+        public async Task<IActionResult> UploadQuote([FromQuery] Guid rfqId,[FromQuery] Guid subcontractorId, [FromQuery] Guid workItemId, [FromForm] decimal totalAmount,[FromForm] string comment,IFormFile file)
         {
             if (rfqId == Guid.Empty || subcontractorId == Guid.Empty)
                 return BadRequest("Invalid RFQ or Subcontractor ID.");
@@ -302,6 +302,7 @@ namespace UnibouwAPI.Controllers
             var success = await _repository.UploadQuoteAsync(
                 rfqId,
                 subcontractorId,
+                workItemId,
                 file,
                 totalAmount,
                 comment
@@ -448,14 +449,13 @@ namespace UnibouwAPI.Controllers
                 return 0;
             }
         }
-
         [HttpGet("GetQuoteAmount")]
         [Authorize]
-        public async Task<IActionResult> GetQuoteAmount(Guid rfqId, Guid subcontractorId)
+        public async Task<IActionResult> GetQuoteAmount(Guid rfqId, Guid subcontractorId, Guid workItemId)
         {
             try
             {
-                var totalAmount = await _repository.GetTotalQuoteAmountAsync(rfqId, subcontractorId);
+                var totalAmount = await _repository.GetTotalQuoteAmountAsync(rfqId, subcontractorId, workItemId);
 
                 if (totalAmount == null)
                     return Ok(new { quoteAmount = "-" }); // no quote submitted yet
@@ -472,7 +472,6 @@ namespace UnibouwAPI.Controllers
                 });
             }
         }
-
 
         [HttpGet("PreviousSubmissions")]
         public async Task<IActionResult> PreviousSubmissions([FromQuery] Guid rfqId, [FromQuery] Guid subcontractorId)
