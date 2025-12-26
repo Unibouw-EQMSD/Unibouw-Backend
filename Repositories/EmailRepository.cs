@@ -23,8 +23,10 @@ namespace UnibouwAPI.Repositories
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
-        public async Task<bool> SendRfqEmailAsync(EmailRequest request)
+        public async Task<List<EmailRequest>> SendRfqEmailAsync(EmailRequest request)
         {
+            var sentEmails = new List<EmailRequest>();
+
             try
             {
                 if (request == null || request.SubcontractorIDs == null || !request.SubcontractorIDs.Any())
@@ -169,8 +171,19 @@ namespace UnibouwAPI.Repositories
 
                     mail.To.Add(sub.EmailID);
                     await client.SendMailAsync(mail);
+
+                    // ✅ CAPTURE EMAIL DETAILS
+                    sentEmails.Add(new EmailRequest
+                    {
+                        RfqID = request.RfqID,
+                        SubcontractorIDs = new List<Guid> { sub.SubcontractorID },
+                        ToEmail = sub.EmailID,
+                        Subject = request.Subject,
+                        WorkItems = request.WorkItems,
+                        Body = body
+                    });
                 }
-                return true;
+                return sentEmails;
             }
             catch (Exception ex)
             {
@@ -191,7 +204,7 @@ namespace UnibouwAPI.Repositories
             }
         }
 
-        public async Task<bool> SendReminderEmailAsync(Guid subcontractorId,string email,string name,Guid rfqId,string emailBody)
+        public async Task<bool> SendReminderEmailAsync(Guid subcontractorId, string email, string name, Guid rfqId, string emailBody)
         {
             try
             {
@@ -239,6 +252,60 @@ namespace UnibouwAPI.Repositories
             catch (Exception ex)
             {
                 throw new Exception($"Failed to send reminder email: {ex.Message}", ex);
+            }
+        }
+
+        public async Task<bool> SendMailAsync(string toEmail,string subject,string body,string name)
+        {
+            try
+            {
+                var smtpSettings = _configuration.GetSection("SmtpSettings");
+
+                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+
+                using var client = new SmtpClient(
+                    smtpSettings["Host"],
+                    int.Parse(smtpSettings["Port"])
+                )
+                {
+                    EnableSsl = bool.Parse(smtpSettings["EnableSsl"] ?? "true"),
+                    UseDefaultCredentials = false,
+                    Credentials = new NetworkCredential(
+                        smtpSettings["Username"],
+                        smtpSettings["Password"]
+                    ),
+                    DeliveryMethod = SmtpDeliveryMethod.Network
+                };
+
+                // ✅ Build dynamic email message
+                string htmlBody = $@"
+            <p>Dear {WebUtility.HtmlEncode(name)},</p>
+
+            <p>{body}</p>
+
+            <p>Thank you,<br/>
+            <strong>Unibouw Team</strong></p>
+        ";
+
+                var mail = new MailMessage
+                {
+                    From = new MailAddress(
+                        smtpSettings["FromEmail"],
+                        smtpSettings["DisplayName"]
+                    ),
+                    Subject = subject,
+                    Body = htmlBody,
+                    IsBodyHtml = true
+                };
+
+                mail.To.Add(toEmail);
+
+                await client.SendMailAsync(mail);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Failed to send email: {ex.Message}", ex);
             }
         }
 

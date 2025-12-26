@@ -1,10 +1,10 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using UnibouwAPI.Models;
-using System;
-using System.Threading.Tasks;
 using UnibouwAPI.Repositories.Interfaces;
-using UnibouwAPI.Repositories;
+using System.Net;
+using System.Text.RegularExpressions;
+
 
 namespace UnibouwAPI.Controllers
 {
@@ -14,12 +14,14 @@ namespace UnibouwAPI.Controllers
     {
         private readonly IRfq _repository;
         private readonly IEmail _emailRepository;
+        private readonly IRFQConversationMessage _conversationRepo;
         private readonly ILogger<RfqController> _logger;
 
-        public RfqController(IRfq repository,IEmail emailRepository, ILogger<RfqController> logger)
+        public RfqController(IRfq repository,IEmail emailRepository, IRFQConversationMessage conversationRepo, ILogger<RfqController> logger)
         {
             _repository = repository;
             _emailRepository = emailRepository;
+            _conversationRepo = conversationRepo;
             _logger = logger;
         }
 
@@ -116,12 +118,17 @@ namespace UnibouwAPI.Controllers
 
         [HttpPost("create-simple")]
         [Authorize]
-        public async Task<IActionResult> CreateRfqSimple(
-     [FromBody] Rfq rfq,
-     [FromQuery] List<Guid> subcontractorIds,
-     [FromQuery] List<Guid> workItems,
-     [FromQuery] bool sendEmail = true)
+        public async Task<IActionResult> CreateRfqSimple([FromBody] Rfq rfq,[FromQuery] List<Guid> subcontractorIds,[FromQuery] List<Guid> workItems,[FromQuery] bool sendEmail = true)
         {
+            // Get logged-in user email from token
+            var userEmail = User.Identity.Name;
+           
+            if (string.IsNullOrWhiteSpace(userEmail))
+                return Unauthorized(new { message = "Unable to determine logged-in user email." });
+
+            // get email to assign CreatedBy
+            var PMEmail = userEmail;
+
             if (rfq == null || subcontractorIds == null || !subcontractorIds.Any())
                 return BadRequest(new { message = "RFQ data and subcontractor IDs are required." });
 
@@ -129,11 +136,17 @@ namespace UnibouwAPI.Controllers
             rfq.RfqSent = sendEmail ? 1 : 0;
             rfq.Status = sendEmail ? "Sent" : "Draft";
 
+            // 1️⃣ Create RFQ
             var rfqId = await _repository.CreateRfqAsync(rfq);
 
+            // 2️⃣ Insert work items
             if (workItems != null && workItems.Any())
                 await _repository.InsertRfqWorkItemsAsync(rfqId, workItems);
 
+            // 3️⃣ Get created RFQ (needed for ProjectID, CreatedBy)
+            var createdRfq = await _repository.GetRfqById(rfqId);
+
+            // 4️⃣ Send email + save conversation
             if (sendEmail)
             {
                 var emailRequest = new EmailRequest
@@ -144,15 +157,87 @@ namespace UnibouwAPI.Controllers
                     Subject = rfq.CustomerNote ?? "RFQ Invitation - Unibouw",
                     Body = rfq.CustomerNote
                 };
-                await _emailRepository.SendRfqEmailAsync(emailRequest);
+
+                var sentEmails = await _emailRepository.SendRfqEmailAsync(emailRequest);
+
+                foreach (var email in sentEmails)
+                {
+                    var conversation = new RFQConversationMessage
+                    {
+                        ProjectID = rfq.ProjectID.Value,
+                        RfqID = rfqId,
+                        SubcontractorID = email.SubcontractorIDs.First(),
+                       // ProjectManagerID = Guid.Parse("34522246-1C79-4A2A-83FF-06283E1DD82D"), // adjust if different type
+                        SenderType = "PM",
+                        MessageText = HtmlToPlainText(email.Body),
+                        MessageDateTime = DateTime.UtcNow,
+                        CreatedBy = PMEmail
+
+                    };
+
+                    await _conversationRepo.AddRFQConversationMessageAsync(conversation);
+                }
             }
 
-            var createdRfq = await _repository.GetRfqById(rfqId);
-            return Ok(new { message = "RFQ processed successfully.", data = createdRfq });
+            return Ok(new
+            {
+                message = "RFQ processed successfully.",
+                data = createdRfq
+            });
         }
 
+        //private static string HtmlToPlainText(string html)
+        //{
+        //    if (string.IsNullOrWhiteSpace(html))
+        //        return string.Empty;
 
-        [HttpPut("{rfqId}")]
+        //    html = Regex.Replace(html, @"<(br|BR)\s*/?>", "\n");
+        //    html = Regex.Replace(html, @"</p>|</div>|</li>|</ul>|</ol>", "\n");
+
+        //    html = Regex.Replace(html, "<.*?>", string.Empty);
+        //    html = WebUtility.HtmlDecode(html);
+
+        //    html = Regex.Replace(html, @"\n\s*\n+", "\n\n");
+
+        //    return html.Trim();
+        //}
+
+
+private static string HtmlToPlainText(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            return string.Empty;
+
+        // 🔴 REMOVE <a>...</a> completely
+        html = Regex.Replace(
+            html,
+            @"<a\b[^>]*>.*?</a>",
+            "",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline
+        );
+
+        // Convert block-level tags to line breaks
+        html = Regex.Replace(html, @"<(br|BR)\s*/?>", "\n");
+        html = Regex.Replace(html, @"</p>|</div>|</li>|</ul>|</ol>", "\n");
+
+        // Remove remaining HTML tags
+        html = Regex.Replace(html, "<.*?>", string.Empty);
+
+        // Decode HTML entities
+        html = WebUtility.HtmlDecode(html);
+
+        // Normalize spaces & newlines
+        html = Regex.Replace(html, @"[ \t]+", " ");
+        html = Regex.Replace(html, @"\n\s*", "\n");
+        html = Regex.Replace(html, @"\n{3,}", "\n\n");
+
+        return html.Trim();
+    }
+
+
+
+
+    [HttpPut("{rfqId}")]
         [Authorize]
         public async Task<IActionResult> UpdateRfq(
       Guid rfqId,
