@@ -6,7 +6,7 @@
 
         // Foreign Keys
         public Guid ProjectID { get; set; }
-        public Guid RfqID { get; set; }
+        public Guid? RfqID { get; set; }
         public Guid SubcontractorID { get; set; }
         public Guid ProjectManagerID { get; set; }
 
@@ -17,7 +17,7 @@
         public DateTime MessageDateTime { get; set; }
 
         // Audit
-        public string CreatedBy { get; set; }
-        public DateTime CreatedOn { get; set; }
+        public string? CreatedBy { get; set; }
+        public DateTime? CreatedOn { get; set; }
     }
 }

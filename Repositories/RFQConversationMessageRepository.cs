@@ -56,7 +56,6 @@ namespace UnibouwAPI.Repositories
         (
             ConversationMessageID,
             ProjectID,
-            RfqID,
             WorkItemID,
             SubcontractorID,
             ProjectManagerID,
@@ -72,7 +71,6 @@ namespace UnibouwAPI.Repositories
         (
             @ConversationMessageID,
             @ProjectID,
-            @RfqID,
             @WorkItemID,
             @SubcontractorID,
             @ProjectManagerID,
@@ -133,9 +131,27 @@ namespace UnibouwAPI.Repositories
             using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync();
 
+            // 1️⃣ Get Subcontractor Email
+            if (logConversation.SubcontractorID != Guid.Empty)
+            {
+                const string emailSql = @"
+                    SELECT EmailID
+                    FROM Subcontractors
+                    WHERE SubcontractorID = @SubcontractorID";
+
+                var email = await connection.QueryFirstOrDefaultAsync<string>(
+                    emailSql,
+                    new { logConversation.SubcontractorID }
+                );
+
+                // Assign email to CreatedBy (fallback if null)
+                logConversation.CreatedBy = email ?? "system";
+            }
+
             // Set system values
             logConversation.LogConversationID = Guid.NewGuid();
             logConversation.CreatedOn = DateTime.UtcNow;
+            logConversation.RfqID = null;
 
             var sql = @"
         INSERT INTO LogConversation
@@ -203,8 +219,7 @@ namespace UnibouwAPI.Repositories
             );
         }
 
-
-        public async Task<List<ConversationMessageDto>> GetConversationAsync(Guid projectId,Guid rfqId,Guid subcontractorId)
+        public async Task<List<ConversationMessageDto>> GetConversationAsync(Guid projectId, Guid rfqId, Guid subcontractorId)
         {
             var sql = @"
     SELECT *
@@ -219,7 +234,6 @@ namespace UnibouwAPI.Repositories
             'Mail' AS ConversationType
         FROM RFQConversationMessage
         WHERE ProjectID = @projectId
-          AND RfqID = @rfqId
           AND SubcontractorID = @subcontractorId
 
         UNION ALL
@@ -233,7 +247,6 @@ namespace UnibouwAPI.Repositories
             ConversationType
         FROM LogConversation
         WHERE ProjectID = @projectId
-          AND RfqID = @rfqId
           AND SubcontractorID = @subcontractorId
     ) AS CombinedMessages
     ORDER BY MessageDateTime ASC;
@@ -241,13 +254,11 @@ namespace UnibouwAPI.Repositories
 
             var result = await _connection.QueryAsync<ConversationMessageDto>(
                 sql,
-                new { projectId, rfqId, subcontractorId }
+                new { projectId, subcontractorId }
             );
 
             return result.ToList();
         }
-
-
 
     }
 }
