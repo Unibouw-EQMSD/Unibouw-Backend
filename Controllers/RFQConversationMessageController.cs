@@ -186,5 +186,64 @@ namespace UnibouwAPI.Controllers
         }
 
 
+        // Upload Attachment
+        [HttpPost("AddAttachmentAsync/{conversationMessageId}")]
+        public async Task<IActionResult> AddAttachmentAsync(Guid conversationMessageId, IFormFile file)
+        {
+            if (file == null || file.Length == 0)
+                return BadRequest("File is required.");
+
+            string? filePath = null;
+
+            try
+            {
+                var uploadsFolder = Path.Combine("Uploads", "RFQ");
+                Directory.CreateDirectory(uploadsFolder);
+
+                //var storedFileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
+                //filePath = Path.Combine(uploadsFolder, storedFileName);
+                // ORIGINAL FILE NAME
+                var originalFileName = Path.GetFileName(file.FileName);
+                filePath = Path.Combine(uploadsFolder, originalFileName);
+                
+
+                using (var stream = new FileStream(filePath, FileMode.Create))
+                {
+                    await file.CopyToAsync(stream);
+                }
+
+                var attachment = new RFQConversationMessageAttachment
+                {
+                    ConversationMessageID = conversationMessageId,
+                    FileName = file.FileName,
+                    FileExtension = Path.GetExtension(file.FileName),
+                    FileSize = file.Length,
+                    FilePath = filePath,
+                    UploadedBy = null // extract from JWT if required
+                };
+
+                var result = await _repository.AddAttachmentAsync(attachment);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                // Rollback file if DB save fails
+                if (!string.IsNullOrEmpty(filePath) && System.IO.File.Exists(filePath))
+                {
+                    System.IO.File.Delete(filePath);
+                }
+
+                // Optional: log error
+                // _logger.LogError(ex, "Error uploading attachment");
+
+                return StatusCode(
+                    StatusCodes.Status500InternalServerError,
+                    "An error occurred while uploading the attachment."
+                );
+            }
+        }
+
+
+
     }
 }
