@@ -75,14 +75,38 @@ namespace UnibouwAPI.Repositories
                 foreach (var sub in subcontractors)
                 {
                     // ---------- RFQ–Subcontractor mapping (ONCE) ----------
-                    await _connection.ExecuteAsync(@"
+                    /*await _connection.ExecuteAsync(@"
                             IF NOT EXISTS (
                                 SELECT 1 FROM RfqSubcontractorMapping
                                 WHERE RfqID=@RfqID AND SubcontractorID=@SubId
                             )
                             INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID)
                             VALUES (@RfqID, @SubId)",
-                        new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID });
+                        new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID });*/
+                    await _connection.ExecuteAsync(@"
+    IF NOT EXISTS (
+        SELECT 1 FROM RfqSubcontractorMapping
+        WHERE RfqID = @RfqID AND SubcontractorID = @SubId
+    )
+    INSERT INTO RfqSubcontractorMapping
+    (
+        RfqID,
+        SubcontractorID,
+        DueDate
+    )
+    VALUES
+    (
+        @RfqID,
+        @SubId,
+        @DueDate
+    )",
+    new
+    {
+        RfqID = rfq.RfqID,
+        SubId = sub.SubcontractorID,
+        DueDate = rfq.DueDate
+    });
+
 
                     // ---------- INSERT RESPONSE PER WORK ITEM ----------
                     foreach (var wi in workItems)
