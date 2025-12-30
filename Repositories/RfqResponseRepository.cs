@@ -562,6 +562,48 @@ ORDER BY wi.Name, s.Name;
             }).ToList();
         }
 
+        public async Task<List<SubcontractorLatestMessageDto>> GetSubcontractorsByLatestMessageAsync(Guid projectId)
+        {
+            const string sql = @"
+        WITH AllMessages AS (
+            SELECT SubcontractorID, MessageDateTime
+            FROM dbo.LogConversation
+            WHERE ProjectID = @ProjectID
+
+            UNION ALL
+
+            SELECT SubcontractorID, MessageDateTime
+            FROM dbo.RFQConversationMessage
+            WHERE ProjectID = @ProjectID
+        ),
+        LatestMessages AS (
+            SELECT
+                SubcontractorID,
+                MAX(MessageDateTime) AS LatestMessageDateTime
+            FROM AllMessages
+            GROUP BY SubcontractorID
+        )
+        SELECT
+            lm.SubcontractorID,
+            s.Name AS SubcontractorName,
+            lm.LatestMessageDateTime
+        FROM LatestMessages lm
+        INNER JOIN dbo.Subcontractors s
+            ON s.SubcontractorID = lm.SubcontractorID
+        ORDER BY lm.LatestMessageDateTime DESC;
+    ";
+
+            using var connection = new SqlConnection(_connectionString);
+
+            var result = await connection.QueryAsync<SubcontractorLatestMessageDto>(
+                sql,
+                new { ProjectID = projectId }
+            );
+
+            return result.ToList();
+        }
+
+
         public async Task<bool> MarkRfqViewedAsync(Guid rfqId,Guid subcontractorId,Guid workItemId)
         {
             using var conn = new SqlConnection(_connectionString);
@@ -638,7 +680,6 @@ ORDER BY wi.Name, s.Name;
                 throw;
             }
         }
-
 
         public async Task<decimal?> GetTotalQuoteAmountAsync(Guid rfqId, Guid subcontractorId, Guid workItemId)
         {

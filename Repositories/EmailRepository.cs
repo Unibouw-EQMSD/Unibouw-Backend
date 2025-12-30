@@ -75,14 +75,38 @@ namespace UnibouwAPI.Repositories
                 foreach (var sub in subcontractors)
                 {
                     // ---------- RFQ–Subcontractor mapping (ONCE) ----------
-                    await _connection.ExecuteAsync(@"
+                    /*await _connection.ExecuteAsync(@"
                             IF NOT EXISTS (
                                 SELECT 1 FROM RfqSubcontractorMapping
                                 WHERE RfqID=@RfqID AND SubcontractorID=@SubId
                             )
                             INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID)
                             VALUES (@RfqID, @SubId)",
-                        new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID });
+                        new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID });*/
+                    await _connection.ExecuteAsync(@"
+    IF NOT EXISTS (
+        SELECT 1 FROM RfqSubcontractorMapping
+        WHERE RfqID = @RfqID AND SubcontractorID = @SubId
+    )
+    INSERT INTO RfqSubcontractorMapping
+    (
+        RfqID,
+        SubcontractorID,
+        DueDate
+    )
+    VALUES
+    (
+        @RfqID,
+        @SubId,
+        @DueDate
+    )",
+    new
+    {
+        RfqID = rfq.RfqID,
+        SubId = sub.SubcontractorID,
+        DueDate = rfq.DueDate
+    });
+
 
                     // ---------- INSERT RESPONSE PER WORK ITEM ----------
                     foreach (var wi in workItems)
@@ -255,7 +279,61 @@ namespace UnibouwAPI.Repositories
             }
         }
 
-        public async Task<bool> SendMailAsync(string toEmail,string subject,string body,string name)
+        /* public async Task<bool> SendMailAsync(string toEmail,string subject,string body,string name)
+         {
+             try
+             {
+                 var smtpSettings = _configuration.GetSection("SmtpSettings");
+
+                 ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+
+                 using var client = new SmtpClient(
+                     smtpSettings["Host"],
+                     int.Parse(smtpSettings["Port"])
+                 )
+                 {
+                     EnableSsl = bool.Parse(smtpSettings["EnableSsl"] ?? "true"),
+                     UseDefaultCredentials = false,
+                     Credentials = new NetworkCredential(
+                         smtpSettings["Username"],
+                         smtpSettings["Password"]
+                     ),
+                     DeliveryMethod = SmtpDeliveryMethod.Network
+                 };
+
+                 // ✅ Build dynamic email message
+                 string htmlBody = $@"
+             <p>Dear {WebUtility.HtmlEncode(name)},</p>
+
+             <p>{body}</p>
+
+             <p>Thank you,<br/>
+             <strong>Unibouw Team</strong></p>
+         ";
+
+                 var mail = new MailMessage
+                 {
+                     From = new MailAddress(
+                         smtpSettings["FromEmail"],
+                         smtpSettings["DisplayName"]
+                     ),
+                     Subject = subject,
+                     Body = htmlBody,
+                     IsBodyHtml = true
+                 };
+
+                 mail.To.Add(toEmail);
+
+                 await client.SendMailAsync(mail);
+                 return true;
+             }
+             catch (Exception ex)
+             {
+                 throw new Exception($"Failed to send email: {ex.Message}", ex);
+             }
+         }*/
+
+        public async Task<bool> SendMailAsync(string toEmail,string subject,string body,string name,List<string>? attachmentFilePaths = null)
         {
             try
             {
@@ -277,17 +355,14 @@ namespace UnibouwAPI.Repositories
                     DeliveryMethod = SmtpDeliveryMethod.Network
                 };
 
-                // ✅ Build dynamic email message
                 string htmlBody = $@"
-            <p>Dear {WebUtility.HtmlEncode(name)},</p>
+                        <p>Dear {WebUtility.HtmlEncode(name)},</p>
+                        <p>{body}</p>
+                        <p>Thank you,<br/>
+                        <strong>Unibouw Team</strong></p>
+                    ";
 
-            <p>{body}</p>
-
-            <p>Thank you,<br/>
-            <strong>Unibouw Team</strong></p>
-        ";
-
-                var mail = new MailMessage
+                using var mail = new MailMessage
                 {
                     From = new MailAddress(
                         smtpSettings["FromEmail"],
@@ -300,14 +375,28 @@ namespace UnibouwAPI.Repositories
 
                 mail.To.Add(toEmail);
 
+                // Add attachments
+                if (attachmentFilePaths?.Any() == true)
+                {
+                    foreach (var filePath in attachmentFilePaths)
+                    {
+                        if (!string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath))
+                        {
+                            mail.Attachments.Add(new Attachment(filePath));
+                        }
+                    }
+                }
+
                 await client.SendMailAsync(mail);
                 return true;
             }
             catch (Exception ex)
             {
+                //_logger.LogError(ex, "Failed to send email to {Email}", toEmail);
                 throw new Exception($"Failed to send email: {ex.Message}", ex);
             }
         }
+
 
     }
 }

@@ -116,7 +116,8 @@ namespace UnibouwAPI.Controllers
                     toEmail: sub.EmailID,
                     subject: req.Subject,
                     body: req.Body,
-                    name: sub.Name
+                    name: sub.Name,
+                    attachmentFilePaths: req.AttachmentFilePaths
                 );
 
                 return Ok(new { success = result });

@@ -260,5 +260,43 @@ namespace UnibouwAPI.Repositories
             return result.ToList();
         }
 
+        public async Task<RFQConversationMessageAttachment> AddAttachmentAsync(RFQConversationMessageAttachment attachment)
+        {
+            attachment.AttachmentID = Guid.NewGuid();
+            attachment.UploadedOn = DateTime.UtcNow;
+            attachment.IsActive = true;
+
+            const string sql = @"
+        INSERT INTO dbo.RFQConversationMessageAttachment
+        (
+            AttachmentID,
+            ConversationMessageID,
+            FileName,
+            FileExtension,
+            FileSize,
+            FilePath,
+            UploadedBy,
+            UploadedOn,
+            IsActive
+        )
+        VALUES
+        (
+            @AttachmentID,
+            @ConversationMessageID,
+            @FileName,
+            @FileExtension,
+            @FileSize,
+            @FilePath,
+            @UploadedBy,
+            @UploadedOn,
+            @IsActive
+        );";
+
+            using var connection = new SqlConnection(_connectionString);
+            await connection.ExecuteAsync(sql, attachment);
+
+            return attachment;
+        }
+
     }
 }

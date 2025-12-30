@@ -595,6 +595,22 @@ namespace UnibouwAPI.Controllers
             }
         }
 
+        [HttpGet("subcontractors/latest/{projectId}")]
+        public async Task<IActionResult> GetLatestSubcontractors(Guid projectId)
+        {
+            try
+            {
+                var data = await _repository.GetSubcontractorsByLatestMessageAsync(projectId);
+                return Ok(data);
+            }
+            catch (Exception ex)
+            {
+                // log ex
+                return StatusCode(500, "Failed to load subcontractors.");
+            }
+        }
+
+
         [HttpPost("mark-viewed")]
         public async Task<IActionResult> MarkViewed([FromQuery] Guid rfqId, [FromQuery] Guid subcontractorId, [FromQuery] Guid workItemId)
         {

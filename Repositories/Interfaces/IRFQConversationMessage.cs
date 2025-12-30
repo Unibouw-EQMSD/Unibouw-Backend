@@ -11,5 +11,8 @@ namespace UnibouwAPI.Repositories.Interfaces
         Task<IEnumerable<LogConversation>> GetLogConversationsByProjectIdAsync(Guid projectId);
 
         Task<List<ConversationMessageDto>> GetConversationAsync(Guid projectId, Guid rfqId, Guid subcontractorId);
+
+        Task<RFQConversationMessageAttachment> AddAttachmentAsync(RFQConversationMessageAttachment attachment);
+
     }
 }

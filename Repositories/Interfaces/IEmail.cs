@@ -9,6 +9,7 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         Task<bool> SendReminderEmailAsync(Guid subcontractorId, string email, string name, Guid rfqId, string emailBody);
 
-        Task<bool> SendMailAsync(string toEmail, string subject, string body, string name);
+        // Task<bool> SendMailAsync(string toEmail, string subject, string body, string name);
+        Task<bool> SendMailAsync(string toEmail, string subject, string body, string name, List<string>? attachmentFilePaths = null);
     }
 }

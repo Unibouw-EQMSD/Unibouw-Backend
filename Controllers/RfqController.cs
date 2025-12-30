@@ -120,119 +120,111 @@ namespace UnibouwAPI.Controllers
         [Authorize]
         public async Task<IActionResult> CreateRfqSimple([FromBody] Rfq rfq,[FromQuery] List<Guid> subcontractorIds,[FromQuery] List<Guid> workItems,[FromQuery] bool sendEmail = true)
         {
-            // Get logged-in user email from token
-            var userEmail = User.Identity.Name;
-           
-            if (string.IsNullOrWhiteSpace(userEmail))
-                return Unauthorized(new { message = "Unable to determine logged-in user email." });
-
-            // get email to assign CreatedBy
-            var PMEmail = userEmail;
-
-            if (rfq == null || subcontractorIds == null || !subcontractorIds.Any())
-                return BadRequest(new { message = "RFQ data and subcontractor IDs are required." });
-
-            rfq.DeadLine = rfq.DueDate;
-            rfq.RfqSent = sendEmail ? 1 : 0;
-            rfq.Status = sendEmail ? "Sent" : "Draft";
-
-            // 1️⃣ Create RFQ
-            var rfqId = await _repository.CreateRfqAsync(rfq);
-
-            // 2️⃣ Insert work items
-            if (workItems != null && workItems.Any())
-                await _repository.InsertRfqWorkItemsAsync(rfqId, workItems);
-
-            // 3️⃣ Get created RFQ (needed for ProjectID, CreatedBy)
-            var createdRfq = await _repository.GetRfqById(rfqId);
-
-            // 4️⃣ Send email + save conversation
-            if (sendEmail)
+            try
             {
-                var emailRequest = new EmailRequest
-                {
-                    RfqID = rfqId,
-                    SubcontractorIDs = subcontractorIds,
-                    WorkItems = workItems ?? new List<Guid>(),
-                    Subject = rfq.CustomerNote ?? "RFQ Invitation - Unibouw",
-                    Body = rfq.CustomerNote
-                };
+                // Get logged-in user email from token
+                var userEmail = User.Identity.Name;
 
-                var sentEmails = await _emailRepository.SendRfqEmailAsync(emailRequest);
+                if (string.IsNullOrWhiteSpace(userEmail))
+                    return Unauthorized(new { message = "Unable to determine logged-in user email." });
 
-                foreach (var email in sentEmails)
+                // get email to assign CreatedBy
+                var PMEmail = userEmail;
+
+                if (rfq == null || subcontractorIds == null || !subcontractorIds.Any())
+                    return BadRequest(new { message = "RFQ data and subcontractor IDs are required." });
+
+                rfq.DeadLine = rfq.DueDate;
+                rfq.RfqSent = sendEmail ? 1 : 0;
+                rfq.Status = sendEmail ? "Sent" : "Draft";
+
+                // 1️⃣ Create RFQ
+                var rfqId = await _repository.CreateRfqAsync(rfq);
+
+                // 2️⃣ Insert work items
+                if (workItems != null && workItems.Any())
+                    await _repository.InsertRfqWorkItemsAsync(rfqId, workItems);
+
+                // 3️⃣ Get created RFQ (needed for ProjectID, CreatedBy)
+                var createdRfq = await _repository.GetRfqById(rfqId);
+
+                // 4️⃣ Send email + save conversation
+                if (sendEmail)
                 {
-                    var conversation = new RFQConversationMessage
+                    var emailRequest = new EmailRequest
                     {
-                        ProjectID = rfq.ProjectID.Value,
                         RfqID = rfqId,
-                        SubcontractorID = email.SubcontractorIDs.First(),
-                       // ProjectManagerID = Guid.Parse("34522246-1C79-4A2A-83FF-06283E1DD82D"), // adjust if different type
-                        SenderType = "PM",
-                        MessageText = HtmlToPlainText(email.Body),
-                        MessageDateTime = DateTime.UtcNow,
-                        CreatedBy = PMEmail
-
+                        SubcontractorIDs = subcontractorIds,
+                        WorkItems = workItems ?? new List<Guid>(),
+                        Subject = rfq.CustomerNote ?? "RFQ Invitation - Unibouw",
+                        Body = rfq.CustomerNote
                     };
 
-                    await _conversationRepo.AddRFQConversationMessageAsync(conversation);
-                }
-            }
+                    var sentEmails = await _emailRepository.SendRfqEmailAsync(emailRequest);
 
-            return Ok(new
+                    foreach (var email in sentEmails)
+                    {
+                        var conversation = new RFQConversationMessage
+                        {
+                            ProjectID = rfq.ProjectID.Value,
+                            RfqID = rfqId,
+                            SubcontractorID = email.SubcontractorIDs.First(),
+                            // ProjectManagerID = Guid.Parse("34522246-1C79-4A2A-83FF-06283E1DD82D"), // adjust if different type
+                            SenderType = "PM",
+                            MessageText = HtmlToPlainText(email.Body),
+                            MessageDateTime = DateTime.UtcNow,
+                            CreatedBy = PMEmail
+
+                        };
+
+                        await _conversationRepo.AddRFQConversationMessageAsync(conversation);
+                    }
+                }
+
+                return Ok(new
+                {
+                    message = "RFQ processed successfully.",
+                    data = createdRfq
+                });
+            }
+            catch (Exception ex)
             {
-                message = "RFQ processed successfully.",
-                data = createdRfq
-            });
+                _logger.LogError(ex, "An error occurred.",ex);
+                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
+            } 
         }
 
-        //private static string HtmlToPlainText(string html)
-        //{
-        //    if (string.IsNullOrWhiteSpace(html))
-        //        return string.Empty;
 
-        //    html = Regex.Replace(html, @"<(br|BR)\s*/?>", "\n");
-        //    html = Regex.Replace(html, @"</p>|</div>|</li>|</ul>|</ol>", "\n");
+        private static string HtmlToPlainText(string html)
+            {
+                if (string.IsNullOrWhiteSpace(html))
+                    return string.Empty;
 
-        //    html = Regex.Replace(html, "<.*?>", string.Empty);
-        //    html = WebUtility.HtmlDecode(html);
+                // 🔴 REMOVE <a>...</a> completely
+                html = Regex.Replace(
+                    html,
+                    @"<a\b[^>]*>.*?</a>",
+                    "",
+                    RegexOptions.IgnoreCase | RegexOptions.Singleline
+                );
 
-        //    html = Regex.Replace(html, @"\n\s*\n+", "\n\n");
+                // Convert block-level tags to line breaks
+                html = Regex.Replace(html, @"<(br|BR)\s*/?>", "\n");
+                html = Regex.Replace(html, @"</p>|</div>|</li>|</ul>|</ol>", "\n");
 
-        //    return html.Trim();
-        //}
+                // Remove remaining HTML tags
+                html = Regex.Replace(html, "<.*?>", string.Empty);
 
+                // Decode HTML entities
+                html = WebUtility.HtmlDecode(html);
 
-private static string HtmlToPlainText(string html)
-    {
-        if (string.IsNullOrWhiteSpace(html))
-            return string.Empty;
+                // Normalize spaces & newlines
+                html = Regex.Replace(html, @"[ \t]+", " ");
+                html = Regex.Replace(html, @"\n\s*", "\n");
+                html = Regex.Replace(html, @"\n{3,}", "\n\n");
 
-        // 🔴 REMOVE <a>...</a> completely
-        html = Regex.Replace(
-            html,
-            @"<a\b[^>]*>.*?</a>",
-            "",
-            RegexOptions.IgnoreCase | RegexOptions.Singleline
-        );
-
-        // Convert block-level tags to line breaks
-        html = Regex.Replace(html, @"<(br|BR)\s*/?>", "\n");
-        html = Regex.Replace(html, @"</p>|</div>|</li>|</ul>|</ol>", "\n");
-
-        // Remove remaining HTML tags
-        html = Regex.Replace(html, "<.*?>", string.Empty);
-
-        // Decode HTML entities
-        html = WebUtility.HtmlDecode(html);
-
-        // Normalize spaces & newlines
-        html = Regex.Replace(html, @"[ \t]+", " ");
-        html = Regex.Replace(html, @"\n\s*", "\n");
-        html = Regex.Replace(html, @"\n{3,}", "\n\n");
-
-        return html.Trim();
-    }
+                return html.Trim();
+            }
 
 
 

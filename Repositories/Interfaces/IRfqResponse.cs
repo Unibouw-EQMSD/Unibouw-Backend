@@ -17,6 +17,7 @@ namespace UnibouwAPI.Repositories.Interfaces
         //-------RfqSubcontractorWorkItemResponse
         Task<IEnumerable<RfqSubcontractorWorkItemResponse>> GetAllRfqSubcontractorWorkItemResponse();
         Task<RfqSubcontractorWorkItemResponse?> GetRfqSubcontractorWorkItemResponseById(Guid id);
+        Task<List<SubcontractorLatestMessageDto>> GetSubcontractorsByLatestMessageAsync(Guid projectId);
 
         // For GET button click responses
         Task<bool> SaveResponseAsync(Guid rfqId, Guid subcontractorId, Guid workItemId, string status);
