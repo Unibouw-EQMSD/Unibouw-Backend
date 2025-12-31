@@ -406,10 +406,13 @@ WITH LatestResponse AS (
     FROM RfqSubcontractorResponse r
 ),
 DocumentFlag AS (
-    SELECT DISTINCT
+    SELECT
         RfqID,
-        SubcontractorID
+        SubcontractorID,
+        MAX(RfqResponseDocumentID) AS DocumentId
     FROM RfqResponseDocuments
+    WHERE IsDeleted = 0
+    GROUP BY RfqID, SubcontractorID
 )
 SELECT 
     wi.WorkItemID,
@@ -427,8 +430,9 @@ SELECT
     lr.CreatedOn AS ResponseDate,
     lr.Viewed,
     lr.TotalQuoteAmount,
+df.DocumentId AS DocumentId,
 
-    CASE WHEN df.SubcontractorID IS NULL THEN 0 ELSE 1 END AS HasDocument
+CASE WHEN df.DocumentId IS NULL THEN 0 ELSE 1 END AS HasDocument
 FROM Projects p
 INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
 INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
@@ -490,7 +494,7 @@ ORDER BY wi.Name, s.Name;
                             subcontractorId = (Guid)row.SubcontractorID,
                             name = (string)row.SubcontractorName,
                             rating = (int)row.Rating,
-
+                            documentId = row.DocumentId,
                             date = finalDate.ToString("dd-MM-yyyy"),
                             rfqId = g.Key.RfqID.ToString(),
 
