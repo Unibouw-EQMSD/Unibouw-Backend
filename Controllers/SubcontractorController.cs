@@ -159,6 +159,15 @@ namespace UnibouwAPI.Controllers
                     Error = ex.Message
                 });
             }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("name", StringComparison.OrdinalIgnoreCase))
+            {
+                return Conflict(new
+                {
+                    Field = "name",
+                    Message = "A subcontractor with this name already exists.",
+                    Error = ex.Message
+                });
+            }
             catch (Exception ex)
             {
                 return StatusCode(500, new
