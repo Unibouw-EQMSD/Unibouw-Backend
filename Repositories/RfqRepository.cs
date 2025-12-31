@@ -1,5 +1,6 @@
 ﻿using Dapper;
 using Microsoft.Data.SqlClient;
+using Microsoft.VisualBasic;
 using System.Data;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
@@ -149,48 +150,193 @@ ORDER BY r.CreatedOn DESC";
 
             return rowsAffected > 0;
         }
-
-        public async Task<Guid> CreateRfqAsync(Rfq rfq)
+        public async Task<Guid> CreateRfqAsync(
+            Rfq rfq,
+            List<Guid> subcontractorIds
+        )
         {
-            // Generate a new RFQ ID and set defaults
+            // 1️⃣ System fields
             rfq.RfqID = Guid.NewGuid();
             rfq.CreatedOn = DateTime.UtcNow;
             rfq.IsDeleted = false;
 
-            // Ensure nullable GUIDs are null instead of Guid.Empty
             rfq.CustomerID = rfq.CustomerID == Guid.Empty ? null : rfq.CustomerID;
             rfq.ProjectID = rfq.ProjectID == Guid.Empty ? null : rfq.ProjectID;
             rfq.RfqResponseID = rfq.RfqResponseID == Guid.Empty ? null : rfq.RfqResponseID;
 
-            using var connection = _connection;
+            // 2️⃣ DATE — SINGLE SOURCE OF TRUTH
+            if (rfq.DueDate == null)
+                throw new Exception("RFQ DueDate is required");
 
-            // Insert RFQ without RfqNumber (trigger handles it)
-            var query = @"
+            var dueDate = rfq.DueDate.Value.Date;
+            rfq.DueDate = dueDate;
+            rfq.GlobalDueDate = dueDate;
+            rfq.DeadLine = dueDate;
+
+            await using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            try
+            {
+                // 3️⃣ Insert RFQ
+                const string insertRfq = @"
 INSERT INTO Rfq
 (
     RfqID, SentDate, DueDate, RfqSent, QuoteReceived,
     CustomerID, ProjectID, RfqResponseID, CustomerNote, DeadLine,
-    CreatedOn, CreatedBy, ModifiedOn, ModifiedBy,
-    DeletedOn, DeletedBy, IsDeleted, Status,GlobalDueDate
+    CreatedOn, CreatedBy, IsDeleted, Status, GlobalDueDate
 )
 VALUES
 (
     @RfqID, @SentDate, @DueDate, @RfqSent, @QuoteReceived,
     @CustomerID, @ProjectID, @RfqResponseID, @CustomerNote, @DeadLine,
-    @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy,
-    @DeletedOn, @DeletedBy, @IsDeleted, @Status,@GlobalDueDate
+    @CreatedOn, @CreatedBy, @IsDeleted, @Status, @GlobalDueDate
 )";
 
-            var rows = await connection.ExecuteAsync(query, rfq);
-            if (rows == 0)
-                throw new Exception("Failed to create RFQ.");
+                await connection.ExecuteAsync(insertRfq, rfq, transaction);
 
-            // Return only the GUID
-            return rfq.RfqID;
+                // 4️⃣ Subcontractor mappings — DueDate ALWAYS set
+                const string insertSub = @"
+INSERT INTO RfqSubcontractorMapping
+(
+    RfqID,
+    SubcontractorID,
+    DueDate
+)
+VALUES
+(
+    @RfqID,
+    @SubcontractorID,
+    @DueDate
+)";
+
+                foreach (var subId in subcontractorIds)
+                {
+                    await connection.ExecuteAsync(insertSub, new
+                    {
+                        RfqID = rfq.RfqID,
+                        SubcontractorID = subId,
+                        DueDate = dueDate
+                    }, transaction);
+                }
+
+                await transaction.CommitAsync();
+                return rfq.RfqID;
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        }
+        public async Task SaveSubcontractorWorkItemMappingAsync(
+     Guid subcontractorId,
+     Guid workItemId,
+     string createdBy)
+        {
+            const string sql = @"
+IF NOT EXISTS (
+    SELECT 1 FROM SubcontractorWorkItemsMapping
+    WHERE SubcontractorID = @SubcontractorID
+      AND WorkItemID = @WorkItemID
+)
+INSERT INTO SubcontractorWorkItemsMapping
+(
+    SubcontractorID,
+    WorkItemID,
+    CreatedBy,
+    CreatedOn
+)
+VALUES
+(
+    @SubcontractorID,
+    @WorkItemID,
+    @CreatedBy,
+    GETDATE()
+);";
+
+            await _connection.ExecuteAsync(sql, new
+            {
+                SubcontractorID = subcontractorId,
+                WorkItemID = workItemId,
+                CreatedBy = createdBy
+            });
+        }
+
+
+        public async Task<bool> SaveOrUpdateRfqSubcontractorMappingAsync(
+    Guid rfqId,
+    Guid subcontractorId,
+    Guid workItemId,
+    DateTime dueDate,
+    string user)
+        {
+            const string sql = @"
+IF EXISTS (
+    SELECT 1
+    FROM RfqSubcontractorMapping
+    WHERE RfqID = @RfqID
+      AND SubcontractorID = @SubcontractorID
+)
+BEGIN
+    UPDATE RfqSubcontractorMapping
+    SET 
+        DueDate = @DueDate
+    WHERE RfqID = @RfqID
+      AND SubcontractorID = @SubcontractorID;
+END
+ELSE
+BEGIN
+    INSERT INTO RfqSubcontractorMapping
+    (
+        RfqID,
+        SubcontractorID,
+        DueDate
+    )
+    VALUES
+    (
+        @RfqID,
+        @SubcontractorID,
+        @DueDate
+    );
+END
+";
+
+            var rows = await _connection.ExecuteAsync(sql, new
+            {
+                RfqID = rfqId,
+                SubcontractorID = subcontractorId,
+                DueDate = dueDate.Date
+            });
+
+            // 🔹 ALSO ensure global subcontractor–workitem mapping
+            await EnsureGlobalSubcontractorWorkItemMapping(workItemId, subcontractorId);
+
+            return rows > 0;
         }
 
 
 
+        public async Task<bool> UpdateRfqSubcontractorDueDateAsync(
+    Guid rfqId,
+    Guid subcontractorId,
+    DateTime dueDate)
+        {
+            const string sql = @"
+UPDATE RfqSubcontractorMapping
+SET DueDate = @DueDate
+WHERE RfqID = @RfqID AND SubcontractorID = @SubcontractorID";
+
+            var rowsAffected = await _connection.ExecuteAsync(sql, new
+            {
+                RfqID = rfqId,
+                SubcontractorID = subcontractorId,
+                DueDate = dueDate
+            });
+
+            return rowsAffected > 0;
+        }
 
         public async Task InsertRfqWorkItemsAsync(Guid rfqId, List<Guid> workItemIds)
         {
@@ -253,35 +399,43 @@ VALUES (@RfqID, @WorkItemID);";
         }
 
 
-        public async Task<bool> UpdateRfqAsync(Rfq rfq)
+        public async Task<bool> UpdateRfqAsync(Guid rfqId, Guid subcontractorId, DateTime dueDate)
+        {
+            var query = @"
+        UPDATE RfqSubcontractorMapping
+        SET DueDate = @DueDate
+        WHERE RfqID = @RfqID AND SubcontractorID = @SubcontractorID";
+
+            using var connection = _connection;
+            var rowsAffected = await connection.ExecuteAsync(query, new
+            {
+                RfqID = rfqId,
+                SubcontractorID = subcontractorId,
+                DueDate = dueDate
+            });
+
+            return rowsAffected > 0;
+        }
+
+        public async Task<bool> UpdateRfqMainAsync(Rfq rfq)
         {
             var query = @"
         UPDATE Rfq
         SET 
-            SentDate = @SentDate,
             DueDate = @DueDate,
-            RfqSent = @RfqSent,
-            QuoteReceived = @QuoteReceived,
-            CustomerID = @CustomerID,
-            ProjectID = @ProjectID,
-            RfqResponseID = @RfqResponseID,
-            CustomerNote = @CustomerNote,
             DeadLine = @DeadLine,
-            ModifiedOn = GETUTCDATE(),
-            ModifiedBy = @ModifiedBy,
             Status = @Status,
-            GlobalDueDate = @GlobalDueDate
-        WHERE 
-            RfqID = @RfqID AND IsDeleted = 0";
-
-            rfq.ModifiedOn = DateTime.UtcNow;
-            rfq.ModifiedBy = rfq.ModifiedBy ?? "System";
+            RfqSent = @RfqSent,
+            CustomerNote = @CustomerNote,
+            ModifiedBy = @ModifiedBy,
+            ModifiedOn = GETUTCDATE()
+        WHERE RfqID = @RfqID";
 
             using var connection = _connection;
-            var rowsAffected = await connection.ExecuteAsync(query, rfq);
-
-            return rowsAffected > 0;
+            var rows = await connection.ExecuteAsync(query, rfq);
+            return rows > 0;
         }
+
 
         public async Task UpdateRfqWorkItemsAsync(Guid rfqId, List<Guid> workItemIds)
         {
@@ -336,20 +490,66 @@ VALUES (@RfqID, @WorkItemID);";
             }
         }
 
-        public async Task<IEnumerable<dynamic>> GetRfqSubcontractorDueDatesAsync(Guid rfqId)
+        public async Task SaveRfqSubcontractorDueDateAsync(Guid rfqId, Guid subcontractorId, DateTime dueDate)
+        {
+            const string sql = @"
+IF EXISTS (
+    SELECT 1 FROM RfqSubcontractorMapping
+    WHERE RfqID = @RfqID AND SubcontractorID = @SubId
+)
+UPDATE RfqSubcontractorMapping
+SET DueDate = @DueDate
+WHERE RfqID = @RfqID AND SubcontractorID = @SubId
+ELSE
+INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID, DueDate)
+VALUES (@RfqID, @SubId, @DueDate);";
+
+            await _connection.ExecuteAsync(sql, new
+            {
+                RfqID = rfqId,
+                SubId = subcontractorId,
+                DueDate = dueDate.Date
+            });
+        }
+
+
+        public async Task<bool> UpdateSubcontractorDueDateAsync(
+      Guid rfqId,
+      Guid subcontractorId,
+      DateTime dueDate)
         {
             var query = @"
-        SELECT 
-            rwm.WorkItemID,
-            CONVERT(NVARCHAR, r.DueDate, 126) AS DueDate
-        FROM Rfq r
-        JOIN RfqWorkItemMapping rwm 
-            ON r.RfqID = rwm.RfqID
-        WHERE r.RfqID = @RfqID
+        UPDATE RfqSubcontractorMapping
+        SET DueDate = @DueDate
+        WHERE RfqID = @RfqID AND SubcontractorID = @SubcontractorID";
+
+            using var connection = _connection;
+            var rows = await connection.ExecuteAsync(query, new
+            {
+                RfqID = rfqId,
+                SubcontractorID = subcontractorId,
+                DueDate = dueDate
+            });
+
+            return rows > 0;
+        }
+
+        public async Task<IEnumerable<dynamic>> GetRfqSubcontractorDueDatesAsync(Guid rfqId)
+        {
+            const string query = @"
+      SELECT
+    rwm.WorkItemID,
+    rsm.SubcontractorID,
+    CONVERT(NVARCHAR(10), rsm.DueDate, 120) AS DueDate
+FROM RfqSubcontractorMapping rsm
+JOIN RfqWorkItemMapping rwm
+    ON rwm.RfqID = rsm.RfqID
+WHERE rsm.RfqID = @RfqID
     ";
 
             return await _connection.QueryAsync(query, new { RfqID = rfqId });
         }
+
 
         // ⭐ GLOBAL MAPPING IMPLEMENTATION
         public async Task EnsureGlobalSubcontractorWorkItemMapping(Guid workItemId, Guid subcontractorId)

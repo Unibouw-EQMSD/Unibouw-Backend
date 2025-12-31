@@ -24,196 +24,170 @@ namespace UnibouwAPI.Repositories
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
         public async Task<List<EmailRequest>> SendRfqEmailAsync(EmailRequest request)
+
         {
+
             var sentEmails = new List<EmailRequest>();
 
-            try
-            {
-                if (request == null || request.SubcontractorIDs == null || !request.SubcontractorIDs.Any())
-                    throw new ArgumentException("Invalid request.");
+            if (request?.SubcontractorIDs == null || !request.SubcontractorIDs.Any())
 
-                // ---------- SMTP ----------
-                var smtp = _configuration.GetSection("SmtpSettings");
-                var client = new SmtpClient(smtp["Host"], int.Parse(smtp["Port"]))
+                throw new ArgumentException("Invalid request.");
+
+            var smtp = _configuration.GetSection("SmtpSettings");
+
+            var client = new SmtpClient(smtp["Host"], int.Parse(smtp["Port"]))
+
+            {
+
+                EnableSsl = true,
+
+                Credentials = new NetworkCredential(smtp["Username"], smtp["Password"])
+
+            };
+
+            string fromEmail = smtp["FromEmail"];
+
+            string displayName = smtp["DisplayName"];
+
+            string baseUrl = _configuration["WebSettings:BaseUrl"]?.TrimEnd('/');
+
+            // RFQ BASIC INFO
+
+            var rfq = await _connection.QuerySingleAsync<dynamic>(
+
+                @"SELECT RfqID, RfqNumber, ProjectID
+
+          FROM Rfq WHERE RfqID = @id",
+
+                new { id = request.RfqID });
+
+            string projectName = await _connection.QuerySingleAsync<string>(
+
+                @"SELECT Name FROM Projects WHERE ProjectID = @id",
+
+                new { id = rfq.ProjectID });
+
+            var workItems = (await _connection.QueryAsync<dynamic>(
+
+                @"SELECT WorkItemID, Name
+
+          FROM WorkItems WHERE WorkItemID IN @ids",
+
+                new { ids = request.WorkItems })).ToList();
+
+            var subcontractors = (await _connection.QueryAsync<dynamic>(
+
+                @"SELECT SubcontractorID, EmailID, ISNULL(Name,'Subcontractor') Name
+
+          FROM Subcontractors
+
+          WHERE SubcontractorID IN @ids
+
+          AND EmailID IS NOT NULL",
+
+                new { ids = request.SubcontractorIDs })).ToList();
+
+            foreach (var sub in subcontractors)
+
+            {
+
+                // FETCH SUBCONTRACTOR-SPECIFIC DUE DATE
+
+                DateTime dueDate = await _connection.QuerySingleAsync<DateTime>(
+
+                    @"SELECT DueDate
+
+              FROM RfqSubcontractorMapping
+
+              WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
+
+                    new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID });
+
+                string workItemListHtml = string.Join("",
+
+                    workItems.Select(w => $"<li><strong>{w.Name}</strong></li>"));
+
+                string workItemIdsCsv = string.Join(",", workItems.Select(w => w.WorkItemID));
+
+                string summaryUrl =
+
+                    $"{baseUrl}/project-summary" +
+
+                    $"?rfqId={rfq.RfqID}" +
+
+                    $"&subId={sub.SubcontractorID}" +
+
+                    $"&workItemIds={workItemIdsCsv}";
+
+                string body = $@"
+<p>Dear {sub.Name},</p>
+ 
+<p>{request.Body}</p>
+ 
+<ul>
+<li><strong>Project:</strong> {projectName}</li>
+<li><strong>RFQ No:</strong> {rfq.RfqNumber}</li>
+<li><strong>Due Date:</strong> {dueDate:dd-MMM-yyyy}</li>
+</ul>
+ 
+<p><strong>Work Items:</strong></p>
+<ul>{workItemListHtml}</ul>
+ 
+<p>
+<a href='{summaryUrl}'
+
+style='padding:12px 20px;background:#f97316;color:#fff;text-decoration:none;border-radius:5px;'>
+
+View Project Summary
+</a>
+</p>
+ 
+<p>Regards,<br/>Unibouw Team</p>";
+
+                var mail = new MailMessage
+
                 {
-                    EnableSsl = true,
-                    Credentials = new NetworkCredential(smtp["Username"], smtp["Password"])
+
+                    From = new MailAddress(fromEmail, displayName),
+
+                    Subject = $"RFQ – {projectName}",
+
+                    Body = body,
+
+                    IsBodyHtml = true
+
                 };
 
-                string fromEmail = smtp["FromEmail"];
-                string displayName = smtp["DisplayName"];
-                string baseUrl = _configuration["WebSettings:BaseUrl"]?.TrimEnd('/');
+                mail.To.Add(sub.EmailID);
 
-                // ---------- RFQ ----------
-                var rfq = await _connection.QuerySingleAsync<dynamic>(
-                    @"SELECT RfqID, RfqNumber, DueDate, ProjectID
-                        FROM Rfq WHERE RfqID = @id",
-                    new { id = request.RfqID });
+                await client.SendMailAsync(mail);
 
-                // ---------- Project ----------
-                string projectName = await _connection.QuerySingleAsync<string>(
-                    @"SELECT Name FROM Projects WHERE ProjectID = @id",
-                    new { id = rfq.ProjectID });
+                // ADD SENT EMAIL INFO
 
-                // ---------- Work Items ----------
-                var workItems = (await _connection.QueryAsync<dynamic>(
-                    @"SELECT WorkItemID, Name
-                        FROM WorkItems
-                        WHERE WorkItemID IN @ids",
-                    new { ids = request.WorkItems }
-                )).ToList();
+                sentEmails.Add(new EmailRequest
 
-                // ---------- Subcontractors ----------
-                var subcontractors = (await _connection.QueryAsync<dynamic>(
-                    @"SELECT SubcontractorID, EmailID, ISNULL(Name,'Subcontractor') Name
-                          FROM Subcontractors
-                          WHERE SubcontractorID IN @ids
-                          AND EmailID IS NOT NULL",
-                    new { ids = request.SubcontractorIDs }
-                )).ToList();
-
-                foreach (var sub in subcontractors)
                 {
-                    // ---------- RFQ–Subcontractor mapping (ONCE) ----------
-                    /*await _connection.ExecuteAsync(@"
-                            IF NOT EXISTS (
-                                SELECT 1 FROM RfqSubcontractorMapping
-                                WHERE RfqID=@RfqID AND SubcontractorID=@SubId
-                            )
-                            INSERT INTO RfqSubcontractorMapping (RfqID, SubcontractorID)
-                            VALUES (@RfqID, @SubId)",
-                        new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID });*/
-                    await _connection.ExecuteAsync(@"
-    IF NOT EXISTS (
-        SELECT 1 FROM RfqSubcontractorMapping
-        WHERE RfqID = @RfqID AND SubcontractorID = @SubId
-    )
-    INSERT INTO RfqSubcontractorMapping
-    (
-        RfqID,
-        SubcontractorID,
-        DueDate
-    )
-    VALUES
-    (
-        @RfqID,
-        @SubId,
-        @DueDate
-    )",
-    new
-    {
-        RfqID = rfq.RfqID,
-        SubId = sub.SubcontractorID,
-        DueDate = rfq.DueDate
-    });
 
+                    RfqID = rfq.RfqID,
 
-                    // ---------- INSERT RESPONSE PER WORK ITEM ----------
-                    foreach (var wi in workItems)
-                    {
-                        await _connection.ExecuteAsync(@"
-                                IF NOT EXISTS (
-                                    SELECT 1 FROM RfqSubcontractorResponse
-                                    WHERE RfqID=@RfqID 
-                                      AND SubcontractorID=@SubId
-                                      AND WorkItemID=@WorkItemID
-                                )
-                                INSERT INTO RfqSubcontractorResponse
-                                (
-                                    RfqSubcontractorResponseID,
-                                    RfqID,
-                                    SubcontractorID,
-                                    WorkItemID,
-                                    CreatedOn,
-                                    SubmissionCount
-                                )
-                                VALUES
-                                (
-                                    NEWID(),
-                                    @RfqID,
-                                    @SubId,
-                                    @WorkItemID,
-                                    GETDATE(),
-                                    0
-                                )",
-                            new
-                            {
-                                RfqID = rfq.RfqID,
-                                SubId = sub.SubcontractorID,
-                                WorkItemID = wi.WorkItemID
-                            });
-                    }
+                    SubcontractorIDs = new List<Guid> { sub.SubcontractorID },
 
-                    // ---------- ✅ SINGLE EMAIL PER SUBCONTRACTOR ----------
-                    string workItemListHtml = string.Join("",
-                        workItems.Select(w =>
-                            $"<li><strong>{w.Name}</strong></li>")
-                    );
+                    ToEmail = sub.EmailID,
 
-                    string workItemIdsCsv = string.Join(",", workItems.Select(w => w.WorkItemID));
+                    Subject = request.Subject,
 
-                    string summaryUrl =
-                        $"{baseUrl}/project-summary" +
-                        $"?rfqId={rfq.RfqID}" +
-                        $"&subId={sub.SubcontractorID}" +
-                        $"&workItemIds={workItemIdsCsv}";
+                    WorkItems = request.WorkItems,
 
-                    string body = $@"
-                                <p>Dear {sub.Name},</p>
+                    Body = body
 
-                                <p>{request.Body}</p>
+                });
 
-                                <p>You are invited to submit quotations for the following:</p>
-
-                                <ul>
-                                  <li><strong>Project:</strong> {projectName}</li>
-                                  <li><strong>RFQ No:</strong> {rfq.RfqNumber}</li>
-                                  <li><strong>Due Date:</strong> {rfq.DueDate:dd-MMM-yyyy}</li>
-                                </ul>
-
-                                <p><strong>Work Items:</strong></p>
-                                <ul>
-                                  {workItemListHtml}
-                                </ul>
-
-                                <p>
-                                <a href='{summaryUrl}'
-                                style='padding:12px 20px;background:#f97316;color:#fff;text-decoration:none;border-radius:5px;'>
-                                View Project Summary
-                                </a>
-                                </p>
-                                <br/>
-                                <p>Regards,<br/>Unibouw Team</p>";
-
-                    var mail = new MailMessage
-                    {
-                        From = new MailAddress(fromEmail, displayName),
-                        Subject = $"RFQ – {projectName}",
-                        Body = body,
-                        IsBodyHtml = true
-                    };
-
-                    mail.To.Add(sub.EmailID);
-                    await client.SendMailAsync(mail);
-
-                    // ✅ CAPTURE EMAIL DETAILS
-                    sentEmails.Add(new EmailRequest
-                    {
-                        RfqID = request.RfqID,
-                        SubcontractorIDs = new List<Guid> { sub.SubcontractorID },
-                        ToEmail = sub.EmailID,
-                        Subject = request.Subject,
-                        WorkItems = request.WorkItems,
-                        Body = body
-                    });
-                }
-                return sentEmails;
             }
-            catch (Exception ex)
-            {
-                throw new Exception("Failed to send RFQ emails", ex);
-            }
+
+            return sentEmails;
+
         }
+
 
         private bool IsValidEmail(string email)
         {
