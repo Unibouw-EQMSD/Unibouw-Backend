@@ -5,6 +5,7 @@ using Microsoft.Identity.Web;
 using Microsoft.OpenApi.Models;
 using UnibouwAPI.Repositories;
 using UnibouwAPI.Repositories.Interfaces;
+using UnibouwAPI.Service;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,6 +30,7 @@ builder.Services.AddScoped<IRfq, RfqRepository>();
 builder.Services.AddScoped<IEmail, EmailRepository>();
 builder.Services.AddScoped<IRfqResponse, RfqResponseRepository>();
 builder.Services.AddScoped<IRFQConversationMessage, RFQConversationMessageRepository>();
+builder.Services.AddHttpClient<IMsTeamsNotification, MsTeamsNotificationService>();
 
 // Configure Azure AD authentication with custom Unauthorized/Forbidden responses
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
