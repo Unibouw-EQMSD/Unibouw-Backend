@@ -94,14 +94,15 @@ namespace UnibouwAPI.Repositories
                     {
 
                         // ============================
-                        //  STEP 1: CHECK DUPLICATE EMAIL
+                        //  STEP 1: CHECK DUPLICATE EMAIL or NAME
                         // ============================
+                        // Email check
                         string duplicateEmailQuery = @"
-                SELECT COUNT(1) 
-                FROM Subcontractors 
-                WHERE LOWER(EmailID) = LOWER(@EmailID)
-                  AND IsDeleted = 0;
-            ";
+                                SELECT COUNT(1) 
+                                FROM Subcontractors 
+                                WHERE LOWER(EmailID) = LOWER(@EmailID)
+                                  AND IsDeleted = 0;
+                            ";
 
                         int existingEmailCount = await connection.ExecuteScalarAsync<int>(
                             duplicateEmailQuery,
@@ -111,6 +112,23 @@ namespace UnibouwAPI.Repositories
 
                         if (existingEmailCount > 0)
                             throw new InvalidOperationException("A subcontractor with this email already exists");
+
+                        // Name check
+                        string duplicateNameQuery = @"
+                                SELECT COUNT(1) 
+                                FROM Subcontractors 
+                                WHERE LOWER(Name) = LOWER(@Name)
+                                  AND IsDeleted = 0;
+                            ";
+
+                        int existingNameCount = await connection.ExecuteScalarAsync<int>(
+                            duplicateNameQuery,
+                            new { subcontractor.Name },
+                            transaction
+                        );
+
+                        if (existingNameCount > 0)
+                            throw new InvalidOperationException("A subcontractor with this name already exists");
 
 
                         // ============================
