@@ -449,10 +449,16 @@ ORDER BY wi.Name, s.Name;
 ";
 
             var rows = (await conn.QueryAsync(sql, new { ProjectID = projectId })).ToList();
-            if (!rows.Any()) return null;
+            if (!rows.Any()) return new List<object>();
 
             var result = rows
-                .GroupBy(r => new { r.WorkItemID, r.WorkItemName, r.RfqID, r.RfqNumber })
+                .GroupBy(r => new
+                {
+                    WorkItemID = (Guid)r.WorkItemID,
+                    WorkItemName = (string)r.WorkItemName,
+                    RfqID = (Guid)r.RfqID,
+                    RfqNumber = (string)r.RfqNumber
+                })
                 .Select(g => new
                 {
                     workItemId = g.Key.WorkItemID,
@@ -462,27 +468,30 @@ ORDER BY wi.Name, s.Name;
 
                     subcontractors = g.Select(row =>
                     {
-                        string status = row.StatusName ?? "Not Responded";
+                        DateTime? responseDate = row.ResponseDate as DateTime?;
+                        DateTime rfqCreatedDate = (DateTime)row.RfqCreatedDate;
+
+                        decimal? quoteAmount = row.TotalQuoteAmount as decimal?;
+                        bool viewed = row.Viewed != null && row.Viewed == true;
+
+                        string status = row.StatusName != null
+                            ? row.StatusName.ToString()
+                            : "Not Responded";
 
                         bool hasResponse =
-                            row.ResponseDate != DateTime.MinValue ||
+                            responseDate.HasValue ||
                             row.HasDocument == 1 ||
-                            row.TotalQuoteAmount != null;
+                            quoteAmount.HasValue;
 
-                        // ✅ SAFE DATE PICK
-                        var finalDate =
-                            row.ResponseDate != DateTime.MinValue
-                                ? row.ResponseDate
-                                : row.RfqCreatedDate;
+                        DateTime finalDate = responseDate ?? rfqCreatedDate;
 
                         return new
                         {
-                            subcontractorId = row.SubcontractorID,
-                            name = row.SubcontractorName,
-                            rating = row.Rating,
+                            subcontractorId = (Guid)row.SubcontractorID,
+                            name = (string)row.SubcontractorName,
+                            rating = (int)row.Rating,
 
                             date = finalDate.ToString("dd-MM-yyyy"),
-
                             rfqId = g.Key.RfqID.ToString(),
 
                             responded = hasResponse,
@@ -490,13 +499,13 @@ ORDER BY wi.Name, s.Name;
                             maybeLater = hasResponse && status == "Maybe Later",
                             notInterested = hasResponse && status == "Not Interested",
 
-                            viewed = row.Viewed == true,
+                            viewed = viewed,
 
-                            quote = row.TotalQuoteAmount != null
-                                ? row.TotalQuoteAmount.ToString()
+                            quote = quoteAmount?.ToString() ?? "—",
+                            dueDate = row.DueDate != null
+                                ? ((DateTime)row.DueDate).ToString("dd-MM-yyyy")
                                 : "—",
 
-                            dueDate = row.DueDate?.ToString("dd-MM-yyyy") ?? "—",
                             actions = new[] { "pdf", "chat" }
                         };
                     }).ToList()
@@ -505,6 +514,7 @@ ORDER BY wi.Name, s.Name;
 
             return result;
         }
+
         public async Task<object?> GetRfqResponsesByProjectSubcontractorAsync(Guid projectId)
         {
             using var conn = new SqlConnection(_connectionString);
@@ -548,34 +558,36 @@ ORDER BY wi.Name, s.Name;
 ";
 
             var rows = (await conn.QueryAsync(sql, new { ProjectID = projectId })).ToList();
-            if (!rows.Any()) return null;
+            if (!rows.Any()) return new List<object>();
 
             return rows.Select(r =>
             {
-                string status = r.StatusName ?? "Not Responded";
-                bool hasResponse = r.ResponseDate != DateTime.MinValue;
+                DateTime? responseDate = r.ResponseDate as DateTime?;
+                DateTime rfqCreatedDate = (DateTime)r.RfqCreatedDate;
 
-                var finalDate =
-                    r.ResponseDate != DateTime.MinValue
-                        ? r.ResponseDate
-                        : r.RfqCreatedDate;
+                string status = r.StatusName != null
+                    ? r.StatusName.ToString()
+                    : "Not Responded";
+
+                bool hasResponse = responseDate.HasValue;
+                DateTime finalDate = responseDate ?? rfqCreatedDate;
 
                 return new
                 {
-                    workItemId = r.WorkItemID,
-                    workItemName = r.WorkItemName,
-                    rfqId = r.RfqID.ToString(),
-                    rfqNumber = r.RfqNumber,
-                    subcontractorId = r.SubcontractorID,
-                    subcontractorName = r.SubcontractorName,
+                    workItemId = (Guid)r.WorkItemID,
+                    workItemName = (string)r.WorkItemName,
+                    rfqId = ((Guid)r.RfqID).ToString(),
+                    rfqNumber = (string)r.RfqNumber,
+
+                    subcontractorId = (Guid)r.SubcontractorID,
+                    subcontractorName = (string)r.SubcontractorName,
 
                     responded = hasResponse,
                     interested = hasResponse && status == "Interested",
                     maybeLater = hasResponse && status == "Maybe Later",
                     notInterested = hasResponse && status == "Not Interested",
 
-                    viewed = r.Viewed == true,
-
+                    viewed = r.Viewed != null && r.Viewed == true,
                     date = finalDate.ToString("dd/MM/yyyy")
                 };
             }).ToList();
