@@ -28,7 +28,8 @@
         public string? Status { get; set; }
         public DateTime? GlobalDueDate { get; set; }
         public List<WorkItem> WorkItems { get; set; } = new();
-
+        public List<RfqSubcontractorMapping> SubcontractorDueDates { get; set; } = new();
 
     }
 }
+

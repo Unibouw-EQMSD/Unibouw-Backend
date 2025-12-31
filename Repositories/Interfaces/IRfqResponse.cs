@@ -23,13 +23,7 @@ namespace UnibouwAPI.Repositories.Interfaces
         Task<bool> SaveResponseAsync(Guid rfqId, Guid subcontractorId, Guid workItemId, string status);
         Task<object?> GetProjectSummaryAsync(Guid rfqId, Guid? subcontractorId = null, List<Guid>? workItemIds = null, Guid? workItemId = null);
         Task<List<RfqResponseDocument>> GetPreviousSubmissionsAsync(Guid rfqId, Guid subcontractorId);
-        Task<bool> UploadQuoteAsync(
-              Guid rfqId,
-              Guid subcontractorId,
-              Guid workItemId,   // ✅ ADD THIS
-              IFormFile file,
-              decimal totalAmount,
-              string comment);
+        Task<bool> UploadQuoteAsync(Guid rfqId,Guid subcontractorId,Guid workItemId, IFormFile file,decimal totalAmount,string comment);
         Task<object?> GetRfqResponsesByProjectAsync(Guid projectId);
         Task<object?> GetRfqResponsesByProjectSubcontractorAsync(Guid projectId);
 

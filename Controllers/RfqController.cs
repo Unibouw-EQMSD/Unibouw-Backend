@@ -118,37 +118,56 @@ namespace UnibouwAPI.Controllers
 
         [HttpPost("create-simple")]
         [Authorize]
-        public async Task<IActionResult> CreateRfqSimple([FromBody] Rfq rfq,[FromQuery] List<Guid> subcontractorIds,[FromQuery] List<Guid> workItems,[FromQuery] bool sendEmail = true)
+        public async Task<IActionResult> CreateRfqSimple([FromBody] Rfq rfq, [FromQuery] List<Guid> subcontractorIds, [FromQuery] List<Guid> workItems, [FromQuery] bool sendEmail = true)
         {
             try
             {
-                // Get logged-in user email from token
-                var userEmail = User.Identity.Name;
+                var userEmail = User.Identity?.Name;
 
                 if (string.IsNullOrWhiteSpace(userEmail))
                     return Unauthorized(new { message = "Unable to determine logged-in user email." });
 
-                // get email to assign CreatedBy
-                var PMEmail = userEmail;
+                if (rfq == null)
+                    return BadRequest(new { message = "RFQ data is required." });
 
-                if (rfq == null || subcontractorIds == null || !subcontractorIds.Any())
-                    return BadRequest(new { message = "RFQ data and subcontractor IDs are required." });
+                if (subcontractorIds == null || !subcontractorIds.Any())
+                    return BadRequest(new { message = "At least one subcontractor is required." });
 
-                rfq.DeadLine = rfq.DueDate;
+                if (rfq.SubcontractorDueDates == null || !rfq.SubcontractorDueDates.Any())
+                    return BadRequest(new { message = "Subcontractor due dates are required." });
+
+                // ✅ Earliest subcontractor due date → main RFQ due date
+                var mainDueDate = rfq.SubcontractorDueDates
+                    .Min(x => x.DueDate!.Value)
+                    .Date;
+
+                rfq.DueDate = mainDueDate;
+                rfq.DeadLine = mainDueDate;
+                rfq.GlobalDueDate = mainDueDate;
                 rfq.RfqSent = sendEmail ? 1 : 0;
                 rfq.Status = sendEmail ? "Sent" : "Draft";
+                rfq.CreatedBy = userEmail;
 
                 // 1️⃣ Create RFQ
-                var rfqId = await _repository.CreateRfqAsync(rfq);
+                var rfqId = await _repository.CreateRfqAsync(rfq, subcontractorIds);
 
                 // 2️⃣ Insert work items
-                if (workItems != null && workItems.Any())
+                if (workItems?.Any() == true)
                     await _repository.InsertRfqWorkItemsAsync(rfqId, workItems);
 
-                // 3️⃣ Get created RFQ (needed for ProjectID, CreatedBy)
+                // 3️⃣ Save subcontractor due dates
+                foreach (var sub in rfq.SubcontractorDueDates)
+                {
+                    await _repository.SaveRfqSubcontractorDueDateAsync(
+                        rfqId,
+                        sub.SubcontractorID,
+                        sub.DueDate!.Value.Date
+                    );
+                }
+
                 var createdRfq = await _repository.GetRfqById(rfqId);
 
-                // 4️⃣ Send email + save conversation
+                // 4️⃣ Send emails
                 if (sendEmail)
                 {
                     var emailRequest = new EmailRequest
@@ -162,22 +181,21 @@ namespace UnibouwAPI.Controllers
 
                     var sentEmails = await _emailRepository.SendRfqEmailAsync(emailRequest);
 
+                    // ❗ Conversation entries
                     foreach (var email in sentEmails)
                     {
-                        var conversation = new RFQConversationMessage
-                        {
-                            ProjectID = rfq.ProjectID.Value,
-                            RfqID = rfqId,
-                            SubcontractorID = email.SubcontractorIDs.First(),
-                            // ProjectManagerID = Guid.Parse("34522246-1C79-4A2A-83FF-06283E1DD82D"), // adjust if different type
-                            SenderType = "PM",
-                            MessageText = HtmlToPlainText(email.Body),
-                            MessageDateTime = DateTime.UtcNow,
-                            CreatedBy = PMEmail
-
-                        };
-
-                        await _conversationRepo.AddRFQConversationMessageAsync(conversation);
+                        await _conversationRepo.AddRFQConversationMessageAsync(
+                            new RFQConversationMessage
+                            {
+                                ProjectID = rfq.ProjectID!.Value,
+                                RfqID = rfqId,
+                                SubcontractorID = email.SubcontractorIDs.First(),
+                                SenderType = "PM",
+                                MessageText = HtmlToPlainText(email.Body),
+                                MessageDateTime = DateTime.UtcNow,
+                                CreatedBy = userEmail
+                            }
+                        );
                     }
                 }
 
@@ -189,10 +207,14 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "An error occurred.",ex);
-                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
-            } 
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    message = "An error occurred while processing the RFQ.",
+                    error = ex.Message
+                });
+            }
         }
+
 
 
         private static string HtmlToPlainText(string html)
@@ -229,65 +251,190 @@ namespace UnibouwAPI.Controllers
 
 
 
-    [HttpPut("{rfqId}")]
+        [HttpPost("update")]
         [Authorize]
-        public async Task<IActionResult> UpdateRfq(
-      Guid rfqId,
-      [FromBody] Rfq rfq,
-      [FromQuery] List<Guid> subcontractorIds,
-      [FromQuery] List<Guid> workItems,
-      [FromQuery] bool sendEmail = false)
+        public async Task<IActionResult> UpdateRfqPost(
+            [FromQuery] Guid rfqId,
+            [FromBody] Rfq rfq,
+            [FromQuery] List<Guid> subcontractorIds,
+            [FromQuery] List<Guid> workItems,
+            [FromQuery] bool sendEmail = false)
         {
-            if (rfq == null || rfqId == Guid.Empty)
-                return BadRequest(new { message = "RFQ data and ID are required." });
-
-            if (rfqId != rfq.RfqID)
-                return BadRequest(new { message = "Mismatched RFQ ID." });
-
-            // Match CreateRfqSimple logic
-            rfq.DeadLine = rfq.DueDate;
-            rfq.RfqSent = sendEmail ? 1 : rfq.RfqSent;
-            rfq.Status = sendEmail ? "Sent" : rfq.Status;
-
-            // 1️⃣ Update RFQ
-            var updateSuccess = await _repository.UpdateRfqAsync(rfq);
-            if (!updateSuccess)
-                return NotFound(new { message = $"RFQ with ID {rfqId} not found or update failed." });
-
-            // 2️⃣ Update WorkItems
-            if (workItems != null && workItems.Any())
-                await _repository.UpdateRfqWorkItemsAsync(rfqId, workItems);
-
-            // 3️⃣ Update Subcontractors
-            if (subcontractorIds != null && subcontractorIds.Any())
-                await _repository.UpdateRfqSubcontractorsAsync(rfqId, subcontractorIds);
-
-            // 4️⃣ Email sending (same pattern as CreateRfqSimple)
-            if (sendEmail)
+            try
             {
-                var emailRequest = new EmailRequest
+                if (rfq == null || rfqId == Guid.Empty)
+                    return BadRequest(new { message = "RFQ data and ID are required." });
+
+                rfq.RfqID = rfqId;
+                rfq.RfqSent = sendEmail ? 1 : rfq.RfqSent;
+                rfq.Status = sendEmail ? "Sent" : rfq.Status;
+
+                // ✅ 1️⃣ Update MAIN RFQ (DO NOT touch DueDate here)
+                var rfqUpdated = await _repository.UpdateRfqMainAsync(rfq);
+                if (!rfqUpdated)
+                    return NotFound(new { message = $"RFQ with ID {rfqId} not found." });
+
+                // ✅ 2️⃣ Update WorkItems
+                if (workItems?.Any() == true)
+                    await _repository.UpdateRfqWorkItemsAsync(rfqId, workItems);
+
+                // ✅ 3️⃣ Update ONLY per-subcontractor due dates
+                if (rfq.SubcontractorDueDates?.Any() == true)
                 {
-                    RfqID = rfqId,
-                    SubcontractorIDs = subcontractorIds ?? new List<Guid>(),
-                    WorkItems = workItems ?? new List<Guid>(),
-                    Subject = rfq.CustomerNote ?? "RFQ Invitation - Unibouw",
-                    Body = rfq.CustomerNote
-                };
+                    foreach (var sub in rfq.SubcontractorDueDates)
+                    {
+                        if (!sub.DueDate.HasValue)
+                            continue;
 
-                await _emailRepository.SendRfqEmailAsync(emailRequest);
+                        await _repository.UpdateSubcontractorDueDateAsync(
+                            rfqId,
+                            sub.SubcontractorID,
+                            sub.DueDate.Value
+                        );
+                    }
+                }
+
+                // ✅ 4️⃣ Send email
+                if (sendEmail)
+                {
+                    await _emailRepository.SendRfqEmailAsync(new EmailRequest
+                    {
+                        RfqID = rfqId,
+                        SubcontractorIDs = subcontractorIds ?? new(),
+                        WorkItems = workItems ?? new(),
+                        Subject = "RFQ Invitation - Unibouw",
+                        Body = rfq.CustomerNote
+                    });
+                }
+
+                return Ok(new
+                {
+                    message = sendEmail
+                        ? "RFQ updated successfully and emails sent."
+                        : "RFQ updated successfully."
+                });
             }
-
-            var updatedRfq = await _repository.GetRfqById(rfqId);
-
-            return Ok(new
+            catch (Exception ex)
             {
-                message = sendEmail
-                    ? "RFQ updated successfully and emails sent."
-                    : "RFQ updated successfully.",
-                data = updatedRfq
-            });
+                // 🔴 Log exception here if you have logging (ILogger)
+                // _logger.LogError(ex, "Error updating RFQ {RfqId}", rfqId);
+
+                return StatusCode(500, new
+                {
+                    message = "An error occurred while updating the RFQ.",
+                    error = ex.Message
+                });
+            }
         }
 
+        [HttpPost("save-subcontractor-workitem-mapping")]
+        [Authorize]
+        public async Task<IActionResult> SaveSubcontractorWorkItemMapping(
+    [FromQuery] Guid workItemId,
+    [FromQuery] Guid subcontractorId,
+    [FromQuery] Guid rfqId,
+    [FromQuery] DateTime? dueDate)
+        {
+            try
+            {
+                // ✅ Only these two are mandatory
+                if (subcontractorId == Guid.Empty || workItemId == Guid.Empty)
+                    return BadRequest(new
+                    {
+                        message = "SubcontractorID and WorkItemID are required."
+                    });
+
+                // 1️⃣ Save subcontractor–work item mapping (ALWAYS)
+                await _repository.SaveSubcontractorWorkItemMappingAsync(
+                    subcontractorId,
+                    workItemId,
+                    User?.Identity?.Name ?? "System"
+                );
+
+                // 2️⃣ Update RFQ–subcontractor due date (ONLY IF RFQ EXISTS)
+                if (rfqId != Guid.Empty && dueDate.HasValue)
+                {
+                    var success = await _repository.UpdateRfqSubcontractorDueDateAsync(
+                        rfqId,
+                        subcontractorId,
+                        dueDate.Value
+                    );
+
+                    if (!success)
+                        return NotFound(new
+                        {
+                            message = "RfqSubcontractorMapping update failed."
+                        });
+                }
+
+                return Ok(new
+                {
+                    message = "Subcontractor–WorkItem mapping saved successfully."
+                });
+            }
+            catch (Exception ex)
+            {
+                // 🔴 Optional logging
+                // _logger.LogError(ex, "Error saving subcontractor-workitem mapping");
+
+                return StatusCode(500, new
+                {
+                    message = "An error occurred while saving subcontractor–work item mapping.",
+                    error = ex.Message
+                });
+            }
+        }
+
+
+        [HttpPost("save-or-update-rfq-subcontractor-mapping")]
+        [Authorize]
+        public async Task<IActionResult> SaveOrUpdateRfqSubcontractorMapping(
+    [FromQuery] Guid rfqId,
+    [FromQuery] Guid subcontractorId,
+    [FromQuery] Guid workItemId,
+    [FromQuery] DateTime dueDate)
+        {
+            try
+            {
+                if (rfqId == Guid.Empty || subcontractorId == Guid.Empty || workItemId == Guid.Empty)
+                    return BadRequest(new
+                    {
+                        message = "RFQID, SubcontractorID, and WorkItemID are required."
+                    });
+
+                var user = User?.Identity?.Name ?? "System";
+
+                var success = await _repository.SaveOrUpdateRfqSubcontractorMappingAsync(
+                    rfqId,
+                    subcontractorId,
+                    workItemId,
+                    dueDate,
+                    user
+                );
+
+                if (!success)
+                    return NotFound(new
+                    {
+                        message = "SaveOrUpdate operation failed."
+                    });
+
+                return Ok(new
+                {
+                    message = "RFQ–Subcontractor mapping saved successfully."
+                });
+            }
+            catch (Exception ex)
+            {
+                // 🔴 Optional logging
+                // _logger.LogError(ex, "Error saving RFQ-subcontractor mapping");
+
+                return StatusCode(500, new
+                {
+                    message = "An error occurred while saving RFQ–Subcontractor mapping.",
+                    error = ex.Message
+                });
+            }
+        }
 
 
         [HttpGet("{rfqId}/subcontractor-duedates")]
