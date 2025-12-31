@@ -327,26 +327,32 @@ WHERE r.RfqID = @RfqID";
 
 
         public async Task<bool> UploadQuoteAsync(
-       Guid rfqId,
-       Guid subcontractorId,
-       Guid workItemId,   // ✅ ADD THIS
-       IFormFile file,
-       decimal totalAmount,
-       string comment)
+            Guid rfqId,
+            Guid subcontractorId,
+            Guid workItemId,
+            IFormFile file,
+            decimal totalAmount,
+            string comment)
         {
             using var conn = new SqlConnection(_connectionString);
+            await conn.OpenAsync();
 
-            // Validate mapping (RFQ + Subcontractor is fine)
+            // 1️⃣ Validate RFQ ↔ Subcontractor mapping
             var mappingExists = await conn.ExecuteScalarAsync<int>(@"
         SELECT COUNT(1)
         FROM RfqSubcontractorMapping
-        WHERE RfqID = @rfqId AND SubcontractorID = @subId;",
-                new { rfqId, subId = subcontractorId });
+        WHERE RfqID = @rfqId
+          AND SubcontractorID = @subId;",
+                new
+                {
+                    rfqId,
+                    subId = subcontractorId
+                });
 
             if (mappingExists == 0)
                 throw new Exception("Subcontractor is not mapped to this RFQ.");
 
-            // Read file
+            // 2️⃣ Read file into byte array
             byte[] fileBytes;
             using (var ms = new MemoryStream())
             {
@@ -354,12 +360,26 @@ WHERE r.RfqID = @RfqID";
                 fileBytes = ms.ToArray();
             }
 
-            // Insert document
+            // 3️⃣ Insert quote document
             await conn.ExecuteAsync(@"
         INSERT INTO RfqResponseDocuments
-        (RfqID, SubcontractorID, FileName, FileData, UploadedOn, IsDeleted)
+        (
+            RfqID,
+            SubcontractorID,
+            FileName,
+            FileData,
+            UploadedOn,
+            IsDeleted
+        )
         VALUES
-        (@rfqId, @subId, @fileName, @fileData, GETDATE(), 0)",
+        (
+            @rfqId,
+            @subId,
+            @fileName,
+            @fileData,
+            GETDATE(),
+            0
+        );",
                 new
                 {
                     rfqId,
@@ -368,10 +388,19 @@ WHERE r.RfqID = @RfqID";
                     fileData = fileBytes
                 });
 
-            // ✅ CRITICAL FIX — UPDATE ONLY ONE WORK ITEM
+            // 4️⃣ 🔥 INCREMENT QuoteReceived FOR THIS RFQ
+            await conn.ExecuteAsync(@"
+        UPDATE Rfq
+        SET QuoteReceived = ISNULL(QuoteReceived, 0) + 1
+        WHERE RfqID = @rfqId
+          AND IsDeleted = 0;",
+                new { rfqId });
+
+            // 5️⃣ Update subcontractor response (ONLY this work item)
             await conn.ExecuteAsync(@"
         UPDATE RfqSubcontractorResponse
-        SET TotalQuoteAmount = @amount,
+        SET
+            TotalQuoteAmount = @amount,
             Comment = @comment,
             ModifiedOn = GETDATE(),
             SubmissionCount = ISNULL(SubmissionCount, 0) + 1
