@@ -30,7 +30,8 @@ builder.Services.AddScoped<IRfq, RfqRepository>();
 builder.Services.AddScoped<IEmail, EmailRepository>();
 builder.Services.AddScoped<IRfqResponse, RfqResponseRepository>();
 builder.Services.AddScoped<IRFQConversationMessage, RFQConversationMessageRepository>();
-builder.Services.AddHttpClient<IMsTeamsNotification, MsTeamsNotificationService>();
+//builder.Services.AddHttpClient<IMsTeamsNotification, MsTeamsNotificationService>();
+builder.Services.AddScoped<IMsTeamsNotification, MsTeamsNotificationService>();
 
 // Configure Azure AD authentication with custom Unauthorized/Forbidden responses
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
