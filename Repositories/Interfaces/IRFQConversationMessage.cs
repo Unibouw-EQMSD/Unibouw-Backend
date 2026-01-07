@@ -14,5 +14,7 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         Task<RFQConversationMessageAttachment> AddAttachmentAsync(RFQConversationMessageAttachment attachment);
 
+        Task<RFQConversationMessage> ReplyToConversationAsync(Guid parentMessageId, string messageText, string subject, string pmEmail);
+
     }
 }
