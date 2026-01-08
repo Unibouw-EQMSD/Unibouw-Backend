@@ -250,7 +250,14 @@ namespace UnibouwAPI.Controllers
         {
             try
             {
-                var pmEmail = User.FindFirst(ClaimTypes.Email)?.Value;
+                // var pmEmail = User.FindFirst(ClaimTypes.Email)?.Value;
+                var pmEmail = User.Identity?.Name;
+
+                if (string.IsNullOrWhiteSpace(pmEmail))
+                {
+                    return BadRequest("PM email could not be captured. Please log in again.");
+                }
+
                 var reply = await _repository.ReplyToConversationAsync(parentMessageId,message,subject,pmEmail);
 
                 if (reply.Status == "Draft")

@@ -345,40 +345,40 @@ namespace UnibouwAPI.Repositories
 
             try
             {
-                RFQConversationMessage parent = null;
+                RFQConversationMessage? parent = null;
                 bool isLogConversation = false;
 
                 // Try RFQConversationMessage first
                 parent = await connection.QuerySingleOrDefaultAsync<RFQConversationMessage>(
-                    @"SELECT * FROM RFQConversationMessage WHERE ConversationMessageID = @Id",
-                    new { Id = parentMessageId },
-                    transaction
-                );
+                             @"SELECT * FROM RFQConversationMessage WHERE ConversationMessageID = @Id",
+                        new { Id = parentMessageId },
+                        transaction
+                       );
 
                 // If NOT found → try LogConversation
                 if (parent == null)
                 {
                     isLogConversation = true;
                     parent = await connection.QuerySingleOrDefaultAsync<RFQConversationMessage>(
-                        @"SELECT 
-                    LogConversationID         AS ConversationMessageID,
-                    NULL                      AS ParentMessageID,
-                    ProjectID,
-                    RfqID,
-                    NULL                      AS WorkItemID,
-                    SubcontractorID,
-                    ProjectManagerID,
-                    'Subcontractor'           AS SenderType,
-                    Message                   AS MessageText,
-                    Subject,
-                    CreatedOn                 AS MessageDateTime,
-                    CreatedBy,
-                    CreatedOn
-                  FROM LogConversation
-                  WHERE LogConversationID = @Id",
-                        new { Id = parentMessageId },
-                        transaction
-                    );
+                            @"SELECT 
+                                LogConversationID         AS ConversationMessageID,
+                                NULL                      AS ParentMessageID,
+                                ProjectID,
+                                RfqID,
+                                NULL                      AS WorkItemID,
+                                SubcontractorID,
+                                ProjectManagerID,
+                                'Subcontractor'           AS SenderType,
+                                Message                   AS MessageText,
+                                Subject,
+                                CreatedOn                 AS MessageDateTime,
+                                CreatedBy
+                              FROM LogConversation
+                              WHERE LogConversationID = @Id",
+                            new { Id = parentMessageId },
+                            transaction
+                        );
+
                 }
 
                 if (parent == null)
@@ -419,13 +419,13 @@ namespace UnibouwAPI.Repositories
                 // Insert reply
                 await connection.ExecuteAsync(
                     @"INSERT INTO RFQConversationMessage
-                (ConversationMessageID, ParentMessageID, ProjectID, RfqID, WorkItemID,
-                 SubcontractorID, ProjectManagerID, SenderType, MessageText, MessageDateTime,
-                 Status, CreatedBy, CreatedOn, Subject, Tag)
-              VALUES
-                (@ConversationMessageID, @ParentMessageID, @ProjectID, @RfqID, @WorkItemID,
-                 @SubcontractorID, @ProjectManagerID, @SenderType, @MessageText, @MessageDateTime,
-                 @Status, @CreatedBy, @CreatedOn, @Subject, @Tag)",
+                        (ConversationMessageID, ParentMessageID, ProjectID, RfqID, WorkItemID,
+                         SubcontractorID, ProjectManagerID, SenderType, MessageText, MessageDateTime,
+                         Status, CreatedBy, CreatedOn, Subject, Tag)
+                      VALUES
+                        (@ConversationMessageID, @ParentMessageID, @ProjectID, @RfqID, @WorkItemID,
+                         @SubcontractorID, @ProjectManagerID, @SenderType, @MessageText, @MessageDateTime,
+                         @Status, @CreatedBy, @CreatedOn, @Subject, @Tag)",
                     reply,
                     transaction
                 );
@@ -438,8 +438,8 @@ namespace UnibouwAPI.Repositories
 
                 await connection.ExecuteAsync(
                     @"UPDATE RFQConversationMessage
-              SET Status = @Status
-              WHERE ConversationMessageID = @Id",
+                        SET Status = @Status
+                    WHERE ConversationMessageID = @Id",
                     new { Status = reply.Status, Id = reply.ConversationMessageID },
                     transaction
                 );
@@ -447,18 +447,15 @@ namespace UnibouwAPI.Repositories
                 transaction.Commit();
                 return reply;
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine( ex.ToString() );
                 transaction.Rollback();
                 throw;
             }
         }
 
-        private async Task<bool> SendReplyEmailAsync(
-    RFQConversationMessage parent,
-    RFQConversationMessage reply,
-    List<string>? attachmentPaths = null
-)
+        private async Task<bool> SendReplyEmailAsync(RFQConversationMessage parent,RFQConversationMessage reply,List<string>? attachmentPaths = null)
         {
             try
             {
@@ -466,28 +463,21 @@ namespace UnibouwAPI.Repositories
                 await connection.OpenAsync();
 
                 var sub = await connection.QuerySingleOrDefaultAsync<SubcontractorEmailDto>(
-                    @"SELECT 
-                EmailID, 
-                ISNULL(Name,'Subcontractor') AS Name
-              FROM Subcontractors
-              WHERE SubcontractorID = @Id",
-                    new { Id = parent.SubcontractorID }
-                );
+                            @"SELECT 
+                                EmailID, 
+                                ISNULL(Name,'Subcontractor') AS Name
+                              FROM Subcontractors
+                              WHERE SubcontractorID = @Id",
+                            new { Id = parent.SubcontractorID }
+                            );
 
                 if (sub == null || string.IsNullOrWhiteSpace(sub.EmailID))
                     throw new Exception("Subcontractor email not found");
 
-                string body = $@"
-Reply to your comment dated {parent.MessageDateTime:dd-MM-yyyy HH:mm}:
- 
-{parent.MessageText}
- 
----
- 
-Unibouw Response ({reply.MessageDateTime:dd-MM-yyyy HH:mm}):
- 
-{reply.MessageText}
-";
+                string body = $@"Reply to your comment dated {parent.MessageDateTime:dd-MM-yyyy HH:mm}: {parent.MessageText}
+                                ---
+                                Unibouw Response ({reply.MessageDateTime:dd-MM-yyyy HH:mm}):
+                                {reply.MessageText}";
 
                 return await _emailRepository.SendMailAsync(
                     toEmail: sub.EmailID,
