@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Security.Claims;
 using UnibouwAPI.Models;
@@ -243,6 +244,32 @@ namespace UnibouwAPI.Controllers
         }
 
 
+        [HttpPost("Reply")]
+        [Authorize]
+        public async Task<IActionResult> Reply([FromForm] Guid parentMessageId, [FromForm] string message, [FromForm] string subject)
+        {
+            try
+            {
+                // var pmEmail = User.FindFirst(ClaimTypes.Email)?.Value;
+                var pmEmail = User.Identity?.Name;
+
+                if (string.IsNullOrWhiteSpace(pmEmail))
+                {
+                    return BadRequest("PM email could not be captured. Please log in again.");
+                }
+
+                var reply = await _repository.ReplyToConversationAsync(parentMessageId,message,subject,pmEmail);
+
+                if (reply.Status == "Draft")
+                    return StatusCode(500, "Email failed. Reply saved as draft.");
+
+                return Ok(reply);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.Message);
+            }
+        }
 
     }
 }
