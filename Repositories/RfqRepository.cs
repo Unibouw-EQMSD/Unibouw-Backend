@@ -420,16 +420,17 @@ VALUES (@RfqID, @WorkItemID);";
         public async Task<bool> UpdateRfqMainAsync(Rfq rfq)
         {
             var query = @"
-        UPDATE Rfq
-        SET 
-            DueDate = @DueDate,
-            DeadLine = @DeadLine,
-            Status = @Status,
-            RfqSent = @RfqSent,
-            CustomerNote = @CustomerNote,
-            ModifiedBy = @ModifiedBy,
-            ModifiedOn = GETUTCDATE()
-        WHERE RfqID = @RfqID";
+    UPDATE Rfq
+    SET 
+        DueDate = @DueDate,
+        DeadLine = @DeadLine,
+        Status = @Status,
+        RfqSent = @RfqSent,
+        CustomerNote = @CustomerNote,
+        ModifiedBy = @ModifiedBy,
+        ModifiedOn = GETUTCDATE(),
+        SentDate = @SentDate  
+    WHERE RfqID = @RfqID";
 
             using var connection = _connection;
             var rows = await connection.ExecuteAsync(query, rfq);
