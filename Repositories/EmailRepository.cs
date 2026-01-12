@@ -3,6 +3,8 @@ using Microsoft.Data.SqlClient;
 using System.Data;
 using System.Net;
 using System.Net.Mail;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 
@@ -12,17 +14,43 @@ namespace UnibouwAPI.Repositories
     {
         private readonly IConfiguration _configuration;
         private readonly string _connectionString;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public EmailRepository(IConfiguration configuration)
+        public EmailRepository(IConfiguration configuration, IHttpContextAccessor httpContextAccessor)
         {
             _configuration = configuration;
-            _connectionString = _configuration.GetConnectionString("UnibouwDbConnection");
-            if (string.IsNullOrEmpty(_connectionString))
-                throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
+            _httpContextAccessor = httpContextAccessor;
+
+            _connectionString = _configuration.GetConnectionString("UnibouwDbConnection")
+                ?? throw new InvalidOperationException("Connection string not configured.");
         }
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
+        // 🔹 Get logged-in user's email safely
+        private string GetSenderEmail()
+        {
+            var email =
+                _httpContextAccessor.HttpContext?.User?
+                    .FindFirst(ClaimTypes.Email)?.Value
+                ??
+                _httpContextAccessor.HttpContext?.User?
+                    .FindFirst("email")?.Value;
+
+            // fallback to configured email
+            return email ?? _configuration["SmtpSettings:FromEmail"];
+        }
+
+        // 🔹 Get logged-in user's name safely
+        private string GetSenderName()
+        {
+            return
+                _httpContextAccessor.HttpContext?.User?
+                    .FindFirst(ClaimTypes.Name)?.Value
+                ?? _configuration["SmtpSettings:DisplayName"];
+        }
+
+        // ================= RFQ EMAIL =================
         public async Task<List<EmailRequest>> SendRfqEmailAsync(EmailRequest request)
         {
             var sentEmails = new List<EmailRequest>();
@@ -32,56 +60,52 @@ namespace UnibouwAPI.Repositories
 
             var smtp = _configuration.GetSection("SmtpSettings");
 
-            var client = new SmtpClient(smtp["Host"], int.Parse(smtp["Port"]))
+            using var client = new SmtpClient(smtp["Host"], int.Parse(smtp["Port"]))
             {
                 EnableSsl = true,
-                Credentials = new NetworkCredential(smtp["Username"], smtp["Password"])
+                Credentials = new NetworkCredential(
+                    smtp["Username"],
+                    smtp["Password"]
+                )
             };
 
-            string fromEmail = smtp["FromEmail"];
-            string displayName = smtp["DisplayName"];
+            string fromEmail = GetSenderEmail();
+            string displayName = GetSenderName();
             string baseUrl = _configuration["WebSettings:BaseUrl"]?.TrimEnd('/');
 
-            // RFQ BASIC INFO
             var rfq = await _connection.QuerySingleAsync<dynamic>(
-                @"SELECT RfqID, RfqNumber, ProjectID
-          FROM Rfq WHERE RfqID = @id",
+                @"SELECT RfqID, RfqNumber, ProjectID FROM Rfq WHERE RfqID = @id",
                 new { id = request.RfqID });
 
             string projectName = await _connection.QuerySingleAsync<string>(
                 @"SELECT Name FROM Projects WHERE ProjectID = @id",
                 new { id = rfq.ProjectID });
 
-            // FETCH PROJECT MANAGER NAME (FIXED TABLE)
             var projectManager = await _connection.QuerySingleOrDefaultAsync<dynamic>(
                 @"SELECT ISNULL(pm.ProjectManagerName, 'Project Manager') AS Name
-          FROM Projects p
-          LEFT JOIN ProjectManagers pm
-            ON pm.ProjectManagerID = p.ProjectManagerID
-          WHERE p.ProjectID = @id",
+                  FROM Projects p
+                  LEFT JOIN ProjectManagers pm ON pm.ProjectManagerID = p.ProjectManagerID
+                  WHERE p.ProjectID = @id",
                 new { id = rfq.ProjectID });
 
             string projectManagerName = projectManager?.Name ?? "Project Manager";
 
             var workItems = (await _connection.QueryAsync<dynamic>(
-                @"SELECT WorkItemID, Name
-          FROM WorkItems WHERE WorkItemID IN @ids",
+                @"SELECT WorkItemID, Name FROM WorkItems WHERE WorkItemID IN @ids",
                 new { ids = request.WorkItems })).ToList();
 
             var subcontractors = (await _connection.QueryAsync<dynamic>(
                 @"SELECT SubcontractorID, EmailID, ISNULL(Name,'Subcontractor') Name
-          FROM Subcontractors
-          WHERE SubcontractorID IN @ids
-          AND EmailID IS NOT NULL",
+                  FROM Subcontractors
+                  WHERE SubcontractorID IN @ids
+                  AND EmailID IS NOT NULL",
                 new { ids = request.SubcontractorIDs })).ToList();
 
             foreach (var sub in subcontractors)
             {
-                // FETCH SUBCONTRACTOR-SPECIFIC DUE DATE
                 DateTime dueDate = await _connection.QuerySingleAsync<DateTime>(
-                    @"SELECT DueDate
-              FROM RfqSubcontractorMapping
-              WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
+                    @"SELECT DueDate FROM RfqSubcontractorMapping
+                      WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
                     new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID });
 
                 string workItemListHtml = string.Join("",
@@ -111,7 +135,7 @@ namespace UnibouwAPI.Repositories
 
 <p>
 <a href='{summaryUrl}'
-style='padding:12px 20px;background:#f97316;color:#fff;text-decoration:none;border-radius:5px;'>
+style='padding:12px 20px;background:#f97316;color:#fff;text-decoration:none;border-radius:5px;' >
 View Project Summary
 </a>
 </p>
@@ -135,7 +159,6 @@ Unibouw Team
 
                 await client.SendMailAsync(mail);
 
-                // ADD SENT EMAIL INFO
                 sentEmails.Add(new EmailRequest
                 {
                     RfqID = rfq.RfqID,
@@ -150,7 +173,6 @@ Unibouw Team
             return sentEmails;
         }
 
-
         private bool IsValidEmail(string email)
         {
             try
@@ -163,197 +185,115 @@ Unibouw Team
                 return false;
             }
         }
+
+        // ================= REMINDER EMAIL =================
         public async Task<bool> SendReminderEmailAsync(
-            Guid subcontractorId,
-            string email,
-            string name,
-            Guid rfqId,
-            string emailBody)
+     Guid subcontractorId,
+     string recipientEmail,
+     string subcontractorName,
+     Guid rfqId,
+     string emailBody)
         {
-            try
+            if (string.IsNullOrWhiteSpace(recipientEmail))
+                throw new ArgumentException("Recipient email invalid");
+
+            var smtp = _configuration.GetSection("SmtpSettings");
+
+            using var client = new SmtpClient(smtp["Host"], int.Parse(smtp["Port"]))
             {
-                var smtpSettings = _configuration.GetSection("SmtpSettings");
-                string host = smtpSettings["Host"];
-                int port = int.Parse(smtpSettings["Port"]);
-                bool enableSsl = bool.Parse(smtpSettings["EnableSsl"] ?? "true");
-                string username = smtpSettings["Username"];
-                string password = smtpSettings["Password"];
-                string fromEmail = smtpSettings["FromEmail"];
-                string displayName = smtpSettings["DisplayName"];
+                EnableSsl = true,
+                Credentials = new NetworkCredential(
+                    smtp["Username"],
+                    smtp["Password"]
+                )
+            };
 
-                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+            // 🔑 SAME AS RFQ
+            string fromEmail = smtp["Username"];        // SMTP mailbox
+            string fromName = GetSenderName();         // Logged-in user
+            string replyTo = GetSenderEmail();        // Logged-in user's email
 
-                using var client = new SmtpClient(host, port)
-                {
-                    EnableSsl = enableSsl,
-                    UseDefaultCredentials = false,
-                    Credentials = new NetworkCredential(username, password),
-                    DeliveryMethod = SmtpDeliveryMethod.Network
-                };
+            var projectManager = await _connection.QuerySingleOrDefaultAsync<dynamic>(
+                @"SELECT ISNULL(pm.ProjectManagerName, 'Project Manager') AS Name
+          FROM Rfq r
+          INNER JOIN Projects p ON p.ProjectID = r.ProjectID
+          LEFT JOIN ProjectManagers pm ON pm.ProjectManagerID = p.ProjectManagerID
+          WHERE r.RfqID = @rfqId",
+                new { rfqId });
 
-                // FETCH PROJECT MANAGER NAME (SAME STYLE AS PREVIOUS METHOD)
-                var projectManager = await _connection.QuerySingleOrDefaultAsync<dynamic>(
-                    @"SELECT ISNULL(pm.ProjectManagerName, 'Project Manager') AS Name
-              FROM Rfq r
-              INNER JOIN Projects p ON p.ProjectID = r.ProjectID
-              LEFT JOIN ProjectManagers pm
-                ON pm.ProjectManagerID = p.ProjectManagerID
-              WHERE r.RfqID = @rfqId",
-                    new { rfqId });
+            string pmName = projectManager?.Name ?? "Project Manager";
 
-                string projectManagerName = projectManager?.Name ?? "Project Manager";
-
-                // Build dynamic email message
-                string htmlBody = $@"
-<p>Dear {WebUtility.HtmlEncode(name)},</p>
-
+            string htmlBody = $@"
+<p>Dear {WebUtility.HtmlEncode(subcontractorName)},</p>
 <p>{emailBody}</p>
-
 <p>
 Regards,<br/>
-<strong>{projectManagerName}</strong><br/>
+<strong>{pmName}</strong><br/>
 (Project Manager)<br/>
 Unibouw Team
-</p>
-";
+</p>";
 
-                var mail = new MailMessage()
-                {
-                    From = new MailAddress(fromEmail, displayName),
-                    Subject = "Reminder: Upload Your Quote - Unibouw",
-                    Body = htmlBody,
-                    IsBodyHtml = true
-                };
-
-                mail.To.Add(email);
-
-                await client.SendMailAsync(mail);
-                return true;
-            }
-            catch (Exception ex)
+            var mail = new MailMessage
             {
-                throw new Exception($"Failed to send reminder email: {ex.Message}", ex);
-            }
+                From = new MailAddress(fromEmail, fromName),
+                Subject = "Reminder: Upload Your Quote - Unibouw",
+                Body = htmlBody,
+                IsBodyHtml = true
+            };
+
+            mail.To.Add(recipientEmail);
+
+            // ⭐ THIS IS THE KEY
+            mail.ReplyToList.Add(new MailAddress(replyTo, fromName));
+
+            await client.SendMailAsync(mail);
+            return true;
         }
-
-        /* public async Task<bool> SendMailAsync(string toEmail,string subject,string body,string name)
-         {
-             try
-             {
-                 var smtpSettings = _configuration.GetSection("SmtpSettings");
-
-                 ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-
-                 using var client = new SmtpClient(
-                     smtpSettings["Host"],
-                     int.Parse(smtpSettings["Port"])
-                 )
-                 {
-                     EnableSsl = bool.Parse(smtpSettings["EnableSsl"] ?? "true"),
-                     UseDefaultCredentials = false,
-                     Credentials = new NetworkCredential(
-                         smtpSettings["Username"],
-                         smtpSettings["Password"]
-                     ),
-                     DeliveryMethod = SmtpDeliveryMethod.Network
-                 };
-
-                 // ✅ Build dynamic email message
-                 string htmlBody = $@"
-             <p>Dear {WebUtility.HtmlEncode(name)},</p>
-
-             <p>{body}</p>
-
-             <p>Thank you,<br/>
-             <strong>Unibouw Team</strong></p>
-         ";
-
-                 var mail = new MailMessage
-                 {
-                     From = new MailAddress(
-                         smtpSettings["FromEmail"],
-                         smtpSettings["DisplayName"]
-                     ),
-                     Subject = subject,
-                     Body = htmlBody,
-                     IsBodyHtml = true
-                 };
-
-                 mail.To.Add(toEmail);
-
-                 await client.SendMailAsync(mail);
-                 return true;
-             }
-             catch (Exception ex)
-             {
-                 throw new Exception($"Failed to send email: {ex.Message}", ex);
-             }
-         }*/
-
-        public async Task<bool> SendMailAsync(string toEmail,string subject,string body,string name,List<string>? attachmentFilePaths = null)
+        // ================= GENERIC EMAIL =================
+        public async Task<bool> SendMailAsync(
+            string toEmail,
+            string subject,
+            string body,
+            string name,
+            List<string>? attachmentFilePaths = null)
         {
-            try
+            var smtp = _configuration.GetSection("SmtpSettings");
+
+            using var client = new SmtpClient(smtp["Host"], int.Parse(smtp["Port"]))
             {
-                var smtpSettings = _configuration.GetSection("SmtpSettings");
-
-                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-
-                using var client = new SmtpClient(
-                    smtpSettings["Host"],
-                    int.Parse(smtpSettings["Port"])
+                EnableSsl = true,
+                Credentials = new NetworkCredential(
+                    smtp["Username"],
+                    smtp["Password"]
                 )
-                {
-                    EnableSsl = bool.Parse(smtpSettings["EnableSsl"] ?? "true"),
-                    UseDefaultCredentials = false,
-                    Credentials = new NetworkCredential(
-                        smtpSettings["Username"],
-                        smtpSettings["Password"]
-                    ),
-                    DeliveryMethod = SmtpDeliveryMethod.Network
-                };
+            };
 
-                string htmlBody = $@"
-                        <p>Dear {WebUtility.HtmlEncode(name)},</p>
-                        <p>{body}</p>
-                        <p>Thank you,<br/>
-                        <strong>Unibouw Team</strong></p>
-                    ";
+            string htmlBody = $@"
+<p>Dear {WebUtility.HtmlEncode(name)},</p>
+<p>{body}</p>
+<p>Thank you,<br/>
+<strong>Unibouw Team</strong></p>";
 
-                using var mail = new MailMessage
-                {
-                    From = new MailAddress(
-                        smtpSettings["FromEmail"],
-                        smtpSettings["DisplayName"]
-                    ),
-                    Subject = subject,
-                    Body = htmlBody,
-                    IsBodyHtml = true
-                };
-
-                mail.To.Add(toEmail);
-
-                // Add attachments
-                if (attachmentFilePaths?.Any() == true)
-                {
-                    foreach (var filePath in attachmentFilePaths)
-                    {
-                        if (!string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath))
-                        {
-                            mail.Attachments.Add(new Attachment(filePath));
-                        }
-                    }
-                }
-
-                await client.SendMailAsync(mail);
-                return true;
-            }
-            catch (Exception ex)
+            using var mail = new MailMessage
             {
-                //_logger.LogError(ex, "Failed to send email to {Email}", toEmail);
-                throw new Exception($"Failed to send email: {ex.Message}", ex);
+                From = new MailAddress(GetSenderEmail(), GetSenderName()),
+                Subject = subject,
+                Body = htmlBody,
+                IsBodyHtml = true
+            };
+
+            mail.To.Add(toEmail);
+
+            if (attachmentFilePaths?.Any() == true)
+            {
+                foreach (var path in attachmentFilePaths.Where(File.Exists))
+                {
+                    mail.Attachments.Add(new Attachment(path));
+                }
             }
+
+            await client.SendMailAsync(mail);
+            return true;
         }
-
-
     }
 }

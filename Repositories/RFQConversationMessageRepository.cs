@@ -1,6 +1,9 @@
 ﻿using Dapper;
 using Microsoft.Data.SqlClient;
 using System.Data;
+using System.Net.Mail;
+using System.Net;
+using System.Security.Claims;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 
@@ -11,8 +14,9 @@ namespace UnibouwAPI.Repositories
         private readonly IConfiguration _configuration;
         private readonly string _connectionString;
         private readonly IEmail _emailRepository;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public RFQConversationMessageRepository(IConfiguration configuration, IEmail emailRepository)
+        public RFQConversationMessageRepository(IConfiguration configuration, IEmail emailRepository, IHttpContextAccessor httpContextAccessor)
         {
             _configuration = configuration;
             _connectionString = _configuration.GetConnectionString("UnibouwDbConnection");
@@ -20,6 +24,7 @@ namespace UnibouwAPI.Repositories
                 throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
 
             _emailRepository = emailRepository;
+            _httpContextAccessor = httpContextAccessor;
 
         }
 
@@ -468,9 +473,9 @@ namespace UnibouwAPI.Repositories
             }
         }
         private async Task<bool> SendReplyEmailAsync(
-    RFQConversationMessage parent,
-    RFQConversationMessage reply,
-    List<string>? attachmentPaths = null)
+      RFQConversationMessage parent,
+      RFQConversationMessage reply,
+      List<string>? attachmentPaths = null)
         {
             using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync();
@@ -486,7 +491,7 @@ namespace UnibouwAPI.Repositories
             if (sub == null || string.IsNullOrWhiteSpace(sub.EmailID))
                 throw new Exception("Subcontractor email not found");
 
-            // 2️⃣ Fetch Project Manager name directly from ProjectManagerID in the conversation
+            // 2️⃣ Fetch Project Manager name directly from ProjectManagerID
             string projectManagerName = "Project Manager";
             if (parent.ProjectManagerID != Guid.Empty)
             {
@@ -502,12 +507,7 @@ namespace UnibouwAPI.Repositories
 
             // 3️⃣ Prepare the parent message text
             string parentMessageText = parent.MessageText ?? "";
-            // Remove repeated greeting if it already starts with "Dear {sub.Name}"
-            if (parentMessageText.TrimStart().StartsWith($"Dear {sub.Name}", StringComparison.OrdinalIgnoreCase))
-            {
-                parentMessageText = parentMessageText.TrimStart();
-            }
-            else
+            if (!parentMessageText.TrimStart().StartsWith($"Dear {sub.Name}", StringComparison.OrdinalIgnoreCase))
             {
                 parentMessageText = $"Dear {sub.Name},<br/>{parentMessageText}";
             }
@@ -533,16 +533,60 @@ Regards,<br/>
 Unibouw Team
 </p>";
 
-            // 5️⃣ Send the email
-            await _emailRepository.SendMailAsync(
-                toEmail: sub.EmailID,
-                subject: reply.Subject ?? "Unibouw – Reply",
-                body: body,
-                name: sub.Name,
-                attachmentFilePaths: attachmentPaths
-            );
+            var smtp = _configuration.GetSection("SmtpSettings");
 
+            using var client = new SmtpClient(smtp["Host"], int.Parse(smtp["Port"]))
+            {
+                EnableSsl = true,
+                Credentials = new NetworkCredential(
+                    smtp["Username"],
+                    smtp["Password"]
+                )
+            };
+
+            // 🔑 Use logged-in user safely
+            string fromEmail = smtp["Username"];           // Authenticated mailbox (must stay)
+            string fromName = GetSenderName();            // Logged-in user's name
+            string replyTo = GetSenderEmail();            // Logged-in user's email
+
+            var mail = new MailMessage
+            {
+                From = new MailAddress(fromEmail, fromName),
+                Subject = reply.Subject ?? "Unibouw – Reply",
+                Body = body,
+                IsBodyHtml = true
+            };
+
+            mail.To.Add(sub.EmailID);
+
+            // ✅ Key change: logged-in user in Reply-To
+            mail.ReplyToList.Add(new MailAddress(replyTo, fromName));
+
+            // Attachments
+            if (attachmentPaths?.Any() == true)
+            {
+                foreach (var path in attachmentPaths.Where(File.Exists))
+                {
+                    mail.Attachments.Add(new Attachment(path));
+                }
+            }
+
+            await client.SendMailAsync(mail);
             return true;
+        }
+
+        // 🔹 Helper methods from your working RFQ/Reminder
+        private string GetSenderEmail()
+        {
+            var email = _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.Email)?.Value
+                        ?? _httpContextAccessor.HttpContext?.User?.FindFirst("email")?.Value;
+            return email ?? _configuration["SmtpSettings:FromEmail"];
+        }
+
+        private string GetSenderName()
+        {
+            return _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.Name)?.Value
+                   ?? _configuration["SmtpSettings:DisplayName"];
         }
     }
 }
