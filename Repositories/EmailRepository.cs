@@ -163,8 +163,12 @@ Unibouw Team
                 return false;
             }
         }
-
-        public async Task<bool> SendReminderEmailAsync(Guid subcontractorId, string email, string name, Guid rfqId, string emailBody)
+        public async Task<bool> SendReminderEmailAsync(
+            Guid subcontractorId,
+            string email,
+            string name,
+            Guid rfqId,
+            string emailBody)
         {
             try
             {
@@ -187,14 +191,31 @@ Unibouw Team
                     DeliveryMethod = SmtpDeliveryMethod.Network
                 };
 
+                // FETCH PROJECT MANAGER NAME (SAME STYLE AS PREVIOUS METHOD)
+                var projectManager = await _connection.QuerySingleOrDefaultAsync<dynamic>(
+                    @"SELECT ISNULL(pm.ProjectManagerName, 'Project Manager') AS Name
+              FROM Rfq r
+              INNER JOIN Projects p ON p.ProjectID = r.ProjectID
+              LEFT JOIN ProjectManagers pm
+                ON pm.ProjectManagerID = p.ProjectManagerID
+              WHERE r.RfqID = @rfqId",
+                    new { rfqId });
+
+                string projectManagerName = projectManager?.Name ?? "Project Manager";
+
                 // Build dynamic email message
                 string htmlBody = $@"
-                        <p>Dear {WebUtility.HtmlEncode(name)},</p>
+<p>Dear {WebUtility.HtmlEncode(name)},</p>
 
-                        <p>{emailBody}</p>
+<p>{emailBody}</p>
 
-                        <p>Thank you.<br/>Unibouw Team</p>
-                    ";
+<p>
+Regards,<br/>
+<strong>{projectManagerName}</strong><br/>
+(Project Manager)<br/>
+Unibouw Team
+</p>
+";
 
                 var mail = new MailMessage()
                 {
