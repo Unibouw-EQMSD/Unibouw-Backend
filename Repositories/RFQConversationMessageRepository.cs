@@ -56,7 +56,7 @@ namespace UnibouwAPI.Repositories
             message.ConversationMessageID = Guid.NewGuid();
             message.ProjectManagerID = projectManagerId.Value;
             message.CreatedOn = DateTime.UtcNow;
-            message.MessageDateTime = DateTime.UtcNow;
+            message.MessageDateTime = DateTime.Now;
             message.Status = "Active";
 
             // 3️⃣ Insert conversation message
@@ -159,7 +159,7 @@ namespace UnibouwAPI.Repositories
 
             // Set system values
             logConversation.LogConversationID = Guid.NewGuid();
-            logConversation.CreatedOn = DateTime.UtcNow;
+            logConversation.CreatedOn = DateTime.Now;
             logConversation.RfqID = null;
 
             var sql = @"

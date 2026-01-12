@@ -20,7 +20,7 @@ namespace UnibouwAPI.Models
         public string CreatedBy { get; set; } = null!;
         public DateTime CreatedOn { get; set; }
         public string Subject { get; set; } = null;
-        public string Tag { get; set; }
+        public string? Tag { get; set; }
 
     }
 }
