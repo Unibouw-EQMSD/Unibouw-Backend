@@ -308,23 +308,32 @@ WHERE r.RfqID = @RfqID";
 
 
 
-        public async Task<List<RfqResponseDocument>> GetPreviousSubmissionsAsync(Guid rfqId, Guid subcontractorId)
+        public async Task<List<dynamic>> GetPreviousSubmissionsAsync(
+     Guid rfqId,
+     Guid subcontractorId)
         {
             using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync();
 
-            var submissions = await conn.QueryAsync<RfqResponseDocument>(@"
-                SELECT *
-                FROM RfqResponseDocuments
-                WHERE RfqID = @RfqID
-                  AND SubcontractorID = @SubID
-                  AND (IsDeleted IS NULL OR IsDeleted = 0)
-                ORDER BY UploadedOn DESC",
-             new { RfqID = rfqId, SubID = subcontractorId });
+            var submissions = await conn.QueryAsync(@"
+        SELECT
+            r.RfqResponseDocumentID,
+            r.RfqID,
+            r.SubcontractorID,
+            r.FileName,
+            r.UploadedOn,
+            s.Name AS SubcontractorName
+        FROM RfqResponseDocuments r
+        INNER JOIN Subcontractors s
+            ON s.SubcontractorID = r.SubcontractorID
+        WHERE r.RfqID = @RfqID
+          AND r.SubcontractorID = @SubID
+          AND (r.IsDeleted IS NULL OR r.IsDeleted = 0)
+        ORDER BY r.UploadedOn DESC",
+                new { RfqID = rfqId, SubID = subcontractorId });
 
             return submissions.ToList();
         }
-
 
         public async Task<bool> UploadQuoteAsync(
             Guid rfqId,
