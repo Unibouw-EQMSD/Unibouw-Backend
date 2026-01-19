@@ -4,6 +4,7 @@ using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 using System.Net;
 using System.Text.RegularExpressions;
+using UnibouwAPI.Helpers;
 
 
 namespace UnibouwAPI.Controllers
@@ -16,6 +17,8 @@ namespace UnibouwAPI.Controllers
         private readonly IEmail _emailRepository;
         private readonly IRFQConversationMessage _conversationRepo;
         private readonly ILogger<RfqController> _logger;
+        DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
+
 
         public RfqController(IRfq repository,IEmail emailRepository, IRFQConversationMessage conversationRepo, ILogger<RfqController> logger)
         {
@@ -192,7 +195,7 @@ namespace UnibouwAPI.Controllers
                                 SubcontractorID = email.SubcontractorIDs.First(),
                                 SenderType = "PM",
                                 MessageText = HtmlToPlainText(email.Body),
-                                MessageDateTime = DateTime.UtcNow,
+                                MessageDateTime = amsterdamNow,
                                 CreatedBy = userEmail
                             }
                         );
@@ -207,6 +210,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex,"An error occurred while processing the RFQ.");
                 return StatusCode(StatusCodes.Status500InternalServerError, new
                 {
                     message = "An error occurred while processing the RFQ.",
@@ -214,8 +218,6 @@ namespace UnibouwAPI.Controllers
                 });
             }
         }
-
-
 
         private static string HtmlToPlainText(string html)
             {
@@ -248,17 +250,9 @@ namespace UnibouwAPI.Controllers
                 return html.Trim();
             }
 
-
-
-
         [HttpPost("update")]
         [Authorize]
-        public async Task<IActionResult> UpdateRfqPost(
-            [FromQuery] Guid rfqId,
-            [FromBody] Rfq rfq,
-            [FromQuery] List<Guid> subcontractorIds,
-            [FromQuery] List<Guid> workItems,
-            [FromQuery] bool sendEmail = false)
+        public async Task<IActionResult> UpdateRfqPost([FromQuery] Guid rfqId, [FromBody] Rfq rfq, [FromQuery] List<Guid> subcontractorIds, [FromQuery] List<Guid> workItems, [FromQuery] bool sendEmail = false)
         {
             try
             {
@@ -316,8 +310,8 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                // 🔴 Log exception here if you have logging (ILogger)
-                // _logger.LogError(ex, "Error updating RFQ {RfqId}", rfqId);
+                // Log exception here if you have logging (ILogger)
+                 _logger.LogError(ex, "Error updating RFQ {RfqId}", rfqId);
 
                 return StatusCode(500, new
                 {
@@ -329,15 +323,11 @@ namespace UnibouwAPI.Controllers
 
         [HttpPost("save-subcontractor-workitem-mapping")]
         [Authorize]
-        public async Task<IActionResult> SaveSubcontractorWorkItemMapping(
-    [FromQuery] Guid workItemId,
-    [FromQuery] Guid subcontractorId,
-    [FromQuery] Guid rfqId,
-    [FromQuery] DateTime? dueDate)
+        public async Task<IActionResult> SaveSubcontractorWorkItemMapping([FromQuery] Guid workItemId, [FromQuery] Guid subcontractorId, [FromQuery] Guid rfqId, [FromQuery] DateTime? dueDate)
         {
             try
             {
-                // ✅ Only these two are mandatory
+                // Only these two are mandatory
                 if (subcontractorId == Guid.Empty || workItemId == Guid.Empty)
                     return BadRequest(new
                     {
@@ -374,8 +364,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                // 🔴 Optional logging
-                // _logger.LogError(ex, "Error saving subcontractor-workitem mapping");
+                _logger.LogError(ex, "Error saving subcontractor-workitem mapping");
 
                 return StatusCode(500, new
                 {
@@ -385,14 +374,9 @@ namespace UnibouwAPI.Controllers
             }
         }
 
-
         [HttpPost("save-or-update-rfq-subcontractor-mapping")]
         [Authorize]
-        public async Task<IActionResult> SaveOrUpdateRfqSubcontractorMapping(
-    [FromQuery] Guid rfqId,
-    [FromQuery] Guid subcontractorId,
-    [FromQuery] Guid workItemId,
-    [FromQuery] DateTime dueDate)
+        public async Task<IActionResult> SaveOrUpdateRfqSubcontractorMapping([FromQuery] Guid rfqId, [FromQuery] Guid subcontractorId, [FromQuery] Guid workItemId, [FromQuery] DateTime dueDate)
         {
             try
             {
@@ -425,8 +409,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                // 🔴 Optional logging
-                // _logger.LogError(ex, "Error saving RFQ-subcontractor mapping");
+                _logger.LogError(ex, "Error saving RFQ-subcontractor mapping");
 
                 return StatusCode(500, new
                 {
@@ -435,7 +418,6 @@ namespace UnibouwAPI.Controllers
                 });
             }
         }
-
 
         [HttpGet("{rfqId}/subcontractor-duedates")]
         [Authorize]
@@ -457,33 +439,58 @@ namespace UnibouwAPI.Controllers
         [Authorize]
         public async Task<IActionResult> GetWorkItemInfo(Guid rfqId)
         {
-            var result = await _repository.GetWorkItemInfoByRfqId(rfqId);
-
-            return Ok(new
+            try
             {
-                workItem = result.WorkItemNames,
-                subcontractorCount = result.SubCount
-            });
+                var result = await _repository.GetWorkItemInfoByRfqId(rfqId);
+
+                return Ok(new
+                {
+                    workItem = result.WorkItemNames,
+                    subcontractorCount = result.SubCount
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error occurred while fetching WorkItem info for RFQ ID: {RfqId}", rfqId);
+
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    message = "An error occurred while retrieving work item information."
+                });
+            }
         }
 
         [Authorize(Roles = "Admin")]
         [HttpPost("delete/{id:guid}")]
         public async Task<IActionResult> DeleteRfq(Guid id)
         {
-            var deletedBy = User?.Identity?.Name ?? "System";
+            try
+            {
+                var deletedBy = User?.Identity?.Name ?? "System";
 
-            var result = await _repository.DeleteRfqAsync(id, deletedBy);
+                var result = await _repository.DeleteRfqAsync(id, deletedBy);
 
-            if (result == null)
-                return NotFound(new { message = "RFQ no longer exists." });
+                if (result == null)
+                    return NotFound(new { message = "RFQ no longer exists." });
 
-            if (result == false)
-                return BadRequest(new
+                if (result == false)
+                    return BadRequest(new
+                    {
+                        message = "This RFQ cannot be deleted because one or more subcontractors have submitted a quote."
+                    });
+
+                return Ok(new { message = "RFQ deleted successfully." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error occurred while deleting RFQ with ID: {RfqId}. DeletedBy: {DeletedBy}", id, User?.Identity?.Name ?? "System");
+
+                return StatusCode(StatusCodes.Status500InternalServerError, new
                 {
-                    message = "This RFQ cannot be deleted because one or more subcontractors have submitted a quote."
+                    message = "An error occurred while deleting the RFQ."
                 });
+            }
 
-            return Ok(new { message = "RFQ deleted successfully." });
         }
 
     }

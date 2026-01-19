@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using Microsoft.Data.SqlClient;
 using System.Data;
+using UnibouwAPI.Helpers;
 using UnibouwAPI.Models;
 using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
 
@@ -11,6 +12,7 @@ namespace UnibouwAPI.Repositories
     {
         private readonly IConfiguration _configuration;
         private readonly string _connectionString;
+        DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
 
         public WorkItemsRepository(IConfiguration configuration)
         {
@@ -73,7 +75,7 @@ namespace UnibouwAPI.Repositories
             {
                 Id = id,
                 IsActive = isActive,
-                ModifiedOn = DateTime.UtcNow,
+                ModifiedOn = amsterdamNow,
                 ModifiedBy = modifiedBy
             };
 
@@ -102,7 +104,7 @@ namespace UnibouwAPI.Repositories
             {
                 Id = id,
                 Description = description,
-                ModifiedOn = DateTime.UtcNow,
+                ModifiedOn = amsterdamNow,
                 ModifiedBy = modifiedBy
             };
 

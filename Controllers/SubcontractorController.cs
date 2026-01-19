@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
+using UnibouwAPI.Helpers;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 
@@ -12,6 +13,7 @@ namespace UnibouwAPI.Controllers
     {
         private readonly ISubcontractors _repository;
         private readonly ILogger<SubcontractorController> _logger;
+        DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
 
         public SubcontractorController(ISubcontractors repository, ILogger<SubcontractorController> logger)
         {
@@ -115,7 +117,10 @@ namespace UnibouwAPI.Controllers
         public async Task<IActionResult> CreateSubcontractorWithMappings([FromBody] Subcontractor subcontractor)
         {
             if (subcontractor == null)
+            {
+                _logger.LogWarning("CreateSubcontractorWithMappings called with null subcontractor data.");
                 return BadRequest("Invalid subcontractor data.");
+            }
 
             try
             {
@@ -127,18 +132,23 @@ namespace UnibouwAPI.Controllers
                     ?? HttpContext.User.Identity?.Name;
 
                 if (string.IsNullOrWhiteSpace(userEmail))
+                {
+                    _logger.LogWarning("User email claim missing, defaulting to 'System'.");
                     userEmail = "System"; // fallback if claims missing
+                }
 
                 // Set createdBy in subcontractor
                 subcontractor.CreatedBy = userEmail;
-                subcontractor.CreatedOn = DateTime.UtcNow;
-                subcontractor.RegisteredDate = DateTime.UtcNow;
+                subcontractor.CreatedOn = amsterdamNow;
+                subcontractor.RegisteredDate = amsterdamNow;
 
-                // Now pass it to repository
+                // Pass it to repository
                 var success = await _repository.CreateSubcontractorWithMappings(subcontractor);
 
                 if (success)
                 {
+                    _logger.LogInformation("Subcontractor created successfully. SubcontractorID: {SubcontractorID}, CreatedBy: {UserEmail}", subcontractor.SubcontractorID, userEmail);
+
                     return Ok(new
                     {
                         Message = "Subcontractor and mappings created successfully.",
@@ -147,11 +157,13 @@ namespace UnibouwAPI.Controllers
                 }
                 else
                 {
+                    _logger.LogError("Failed to create subcontractor. Subcontractor: {@Subcontractor}", subcontractor);
                     return StatusCode(500, "Something went wrong while saving data.");
                 }
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("email", StringComparison.OrdinalIgnoreCase))
             {
+                _logger.LogWarning(ex, "Duplicate email detected for subcontractor: {Email}", subcontractor.EmailID);
                 return Conflict(new
                 {
                     Field = "email",
@@ -161,6 +173,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("name", StringComparison.OrdinalIgnoreCase))
             {
+                _logger.LogWarning(ex, "Duplicate name detected for subcontractor: {Name}", subcontractor.Name);
                 return Conflict(new
                 {
                     Field = "name",
@@ -170,6 +183,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Unexpected error while creating subcontractor: {@Subcontractor}", subcontractor);
                 return StatusCode(500, new
                 {
                     Message = "An unexpected error occurred while processing the request.",

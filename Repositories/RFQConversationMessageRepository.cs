@@ -6,6 +6,7 @@ using System.Net;
 using System.Security.Claims;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
+using UnibouwAPI.Helpers;
 
 namespace UnibouwAPI.Repositories
 {
@@ -15,6 +16,7 @@ namespace UnibouwAPI.Repositories
         private readonly string _connectionString;
         private readonly IEmail _emailRepository;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
 
         public RFQConversationMessageRepository(IConfiguration configuration, IEmail emailRepository, IHttpContextAccessor httpContextAccessor)
         {
@@ -55,9 +57,10 @@ namespace UnibouwAPI.Repositories
             // 2️⃣ Set message fields
             message.ConversationMessageID = Guid.NewGuid();
             message.ProjectManagerID = projectManagerId.Value;
-            message.CreatedOn = DateTime.UtcNow;
-            message.MessageDateTime = DateTime.Now;
+            message.CreatedOn = amsterdamNow;
+            message.MessageDateTime = amsterdamNow;
             message.Status = "Active";
+
 
             // 3️⃣ Insert conversation message
             var insertSql = @"
@@ -159,7 +162,7 @@ namespace UnibouwAPI.Repositories
 
             // Set system values
             logConversation.LogConversationID = Guid.NewGuid();
-            logConversation.CreatedOn = DateTime.Now;
+            logConversation.CreatedOn = amsterdamNow;
             logConversation.RfqID = null;
 
             var sql = @"
@@ -230,38 +233,6 @@ namespace UnibouwAPI.Repositories
 
         public async Task<List<ConversationMessageDto>> GetConversationAsync(Guid projectId, Guid rfqId, Guid subcontractorId)
         {
-            /*var sql = @"
-                SELECT *
-                FROM
-                (
-                    SELECT
-                        ConversationMessageID AS MessageID,
-                        'PM' AS SenderType,
-                        MessageText,
-                        MessageDateTime,
-                        NULL AS Subject,
-                        'Mail' AS ConversationType
-                    FROM RFQConversationMessage
-                    WHERE ProjectID = @projectId
-                      AND SubcontractorID = @subcontractorId
-
-                    UNION ALL
-
-                    SELECT
-                        LogConversationID AS MessageID,
-                        'Subcontractor' AS SenderType,
-                        Message AS MessageText,
-                        MessageDateTime,
-                        Subject,
-                        ConversationType
-                    FROM LogConversation
-                    WHERE ProjectID = @projectId
-                      AND SubcontractorID = @subcontractorId
-                ) AS CombinedMessages
-                ORDER BY MessageDateTime ASC;
-                ";
-*/
-
             var sql = @"
                 WITH CombinedMessages AS
                 (
@@ -307,7 +278,7 @@ namespace UnibouwAPI.Repositories
         public async Task<RFQConversationMessageAttachment> AddAttachmentAsync(RFQConversationMessageAttachment attachment)
         {
             attachment.AttachmentID = Guid.NewGuid();
-            attachment.UploadedOn = DateTime.UtcNow;
+            attachment.UploadedOn = amsterdamNow;
             attachment.IsActive = true;
 
             const string sql = @"
@@ -381,7 +352,7 @@ namespace UnibouwAPI.Repositories
         'Subcontractor' AS SenderType,
         Message AS MessageText,
         Subject,
-        MessageDateTime,              -- ✅ FIXED
+        MessageDateTime,             
         CreatedBy
       FROM LogConversation
       WHERE LogConversationID = @Id",
@@ -415,9 +386,9 @@ namespace UnibouwAPI.Repositories
                     Status = "Draft",
                     MessageText = messageText,
                     Subject = subject,
-                    MessageDateTime = DateTime.Now,
+                    MessageDateTime = amsterdamNow,
                     CreatedBy = pmEmail,
-                    CreatedOn = DateTime.Now
+                    CreatedOn = amsterdamNow
                 };
 
                 await connection.ExecuteAsync(

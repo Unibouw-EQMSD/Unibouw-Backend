@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Security.Claims;
+using UnibouwAPI.Helpers;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 
@@ -13,6 +14,8 @@ namespace UnibouwAPI.Controllers
     {
         private readonly ICommon _repositoryCommon;
         private readonly ILogger<CommonController> _logger;
+        DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
+
 
         public CommonController(ICommon repositoryCommon, ILogger<CommonController> logger)
         {
@@ -77,7 +80,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error fetching persons.");
+                _logger.LogError(ex, "Error fetching persons details.");
                 return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
             }
         }
@@ -105,18 +108,30 @@ namespace UnibouwAPI.Controllers
         [HttpPost("create")]
         public async Task<IActionResult> CreatePerson([FromBody] Person person)
         {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
+            try
+            {
+                if (!ModelState.IsValid)
+                    return BadRequest(ModelState);
 
-            var result = await _repositoryCommon.CreatePerson(person);
+                var result = await _repositoryCommon.CreatePerson(person);
 
-            if (result > 0)
-                return Ok(new { message = "Person created successfully", personID = person.PersonID });
+                if (result > 0)
+                    return Ok(new { message = "Person created successfully", personID = person.PersonID });
 
-            return StatusCode(500, "Failed to create person.");
+                return StatusCode(500, "Failed to create person.");
+            }
+            catch (SqlException ex)
+            {
+                _logger.LogError(ex, "Database error while creating person. Data: {@Person}", person);
+                return StatusCode(500, "Database error occurred.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error while creating person. Data: {@Person}", person);
+                return StatusCode(500, "An unexpected error occurred.");
+            }
         }
-
-
+    
         //--- Subcontractor WorkItem Mapping
         [HttpGet("subcontractorworkitemmapping")]
         [Authorize]
@@ -163,37 +178,67 @@ namespace UnibouwAPI.Controllers
         public async Task<IActionResult> CreateWorkItemMapping([FromBody] SubcontractorWorkItemMapping mapping)
         {
             if (!ModelState.IsValid)
+            {
+                _logger.LogWarning(
+                    "Model validation failed while creating subcontractor-workitem mapping. Data: {@Mapping}",
+                    mapping
+                );
                 return BadRequest(ModelState);
+            }
 
             try
             {
                 var success = await _repositoryCommon.CreateSubcontractorWorkItemMapping(mapping);
 
                 if (!success)
+                {
+                    _logger.LogWarning(
+                        "Repository returned failure while creating subcontractor-workitem mapping. SubcontractorID: {SubcontractorID}, WorkItemID: {WorkItemID}",
+                        mapping.SubcontractorID,
+                        mapping.WorkItemID
+                    );
+
                     return StatusCode(500, "Failed to create subcontractor-workitem mapping.");
+                }
 
                 return Ok(new { message = "Mapping created successfully." });
             }
             catch (SqlException ex)
             {
-                if (ex.Number == 2627 || ex.Number == 2601) // SQL unique constraint / PK violation
+                if (ex.Number == 2627 || ex.Number == 2601)
                 {
+                    _logger.LogWarning(
+                        ex,
+                        "Duplicate subcontractor-workitem mapping. SubcontractorID: {SubcontractorID}, WorkItemID: {WorkItemID}",
+                        mapping.SubcontractorID,
+                        mapping.WorkItemID
+                    );
+
                     return Conflict(new
                     {
-                        message = "A mapping with the same SubcontractorID and WorkItemID already exists.",
-                        //error = ex.Message
+                        message = "A mapping with the same SubcontractorID and WorkItemID already exists."
                     });
                 }
 
-                // For other SQL errors
-                return StatusCode(500, new { message = "Database error occurred.", error = ex.Message });
+                _logger.LogError(
+                    ex,
+                    "SQL failure while creating subcontractor-workitem mapping. Data: {@Mapping}",
+                    mapping
+                );
+
+                return StatusCode(500, new { message = "Database error occurred." });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { message = "An unexpected error occurred.", error = ex.Message });
+                _logger.LogError(
+                    ex,
+                    "Unexpected failure while creating subcontractor-workitem mapping. Data: {@Mapping}",
+                    mapping
+                );
+
+                return StatusCode(500, new { message = "An unexpected error occurred." });
             }
         }
-
 
         //--- Subcontractor Attachment Mapping
         [HttpGet("subcontractorattachmentmapping")]
@@ -254,7 +299,7 @@ namespace UnibouwAPI.Controllers
                     SubcontractorID = model.SubcontractorID,
                     Files = model.Files,
                     UploadedBy = User.Identity?.Name ?? "System", // handle in backend
-                    UploadedOn = DateTime.UtcNow
+                    UploadedOn = amsterdamNow
                 };
 
                 var success = await _repositoryCommon.CreateSubcontractorAttachmentMappingsAsync(mapping);
@@ -372,6 +417,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex,"Failed to fetch RFQ global reminder set.");
                 return StatusCode(500, new { message = "Error fetching reminder values", error = ex.Message });
             }
         }
@@ -399,7 +445,7 @@ namespace UnibouwAPI.Controllers
                 // Set createdBy in subcontractor
                 reminder.UpdatedBy = userEmail;
 
-                reminder.UpdatedAt = DateTime.UtcNow;
+                reminder.UpdatedAt = amsterdamNow;
 
                 var result = await _repositoryCommon.UpdateRfqGolbalReminderSet(reminder);
 
@@ -410,6 +456,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex,"Error updating reminder configuration.");
                 return StatusCode(500, new { message = "Error updating reminder configuration", error = ex.Message });
             }
         }

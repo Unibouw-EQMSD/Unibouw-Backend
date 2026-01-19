@@ -2,6 +2,7 @@
 using Microsoft.Data.SqlClient;
 using System.Data;
 using System.Security.Claims;
+using UnibouwAPI.Helpers;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 
@@ -11,6 +12,8 @@ namespace UnibouwAPI.Repositories
     {
         private readonly IConfiguration _configuration;
         private readonly string _connectionString;
+        DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
+
 
         public SubcontractorsRepository(IConfiguration configuration)
         {
@@ -76,7 +79,7 @@ namespace UnibouwAPI.Repositories
             {
                 Id = id,
                 IsActive = isActive,
-                ModifiedOn = DateTime.UtcNow,
+                ModifiedOn = amsterdamNow,
                 ModifiedBy = modifiedBy
             };
 
@@ -140,10 +143,7 @@ namespace UnibouwAPI.Repositories
                             Name = subcontractor.ContactName,
                             Mail = subcontractor.ContactEmailID,
                             PhoneNumber1 = subcontractor.ContactPhone,
-                            //Address = subcontractor.OfficeAddress,
-                            //Country = subcontractor.Country,
-                            //City = subcontractor.Location,
-                            CreatedOn = DateTime.UtcNow,
+                            CreatedOn = amsterdamNow,
                             CreatedBy = subcontractor.CreatedBy,
                             IsDeleted = false
                         };
@@ -165,7 +165,7 @@ namespace UnibouwAPI.Repositories
                         //  STEP 3: INSERT SUBCONTRACTOR
                         // ============================
                         subcontractor.SubcontractorID = Guid.NewGuid();
-                        subcontractor.CreatedOn = DateTime.UtcNow;
+                        subcontractor.CreatedOn = amsterdamNow;
                         subcontractor.IsActive ??= true;
                         subcontractor.IsDeleted = false;
 

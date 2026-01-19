@@ -5,6 +5,7 @@ using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 using Microsoft.AspNetCore.Http;
 using System.ComponentModel.DataAnnotations.Schema;
+using UnibouwAPI.Helpers;
 
 
 namespace UnibouwAPI.Repositories
@@ -13,6 +14,7 @@ namespace UnibouwAPI.Repositories
     {
         private readonly IConfiguration _configuration;
         private readonly string _connectionString;
+        DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
 
         public CommonRepository(IConfiguration configuration)
         {
@@ -59,7 +61,7 @@ namespace UnibouwAPI.Repositories
          @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted)";
 
             person.PersonID = Guid.NewGuid();
-            person.CreatedOn = DateTime.UtcNow;
+            person.CreatedOn = amsterdamNow;
             person.IsDeleted = false;
 
             return await _connection.ExecuteAsync(sql, person);
@@ -177,7 +179,7 @@ namespace UnibouwAPI.Repositories
                                 FileName = file.FileName,
                                 FileType = file.ContentType,
                                 FilePath = $"/uploads/subcontractors/{uniqueFileName}",
-                                UploadedOn = DateTime.UtcNow,
+                                UploadedOn = amsterdamNow,
                                 model.UploadedBy
                             }, transaction);
                         }
