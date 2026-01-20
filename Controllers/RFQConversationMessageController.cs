@@ -39,6 +39,8 @@ namespace UnibouwAPI.Controllers
             }
             catch (SqlException ex) when (ex.Number == 2627 || ex.Number == 2601)
             {
+                _logger.LogWarning(ex, "Attempted to insert a duplicate RFQ conversation message with ID: {MessageId}", message.ConversationMessageID);
+
                 return Conflict(new
                 {
                     message = "A message with the same ID already exists."
@@ -46,6 +48,8 @@ namespace UnibouwAPI.Controllers
             }
             catch (SqlException ex)
             {
+                _logger.LogError(ex, "Database error occurred while adding RFQ conversation message with ID: {MessageId}", message.ConversationMessageID);
+
                 return StatusCode(500, new
                 {
                     message = "Database error occurred.",
@@ -54,6 +58,8 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Unexpected error occurred while adding RFQ conversation message with ID: {MessageId}", message.ConversationMessageID);
+
                 return StatusCode(500, new
                 {
                     message = "An unexpected error occurred.",
@@ -81,6 +87,8 @@ namespace UnibouwAPI.Controllers
             }
             catch (SqlException ex)
             {
+                _logger.LogError(ex, "Database error occurred while processing RFQ conversation message");
+
                 return StatusCode(500, new
                 {
                     message = "Database error occurred.",
@@ -89,6 +97,8 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Unexpected error occurred while processing RFQ conversation message.");
+
                 return StatusCode(500, new
                 {
                     message = "An unexpected error occurred.",
@@ -115,6 +125,8 @@ namespace UnibouwAPI.Controllers
             }
             catch (SqlException ex) when (ex.Number == 2627 || ex.Number == 2601)
             {
+                _logger.LogWarning(ex, "Database error occurred while processing RFQ conversation message");
+
                 return Conflict(new
                 {
                     message = "A log conversation with the same ID already exists."
@@ -122,6 +134,8 @@ namespace UnibouwAPI.Controllers
             }
             catch (SqlException ex)
             {
+                _logger.LogError(ex, "Database error occurred while processing RFQ conversation message");
+
                 return StatusCode(500, new
                 {
                     message = "Database error occurred.",
@@ -130,6 +144,8 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Database error occurred while processing RFQ conversation message");
+
                 return StatusCode(500, new
                 {
                     message = "An unexpected error occurred.",
@@ -156,6 +172,8 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Failed to fetch log conversations.");
+
                 return StatusCode(500, new
                 {
                     message = "Failed to fetch log conversations.",
@@ -177,6 +195,8 @@ namespace UnibouwAPI.Controllers
             }
             catch(Exception ex)
             {
+                _logger.LogError(ex, "Failed to fetch conversations.");
+
                 return StatusCode(500, new
                 {
                     message = "Failed to fetch conversations.",
@@ -230,17 +250,25 @@ namespace UnibouwAPI.Controllers
                 // Rollback file if DB save fails
                 if (!string.IsNullOrEmpty(filePath) && System.IO.File.Exists(filePath))
                 {
-                    System.IO.File.Delete(filePath);
+                    try
+                    {
+                        System.IO.File.Delete(filePath);
+                        _logger.LogInformation("Rolled back file deletion: {FilePath}", filePath);
+                    }
+                    catch (Exception fileEx)
+                    {
+                        _logger.LogWarning(fileEx, "Failed to delete file during rollback: {FilePath}", filePath);
+                    }
                 }
 
-                // Optional: log error
-                // _logger.LogError(ex, "Error uploading attachment");
+                _logger.LogError(ex, "Error uploading attachment");
 
                 return StatusCode(
                     StatusCodes.Status500InternalServerError,
                     "An error occurred while uploading the attachment."
                 );
             }
+
         }
 
 
@@ -267,6 +295,8 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "An unexpected error occurred.");
+
                 return StatusCode(500, ex.Message);
             }
         }

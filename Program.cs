@@ -1,11 +1,10 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Identity.Web;
 using Microsoft.OpenApi.Models;
 using UnibouwAPI.Repositories;
 using UnibouwAPI.Repositories.Interfaces;
 using UnibouwAPI.Service;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,12 +12,16 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 
 // Configure logging
-builder.Logging.ClearProviders();
+/*builder.Logging.ClearProviders();
 builder.Logging.AddDebug();
 builder.Logging.AddConsole(options =>
 {
     options.IncludeScopes = true;
     options.TimestampFormat = "[HH:mm:ss] ";
+});*/
+builder.Host.UseSerilog((context, services, configuration) =>
+{
+    configuration.ReadFrom.Configuration(context.Configuration);
 });
 
 // Register Repositories
@@ -30,8 +33,8 @@ builder.Services.AddScoped<IRfq, RfqRepository>();
 builder.Services.AddScoped<IEmail, EmailRepository>();
 builder.Services.AddScoped<IRfqResponse, RfqResponseRepository>();
 builder.Services.AddScoped<IRFQConversationMessage, RFQConversationMessageRepository>();
-//builder.Services.AddHttpClient<IMsTeamsNotification, MsTeamsNotificationService>();
 builder.Services.AddScoped<IMsTeamsNotification, MsTeamsNotificationService>();
+
 
 // Configure Azure AD authentication with custom Unauthorized/Forbidden responses
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

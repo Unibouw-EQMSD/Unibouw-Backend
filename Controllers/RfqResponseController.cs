@@ -59,7 +59,6 @@ namespace UnibouwAPI.Controllers
             }
         }
 
-
         [HttpGet("GetRfqResponseDocumentsById/{id}")]
         [Authorize]
         public async Task<IActionResult> GetRfqResponseDocumentsById(Guid id)
@@ -202,7 +201,6 @@ namespace UnibouwAPI.Controllers
             }
         }
 
-
         //---------------------------------------------------------
         [HttpGet("GetProjectSummary")]
         public async Task<IActionResult> GetProjectSummary([FromQuery] Guid rfqId,[FromQuery] Guid subId,[FromQuery] List<Guid>? workItemIds)
@@ -218,14 +216,13 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error in GetProjectSummary.");
+                _logger.LogError(ex, "Error in GetProjectSummary.");
                 return StatusCode(500, new
                 {
                     message = "An unexpected error occurred. Try again later."
                 });
             }
         }
-
 
         [HttpGet]
         [Route("")]
@@ -254,7 +251,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ An unexpected error occurred while processing your request.");
+                _logger.LogError(ex, "An unexpected error occurred while processing your request.");
                 return StatusCode(500, new
                 {
                     message = "An unexpected error occurred while processing your request.",
@@ -278,7 +275,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error saving RFQ response");
+                _logger.LogError(ex, "Error saving RFQ response");
                 return StatusCode(500, new
                 {
                     success = false,
@@ -291,7 +288,7 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpPost("UploadQuote")]
-        public async Task<IActionResult> UploadQuote([FromQuery] Guid rfqId,[FromQuery] Guid subcontractorId, [FromQuery] Guid workItemId, [FromForm] decimal totalAmount,[FromForm] string comment,IFormFile file)
+        public async Task<IActionResult> UploadQuote([FromQuery] Guid rfqId, [FromQuery] Guid subcontractorId, [FromQuery] Guid workItemId, [FromForm] decimal totalAmount, [FromForm] string comment, IFormFile file)
         {
             if (rfqId == Guid.Empty || subcontractorId == Guid.Empty)
                 return BadRequest("Invalid RFQ or Subcontractor ID.");
@@ -299,19 +296,47 @@ namespace UnibouwAPI.Controllers
             if (file == null || file.Length == 0)
                 return BadRequest("No file uploaded.");
 
-            var success = await _repository.UploadQuoteAsync(
-                rfqId,
-                subcontractorId,
-                workItemId,
-                file,
-                totalAmount,
-                comment
-            );
+            try
+            {
+                var success = await _repository.UploadQuoteAsync(
+                    rfqId,
+                    subcontractorId,
+                    workItemId,
+                    file,
+                    totalAmount,
+                    comment
+                );
 
-            if (!success)
-                return BadRequest("Upload failed.");
+                if (!success)
+                    return BadRequest("Upload failed.");
 
-            return Ok(new { message = "Quote uploaded successfully", totalAmount, comment });
+                return Ok(new { message = "Quote uploaded successfully", totalAmount, comment });
+            }
+            catch (SqlException ex)
+            {
+                _logger.LogError(ex, "Database error occurred while uploading quote for RFQ: {RfqId}, Subcontractor: {SubcontractorId}", rfqId, subcontractorId);
+                return StatusCode(500, new { message = "Database error occurred.", error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                // Optional: rollback the file if it was saved locally
+                try
+                {
+                    if (file != null && file.Length > 0)
+                    {
+                        var filePath = Path.Combine("Uploads", file.FileName); // adjust path if necessary
+                        if (System.IO.File.Exists(filePath))
+                            System.IO.File.Delete(filePath);
+                    }
+                }
+                catch (Exception fileEx)
+                {
+                    _logger.LogWarning(fileEx, "Failed to delete file during rollback.");
+                }
+
+                _logger.LogError(ex, "Unexpected error occurred while uploading quote for RFQ: {RfqId}, Subcontractor: {SubcontractorId}", rfqId, subcontractorId);
+                return StatusCode(500, new { message = "An unexpected error occurred while uploading the quote." });
+            }
         }
 
         private string ExtractQuoteAmount(byte[] fileBytes, string extension)
@@ -438,7 +463,6 @@ namespace UnibouwAPI.Controllers
                 string cleaned = value.Replace("€", "")
                                       .Replace(",", ".")
                                       .Trim();
-
                 decimal.TryParse(cleaned, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal result);
 
                 return result;
@@ -449,6 +473,7 @@ namespace UnibouwAPI.Controllers
                 return 0;
             }
         }
+
         [HttpGet("GetQuoteAmount")]
         [Authorize]
         public async Task<IActionResult> GetQuoteAmount(Guid rfqId, Guid subcontractorId, Guid workItemId)
@@ -464,7 +489,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error retrieving total quote amount.");
+                _logger.LogError(ex, "Error retrieving total quote amount.");
                 return StatusCode(500, new
                 {
                     message = "An error occurred while retrieving the quote amount.",
@@ -481,41 +506,43 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpGet("DownloadQuote")]
-
         [Authorize]
-
         public async Task<IActionResult> DownloadQuote([FromQuery] Guid documentId)
-
         {
-
             if (documentId == Guid.Empty)
-
                 return BadRequest("Invalid document ID.");
 
-            var document = await _repository.GetRfqResponseDocumentsById(documentId);
+            try
+            {
+                var document = await _repository.GetRfqResponseDocumentsById(documentId);
 
-            if (document == null)
+                if (document == null)
+                {
+                    _logger.LogWarning("No quote found for DocumentId: {DocumentId}", documentId);
+                    return NotFound("No quote found for this document.");
+                }
 
-                return NotFound("No quote found for this document.");
-
-            // Return the PDF file to the client
-
-            return File(document.FileData, "application/pdf", document.FileName ?? "Quote.pdf");
-
+                // Return the PDF file to the client
+                return File(document.FileData, "application/pdf", document.FileName ?? "Quote.pdf");
+            }
+            catch (SqlException ex)
+            {
+                _logger.LogError(ex, "Database error occurred while fetching quote for DocumentId: {DocumentId}", documentId);
+                return StatusCode(500, new { message = "Database error occurred.", error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error occurred while downloading quote for DocumentId: {DocumentId}", documentId);
+                return StatusCode(500, new { message = "An unexpected error occurred while downloading the quote." });
+            }
         }
 
         // Static helper method to extract and save the document locally
-
         static void ExtractDocument(string connectionString, Guid documentId)
-
         {
-
             using (SqlConnection conn = new SqlConnection(connectionString))
-
             {
-
                 conn.Open();
-
                 string sql = @"
                         SELECT RfqResponseDocumentID, RfqID, SubcontractorID, FileName, FileData, UploadedOn, IsDeleted, IsDeletedBy, DeletedOn
                         FROM RfqResponseDocument
@@ -543,7 +570,6 @@ namespace UnibouwAPI.Controllers
                 }
             }
         }
-
 
         [HttpGet("responses/project/{projectId}")]
         [Authorize]
@@ -584,7 +610,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ An error occurred while fetching project responses");
+                _logger.LogError(ex, "An error occurred while fetching project responses");
 
                 return StatusCode(500, new
                 {
@@ -605,7 +631,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                // log ex
+                _logger.LogError(ex, "Failed to load latest subcontractors for ProjectId: {ProjectId}", projectId);
                 return StatusCode(500, "Failed to load subcontractors.");
             }
         }
@@ -628,7 +654,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError($"❌ Error in MarkViewed: {ex}");
+                _logger.LogError($"Error in MarkViewed: {ex}");
                 return StatusCode(500, new { message = "Internal server error", error = ex.Message });
             }
         }
@@ -637,8 +663,31 @@ namespace UnibouwAPI.Controllers
         [HttpDelete("DeleteQuoteFile")]
         public async Task<IActionResult> DeleteQuoteFile(Guid rfqId, Guid subcontractorId)
         {
-            var result = await _repository.DeleteQuoteFile(rfqId, subcontractorId);
-            return result ? Ok() : NotFound();
+            try
+            {
+                var result = await _repository.DeleteQuoteFile(rfqId, subcontractorId);
+
+                if (result)
+                {
+                   return Ok();
+                }
+                else
+                {
+                    _logger.LogWarning("Quote file not found for deletion. RFQ: {RfqId}, Subcontractor: {SubcontractorId}", rfqId, subcontractorId);
+                    return NotFound();
+                }
+            }
+            catch (SqlException ex)
+            {
+                _logger.LogError(ex, "Database error occurred while deleting quote file for RFQ: {RfqId}, Subcontractor: {SubcontractorId}", rfqId, subcontractorId);
+                return StatusCode(500, new { message = "Database error occurred.", error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error occurred while deleting quote file for RFQ: {RfqId}, Subcontractor: {SubcontractorId}", rfqId, subcontractorId);
+                return StatusCode(500, new { message = "An unexpected error occurred while deleting the quote file." });
+            }
         }
+
     }
 }

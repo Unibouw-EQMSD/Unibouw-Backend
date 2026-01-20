@@ -2,6 +2,7 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.VisualBasic;
 using System.Data;
+using UnibouwAPI.Helpers;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 
@@ -11,6 +12,7 @@ namespace UnibouwAPI.Repositories
     {
         private readonly IConfiguration _configuration;
         private readonly string _connectionString;
+        DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
 
         public RfqRepository(IConfiguration configuration)
         {
@@ -157,7 +159,7 @@ ORDER BY r.CreatedOn DESC";
         {
             // 1️⃣ System fields
             rfq.RfqID = Guid.NewGuid();
-            rfq.CreatedOn = DateTime.UtcNow;
+            rfq.CreatedOn = amsterdamNow;
             rfq.IsDeleted = false;
 
             rfq.CustomerID = rfq.CustomerID == Guid.Empty ? null : rfq.CustomerID;

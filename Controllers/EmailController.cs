@@ -48,6 +48,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex,"Unexpected error occurred while sending the RFQ email.");
                 // You can log ex.Message here
                 return StatusCode(500, new
                 {
@@ -82,13 +83,13 @@ namespace UnibouwAPI.Controllers
             }
             catch(Exception ex)
             {
+                _logger.LogError(ex,"Unhandled exception occurred.");
                 return StatusCode(500, new
                 {
                     ex.Message,
                 });
             }
         }
-
 
         [HttpPost("send-mail")]
         public async Task<IActionResult> SendMail([FromBody] SendMailRequest req)
@@ -124,6 +125,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex,"Unexpected error occurred while sending the email.");
                 return StatusCode(500, new
                 {
                     success = false,

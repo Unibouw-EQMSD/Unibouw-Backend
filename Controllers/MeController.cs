@@ -75,7 +75,7 @@ public class MeController : ControllerBase
         catch (Exception ex)
         {
             Console.WriteLine($"GetMe() failed: {ex.Message}\n{ex.StackTrace}");
-            _logger.LogError(ex, "An error occurred in GetMe");
+            _logger.LogError(ex, "GetMe failed due to an unexpected error.");
             return StatusCode(500, $"An unexpected error occurred: {ex.Message}");
         }
     }
