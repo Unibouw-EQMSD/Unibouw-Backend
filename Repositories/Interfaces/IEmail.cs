@@ -15,6 +15,12 @@ namespace UnibouwAPI.Repositories.Interfaces
       string emailBody);
 
         // Task<bool> SendMailAsync(string toEmail, string subject, string body, string name);
-        Task<bool> SendMailAsync(string toEmail, string subject, string body, string name, List<string>? attachmentFilePaths = null);
+        Task<bool> SendMailAsync(
+    string toEmail,
+    string subject,
+    string body,
+    string name,
+    Guid? projectId,
+    List<string>? attachmentFilePaths = null);
     }
 }

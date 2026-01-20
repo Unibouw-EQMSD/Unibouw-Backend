@@ -447,6 +447,15 @@ namespace UnibouwAPI.Repositories
                 throw;
             }
         }
+
+        private static string ConvertToHtml(string text)
+        {
+            return string.IsNullOrWhiteSpace(text)
+                ? string.Empty
+                : text
+                    .Replace("\r\n", "<br/>")
+                    .Replace("\n", "<br/>");
+        }
         private async Task<bool> SendReplyEmailAsync(
       RFQConversationMessage parent,
       RFQConversationMessage reply,
@@ -481,7 +490,7 @@ namespace UnibouwAPI.Repositories
             }
 
             // 3️⃣ Prepare the parent message text
-            string parentMessageText = parent.MessageText ?? "";
+            string parentMessageText = ConvertToHtml(parent.MessageText ?? "");
             if (!parentMessageText.TrimStart().StartsWith($"Dear {sub.Name}", StringComparison.OrdinalIgnoreCase))
             {
                 parentMessageText = $"Dear {sub.Name},<br/>{parentMessageText}";
@@ -504,8 +513,7 @@ namespace UnibouwAPI.Repositories
 <p>
 Regards,<br/>
 <strong>{projectManagerName}</strong><br/>
-(Project Manager)<br/>
-Unibouw Team
+Project Manager - Unibouw
 </p>";
 
             var smtp = _configuration.GetSection("SmtpSettings");

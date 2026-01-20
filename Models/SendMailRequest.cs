@@ -6,5 +6,7 @@
         public string Subject { get; set; }
         public string Body { get; set; }
         public List<string>? AttachmentFilePaths { get; set; }
+        public Guid? ProjectID { get; set; }
+
     }
 }

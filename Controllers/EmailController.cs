@@ -118,6 +118,7 @@ namespace UnibouwAPI.Controllers
                     subject: req.Subject,
                     body: req.Body,
                     name: sub.Name,
+                    projectId: req.ProjectID,
                     attachmentFilePaths: req.AttachmentFilePaths
                 );
 

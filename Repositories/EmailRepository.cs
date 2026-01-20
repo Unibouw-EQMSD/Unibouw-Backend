@@ -143,8 +143,7 @@ View Project Summary
 <p>
 Regards,<br/>
 <strong>{projectManagerName}</strong><br/>
-(Project Manager)<br/>
-Unibouw Team
+Project Manager - Unibouw
 </p>";
 
                 var mail = new MailMessage
@@ -229,8 +228,7 @@ Unibouw Team
 <p>
 Regards,<br/>
 <strong>{pmName}</strong><br/>
-(Project Manager)<br/>
-Unibouw Team
+Project Manager - Unibouw
 </p>";
 
             var mail = new MailMessage
@@ -251,11 +249,12 @@ Unibouw Team
         }
         // ================= GENERIC EMAIL =================
         public async Task<bool> SendMailAsync(
-            string toEmail,
-            string subject,
-            string body,
-            string name,
-            List<string>? attachmentFilePaths = null)
+    string toEmail,
+    string subject,
+    string body,
+    string name,
+    Guid? projectId,
+    List<string>? attachmentFilePaths = null)
         {
             var smtp = _configuration.GetSection("SmtpSettings");
 
@@ -268,11 +267,37 @@ Unibouw Team
                 )
             };
 
+            // ✅ FETCH PROJECT MANAGER USING Projects.ProjectManagerID
+            string projectManagerName = "Project Manager";
+
+            if (projectId.HasValue && projectId.Value != Guid.Empty)
+            {
+                projectManagerName = await _connection.QuerySingleOrDefaultAsync<string>(
+                    @"SELECT ISNULL(pm.ProjectManagerName, 'Project Manager')
+              FROM Projects p
+              LEFT JOIN ProjectManagers pm 
+                ON pm.ProjectManagerID = p.ProjectManagerID
+              WHERE p.ProjectID = @projectId",
+                    new { projectId = projectId.Value }
+                ) ?? "Project Manager";
+            }
+
+            // 🔹 Preserve line breaks
+            string formattedBody = body
+                .Replace("\r\n", "<br/>")
+                .Replace("\n", "<br/>");
+
             string htmlBody = $@"
 <p>Dear {WebUtility.HtmlEncode(name)},</p>
-<p>{body}</p>
-<p>Thank you,<br/>
-<strong>Unibouw Team</strong></p>";
+
+<p>{formattedBody}</p>
+
+<p>
+Regards,<br/>
+<strong>{projectManagerName}</strong><br/>
+Project Manager - Unibouw
+
+</p>";
 
             using var mail = new MailMessage
             {
@@ -283,6 +308,10 @@ Unibouw Team
             };
 
             mail.To.Add(toEmail);
+
+            mail.ReplyToList.Add(
+                new MailAddress(GetSenderEmail(), GetSenderName())
+            );
 
             if (attachmentFilePaths?.Any() == true)
             {
@@ -295,5 +324,6 @@ Unibouw Team
             await client.SendMailAsync(mail);
             return true;
         }
+
     }
 }
