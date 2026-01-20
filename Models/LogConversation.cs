@@ -14,7 +14,7 @@
         public string ConversationType { get; set; }   // Email, Call
         public string Subject { get; set; }
         public string Message { get; set; }
-        public DateTime MessageDateTime { get; set; }
+        public DateTime? MessageDateTime { get; set; }
 
         // Audit
         public string? CreatedBy { get; set; }
