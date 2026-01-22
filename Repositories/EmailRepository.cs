@@ -56,7 +56,7 @@ namespace UnibouwAPI.Repositories
             var sentEmails = new List<EmailRequest>();
 
             if (request?.SubcontractorIDs == null || !request.SubcontractorIDs.Any())
-                throw new ArgumentException("Invalid request.");
+                return sentEmails; // 🔒 DO NOTHING
 
             var smtp = _configuration.GetSection("SmtpSettings");
 
@@ -83,9 +83,9 @@ namespace UnibouwAPI.Repositories
 
             var projectManager = await _connection.QuerySingleOrDefaultAsync<dynamic>(
                 @"SELECT ISNULL(pm.ProjectManagerName, 'Project Manager') AS Name
-                  FROM Projects p
-                  LEFT JOIN ProjectManagers pm ON pm.ProjectManagerID = p.ProjectManagerID
-                  WHERE p.ProjectID = @id",
+          FROM Projects p
+          LEFT JOIN ProjectManagers pm ON pm.ProjectManagerID = p.ProjectManagerID
+          WHERE p.ProjectID = @id",
                 new { id = rfq.ProjectID });
 
             string projectManagerName = projectManager?.Name ?? "Project Manager";
@@ -96,16 +96,29 @@ namespace UnibouwAPI.Repositories
 
             var subcontractors = (await _connection.QueryAsync<dynamic>(
                 @"SELECT SubcontractorID, EmailID, ISNULL(Name,'Subcontractor') Name
-                  FROM Subcontractors
-                  WHERE SubcontractorID IN @ids
-                  AND EmailID IS NOT NULL",
+          FROM Subcontractors
+          WHERE SubcontractorID IN @ids
+          AND EmailID IS NOT NULL",
                 new { ids = request.SubcontractorIDs })).ToList();
 
             foreach (var sub in subcontractors)
             {
+                // 🔒 HARD BLOCK — already emailed
+                bool alreadyEmailed = await _connection.ExecuteScalarAsync<int>(
+                    @"SELECT COUNT(1)
+              FROM RfqSubcontractorMapping
+              WHERE RfqID = @RfqID
+                AND SubcontractorID = @SubId
+                AND EmailedOn IS NOT NULL",
+                    new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID }
+                ) > 0;
+
+                if (alreadyEmailed)
+                    continue; // ❌ SKIP EMAIL COMPLETELY
+
                 DateTime dueDate = await _connection.QuerySingleAsync<DateTime>(
                     @"SELECT DueDate FROM RfqSubcontractorMapping
-                      WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
+              WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
                     new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID });
 
                 string workItemListHtml = string.Join("",
@@ -135,7 +148,7 @@ namespace UnibouwAPI.Repositories
 
 <p>
 <a href='{summaryUrl}'
-style='padding:12px 20px;background:#f97316;color:#fff;text-decoration:none;border-radius:5px;' >
+style='padding:12px 20px;background:#f97316;color:#fff;text-decoration:none;border-radius:5px;'>
 View Project Summary
 </a>
 </p>
@@ -157,6 +170,14 @@ Project Manager - Unibouw
                 mail.To.Add(sub.EmailID);
 
                 await client.SendMailAsync(mail);
+
+                // ✅ MARK AS EMAILED (ONCE)
+                await _connection.ExecuteAsync(
+                    @"UPDATE RfqSubcontractorMapping
+              SET EmailedOn = GETDATE()
+              WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
+                    new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID }
+                );
 
                 sentEmails.Add(new EmailRequest
                 {

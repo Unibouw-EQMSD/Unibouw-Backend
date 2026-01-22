@@ -83,6 +83,19 @@ WHERE r.RfqID = @Id AND r.IsDeleted = 0";
             return rfqDictionary.Values.FirstOrDefault();
         }
 
+        public async Task<IEnumerable<WorkItem>> GetRfqWorkItemsAsync(Guid rfqId)
+        {
+            const string sql = @"
+SELECT 
+    wi.WorkItemID,
+    wi.Name
+FROM RfqWorkItemMapping rwm
+INNER JOIN WorkItems wi ON rwm.WorkItemID = wi.WorkItemID
+WHERE rwm.RfqID = @RfqId
+  AND wi.IsDeleted = 0"; 
+     
+    return await _connection.QueryAsync<WorkItem>(sql, new { RfqId = rfqId });
+        }
         public async Task<IEnumerable<Rfq>> GetRfqByProjectId(Guid projectId)
         {
             var sql = @"
@@ -153,27 +166,26 @@ ORDER BY r.CreatedOn DESC";
             return rowsAffected > 0;
         }
         public async Task<Guid> CreateRfqAsync(
-            Rfq rfq,
-            List<Guid> subcontractorIds
-        )
+      Rfq rfq,
+      List<Guid> subcontractorIds
+  )
         {
-            // 1️⃣ System fields
             rfq.RfqID = Guid.NewGuid();
             rfq.CreatedOn = amsterdamNow;
             rfq.IsDeleted = false;
 
-            rfq.CustomerID = rfq.CustomerID == Guid.Empty ? null : rfq.CustomerID;
-            rfq.ProjectID = rfq.ProjectID == Guid.Empty ? null : rfq.ProjectID;
-            rfq.RfqResponseID = rfq.RfqResponseID == Guid.Empty ? null : rfq.RfqResponseID;
+            if (rfq.SubcontractorDueDates == null || !rfq.SubcontractorDueDates.Any())
+                throw new Exception("Subcontractor due dates are required");
 
-            // 2️⃣ DATE — SINGLE SOURCE OF TRUTH
-            if (rfq.DueDate == null)
-                throw new Exception("RFQ DueDate is required");
+            // ✅ 1️⃣ Earliest subcontractor due date
+            var mainDueDate = rfq.SubcontractorDueDates
+                .Min(x => x.DueDate!.Value.Date);
 
-            var dueDate = rfq.DueDate.Value.Date;
-            rfq.DueDate = dueDate;
-            rfq.GlobalDueDate = dueDate;
-            rfq.DeadLine = dueDate;
+            rfq.DueDate = mainDueDate;
+            rfq.DeadLine = mainDueDate;
+
+            // ✅ 2️⃣ Respect frontend GlobalDueDate
+            rfq.GlobalDueDate = rfq.GlobalDueDate?.Date ?? mainDueDate;
 
             await using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync();
@@ -181,7 +193,7 @@ ORDER BY r.CreatedOn DESC";
 
             try
             {
-                // 3️⃣ Insert RFQ
+                // ✅ Insert RFQ
                 const string insertRfq = @"
 INSERT INTO Rfq
 (
@@ -195,10 +207,9 @@ VALUES
     @CustomerID, @ProjectID, @RfqResponseID, @CustomerNote, @DeadLine,
     @CreatedOn, @CreatedBy, @IsDeleted, @Status, @GlobalDueDate
 )";
-
                 await connection.ExecuteAsync(insertRfq, rfq, transaction);
 
-                // 4️⃣ Subcontractor mappings — DueDate ALWAYS set
+                // ✅ Insert subcontractor-specific due dates
                 const string insertSub = @"
 INSERT INTO RfqSubcontractorMapping
 (
@@ -212,14 +223,13 @@ VALUES
     @SubcontractorID,
     @DueDate
 )";
-
-                foreach (var subId in subcontractorIds)
+                foreach (var sub in rfq.SubcontractorDueDates)
                 {
                     await connection.ExecuteAsync(insertSub, new
                     {
                         RfqID = rfq.RfqID,
-                        SubcontractorID = subId,
-                        DueDate = dueDate
+                        SubcontractorID = sub.SubcontractorID,
+                        DueDate = sub.DueDate!.Value.Date
                     }, transaction);
                 }
 
@@ -232,6 +242,8 @@ VALUES
                 throw;
             }
         }
+
+
         public async Task SaveSubcontractorWorkItemMappingAsync(
      Guid subcontractorId,
      Guid workItemId,
@@ -536,23 +548,24 @@ VALUES (@RfqID, @SubId, @DueDate);";
 
             return rows > 0;
         }
-
         public async Task<IEnumerable<dynamic>> GetRfqSubcontractorDueDatesAsync(Guid rfqId)
         {
             const string query = @"
-      SELECT
-    rwm.WorkItemID,
-    rsm.SubcontractorID,
-    CONVERT(NVARCHAR(10), rsm.DueDate, 120) AS DueDate
-FROM RfqSubcontractorMapping rsm
-JOIN RfqWorkItemMapping rwm
-    ON rwm.RfqID = rsm.RfqID
-WHERE rsm.RfqID = @RfqID
+        SELECT
+            rwm.WorkItemID,
+            rsm.SubcontractorID,
+            COALESCE(CONVERT(date, rsm.DueDate), r.GlobalDueDate) AS DueDate,
+            r.GlobalDueDate
+        FROM RfqWorkItemMapping rwm
+        LEFT JOIN RfqSubcontractorMapping rsm
+            ON rwm.RFQID = rsm.RFQID
+        INNER JOIN Rfq r
+            ON r.RFQID = rwm.RFQID
+        WHERE rwm.RFQID = @RfqID
     ";
 
             return await _connection.QueryAsync(query, new { RfqID = rfqId });
         }
-
 
         // ⭐ GLOBAL MAPPING IMPLEMENTATION
         public async Task EnsureGlobalSubcontractorWorkItemMapping(Guid workItemId, Guid subcontractorId)
