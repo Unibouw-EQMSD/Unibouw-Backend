@@ -72,13 +72,15 @@ namespace UnibouwAPI.Repositories
         public async Task<IEnumerable<SubcontractorWorkItemMapping>> GetAllSubcontractorWorkItemMapping()
         {
             var query = @"
-                    SELECT 
-                        m.*, 
-                        s.Name AS SubcontractorName,
-                        w.Name AS WorkItemName
-                    FROM SubcontractorWorkItemsMapping m
-                    LEFT JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
-                    LEFT JOIN Subcontractors s ON m.SubcontractorID = s.SubcontractorID;
+                    SELECT DISTINCT
+    m.WorkItemID,
+    m.SubcontractorID,
+    s.Name AS SubcontractorName,
+    w.Name AS WorkItemName
+FROM SubcontractorWorkItemsMapping m
+INNER JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
+INNER JOIN Subcontractors s ON m.SubcontractorID = s.SubcontractorID
+WHERE s.IsDeleted = 0;
                 ";
 
             return await _connection.QueryAsync<SubcontractorWorkItemMapping>(query);

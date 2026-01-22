@@ -7,7 +7,7 @@ namespace UnibouwAPI.Repositories.Interfaces
         Task<IEnumerable<Rfq>> GetAllRfq();
 
         Task<Rfq?> GetRfqById(Guid id);
-
+        Task<IEnumerable<WorkItem>> GetRfqWorkItemsAsync(Guid rfqId);
         Task<IEnumerable<Rfq>> GetRfqByProjectId(Guid projectId);
 
         Task<(string WorkItemNames, int SubCount)> GetWorkItemInfoByRfqId(Guid rfqId);

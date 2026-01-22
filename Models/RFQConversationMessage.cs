@@ -1,4 +1,5 @@
-﻿using UnibouwAPI.Repositories.Interfaces;
+﻿using Newtonsoft.Json;
+using UnibouwAPI.Repositories.Interfaces;
 
 namespace UnibouwAPI.Models
 {
@@ -22,5 +23,7 @@ namespace UnibouwAPI.Models
         public string Subject { get; set; } = null;
         public string? Tag { get; set; }
 
+        [JsonProperty("attachments")]
+        public List<RFQConversationMessageAttachment> Attachments { get; set; } = new List<RFQConversationMessageAttachment>();
     }
 }
