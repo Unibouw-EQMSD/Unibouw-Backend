@@ -3,8 +3,6 @@ using Microsoft.Data.SqlClient;
 using System.Data;
 using UnibouwAPI.Helpers;
 using UnibouwAPI.Models;
-using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
-
 
 namespace UnibouwAPI.Repositories
 {

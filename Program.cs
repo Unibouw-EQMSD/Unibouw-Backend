@@ -5,6 +5,7 @@ using UnibouwAPI.Repositories;
 using UnibouwAPI.Repositories.Interfaces;
 using UnibouwAPI.Service;
 using Serilog;
+using UnibouwAPI.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -34,6 +35,9 @@ builder.Services.AddScoped<IEmail, EmailRepository>();
 builder.Services.AddScoped<IRfqResponse, RfqResponseRepository>();
 builder.Services.AddScoped<IRFQConversationMessage, RFQConversationMessageRepository>();
 builder.Services.AddScoped<IMsTeamsNotification, MsTeamsNotificationService>();
+builder.Services.AddScoped<IRfqReminderSet, RfqReminderSetRepository>();
+
+builder.Services.AddHostedService<RfqReminderBackgroundService>();
 
 
 // Configure Azure AD authentication with custom Unauthorized/Forbidden responses
