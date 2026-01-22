@@ -9,5 +9,8 @@
         public DateTime ReminderDateTime { get; set; }
 
         public DateTime? SentAt { get; set; }
+
+        // Navigation (not a table column)
+        public RfqReminderSet ReminderSet { get; set; }
     }
 }

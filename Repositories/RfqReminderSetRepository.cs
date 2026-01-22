@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using Microsoft.Data.SqlClient;
 using System.Data;
+using UnibouwAPI.Controllers;
 using UnibouwAPI.Helpers;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
@@ -11,9 +12,11 @@ namespace UnibouwAPI.Repositories
     {
         private readonly IConfiguration _configuration;
         private readonly string _connectionString;
-     
-        public RfqReminderSetRepository(IConfiguration configuration)
+        private readonly ILogger<RfqReminderSetController> _logger;
+
+        public RfqReminderSetRepository(IConfiguration configuration, ILogger<RfqReminderSetController> logger)
         {
+            _logger = logger;
             _configuration = configuration;
             _connectionString = _configuration.GetConnectionString("UnibouwDbConnection");
             if (string.IsNullOrEmpty(_connectionString))
@@ -160,6 +163,99 @@ namespace UnibouwAPI.Repositories
                 throw;
             }
         }
+
+        //--------------------- Auto trigger Reminder ------------------------------------
+        public async Task<IEnumerable<RfqReminderSetSchedule>> GetPendingReminders1(DateTime currentDateTime)
+        {
+            try
+            {
+
+               const string sql = @"
+                    SELECT *
+                    FROM dbo.RfqReminderSetSchedule
+                    WHERE ReminderDateTime = @CurrentDateTime";
+
+
+                using var conn = new SqlConnection(_connectionString);
+                return await conn.QueryAsync<RfqReminderSetSchedule>(
+                    sql,
+                    new { CurrentDateTime = currentDateTime }
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error while fetching pending reminders. CurrentDateTime: ", currentDateTime);
+                throw;
+            }
+        }
+
+        public async Task<IEnumerable<RfqReminderSetSchedule>> GetPendingReminders(DateTime currentDateTime)
+        {
+            try
+            {
+                const string sql = @"
+            SELECT
+                rs.RfqReminderSetScheduleID,
+                rs.RfqReminderSetID,
+                rs.ReminderDateTime,
+                rs.SentAt,
+
+                r.RfqReminderSetID,
+                r.RfqID,
+                r.SubcontractorID,
+                r.DueDate,
+                r.ReminderEmailBody,
+                r.UpdatedBy,
+                r.UpdatedAt         
+            FROM dbo.RfqReminderSetSchedule rs
+            INNER JOIN dbo.RfqReminderSet r
+                ON rs.RfqReminderSetID = r.RfqReminderSetID
+            WHERE rs.ReminderDateTime = @CurrentDateTime";
+
+                using var conn = new SqlConnection(_connectionString);
+
+                var result = await conn.QueryAsync<
+                    RfqReminderSetSchedule,
+                    RfqReminderSet,
+                    RfqReminderSetSchedule>(
+                    sql,
+                    (schedule, reminderSet) =>
+                    {
+                        schedule.ReminderSet = reminderSet;
+                        return schedule;
+                    },
+                    new { CurrentDateTime = currentDateTime },
+                    splitOn: "RfqReminderSetID"
+                );
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Unexpected error while fetching pending reminders. CurrentDateTime: {CurrentDateTime}",
+                    currentDateTime);
+                throw;
+            }
+        }
+
+
+        public async Task MarkReminderSent(Guid reminderSetId, DateTime sentDateTime)
+        {
+            const string sql = @"
+                UPDATE dbo.RfqReminderSetSchedule
+                SET SentAt = @sentDateTime
+                WHERE RfqReminderSetScheduleID = @reminderSetId
+                ";
+
+            using var conn = new SqlConnection(_connectionString);
+            await conn.ExecuteAsync(sql, new
+            {
+                reminderSetId,
+                sentDateTime
+            });
+        }
+
 
     }
 }
