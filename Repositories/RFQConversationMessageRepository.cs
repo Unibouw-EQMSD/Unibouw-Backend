@@ -103,36 +103,21 @@ namespace UnibouwAPI.Repositories
             return message;
         }
 
-        public async Task<IEnumerable<RFQConversationMessage>> GetMessagesByProjectAndSubcontractorAsync(Guid projectId,Guid subcontractorId)
+        public async Task<IEnumerable<RFQConversationMessage>> GetMessagesByProjectAndSubcontractorAsync(Guid projectId, Guid subcontractorId)
         {
-            var sql = @"
-        SELECT 
-            ConversationMessageID,
-            ProjectID,
-            RfqID,
-            WorkItemID,
-            SubcontractorID,
-            ProjectManagerID,
-            SenderType,
-            MessageText,
-            MessageDateTime,
-            Status,
-            CreatedBy,
-            CreatedOn
-        FROM RFQConversationMessage
-        WHERE ProjectID = @ProjectID
-          AND SubcontractorID = @SubcontractorID
-          AND Status = 'Active'
-        ORDER BY MessageDateTime ASC";
-
+            var sql = @"SELECT * FROM RFQConversationMessage WHERE ProjectID = @ProjectID AND SubcontractorID = @SubcontractorID AND Status = 'Active' ORDER BY MessageDateTime ASC";
             using var connection = new SqlConnection(_connectionString);
-            await connection.OpenAsync();
+            var messages = (await connection.QueryAsync<RFQConversationMessage>(sql, new { ProjectID = projectId, SubcontractorID = subcontractorId })).ToList();
 
-            return await connection.QueryAsync<RFQConversationMessage>(sql, new
+            // For each message, load attachments
+            var attachmentSql = @"SELECT * FROM RFQConversationMessageAttachment WHERE ConversationMessageID = @Id AND IsActive = 1";
+            foreach (var msg in messages)
             {
-                ProjectID = projectId,
-                SubcontractorID = subcontractorId
-            });
+                var attachments = await connection.QueryAsync<RFQConversationMessageAttachment>(attachmentSql, new { Id = msg.ConversationMessageID });
+                msg.Attachments = attachments.ToList();
+            }
+
+            return messages;
         }
 
         public async Task<LogConversation> AddLogConversationAsync(LogConversation logConversation)
