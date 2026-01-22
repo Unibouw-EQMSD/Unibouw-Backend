@@ -5,6 +5,7 @@ using UnibouwAPI.Repositories.Interfaces;
 using System.Net;
 using System.Text.RegularExpressions;
 using UnibouwAPI.Helpers;
+using UnibouwAPI.Repositories;
 
 
 namespace UnibouwAPI.Controllers
@@ -425,6 +426,13 @@ namespace UnibouwAPI.Controllers
                     error = ex.Message
                 });
             }
+        }
+
+        [HttpGet("{rfqId}/workitems")]
+        public async Task<IActionResult> GetRfqWorkItems(Guid rfqId)
+        {
+            var workItems = await _repository.GetRfqWorkItemsAsync(rfqId);
+            return Ok(new { data = workItems }); // ✅ Matches frontend { data: WorkItem[] }
         }
 
         [HttpGet("{rfqId}/subcontractor-duedates")]

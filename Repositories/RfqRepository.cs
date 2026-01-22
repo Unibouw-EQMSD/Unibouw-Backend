@@ -83,6 +83,19 @@ WHERE r.RfqID = @Id AND r.IsDeleted = 0";
             return rfqDictionary.Values.FirstOrDefault();
         }
 
+        public async Task<IEnumerable<WorkItem>> GetRfqWorkItemsAsync(Guid rfqId)
+        {
+            const string sql = @"
+SELECT 
+    wi.WorkItemID,
+    wi.Name
+FROM RfqWorkItemMapping rwm
+INNER JOIN WorkItems wi ON rwm.WorkItemID = wi.WorkItemID
+WHERE rwm.RfqID = @RfqId
+  AND wi.IsDeleted = 0"; 
+     
+    return await _connection.QueryAsync<WorkItem>(sql, new { RfqId = rfqId });
+        }
         public async Task<IEnumerable<Rfq>> GetRfqByProjectId(Guid projectId)
         {
             var sql = @"
