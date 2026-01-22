@@ -121,12 +121,15 @@ namespace UnibouwAPI.Controllers
 
         [HttpPost("create-simple")]
         [Authorize]
-        public async Task<IActionResult> CreateRfqSimple([FromBody] Rfq rfq, [FromQuery] List<Guid> subcontractorIds, [FromQuery] List<Guid> workItems, [FromQuery] bool sendEmail = true)
+        public async Task<IActionResult> CreateRfqSimple(
+    [FromBody] Rfq rfq,
+    [FromQuery] List<Guid> subcontractorIds,
+    [FromQuery] List<Guid> workItems,
+    [FromQuery] bool sendEmail = true)
         {
             try
             {
                 var userEmail = User.Identity?.Name;
-
                 if (string.IsNullOrWhiteSpace(userEmail))
                     return Unauthorized(new { message = "Unable to determine logged-in user email." });
 
@@ -139,32 +142,39 @@ namespace UnibouwAPI.Controllers
                 if (rfq.SubcontractorDueDates == null || !rfq.SubcontractorDueDates.Any())
                     return BadRequest(new { message = "Subcontractor due dates are required." });
 
-                // ✅ Earliest subcontractor due date → main RFQ due date
-                var mainDueDate = rfq.SubcontractorDueDates
-                    .Min(x => x.DueDate!.Value)
-                    .Date;
+                if (!rfq.GlobalDueDate.HasValue)
+                {
+                    return BadRequest(new { message = "Global due date is required." });
+                }
 
-                rfq.DueDate = mainDueDate;
-                rfq.DeadLine = mainDueDate;
-                rfq.GlobalDueDate = mainDueDate;
+                // 🔹 RFQ dates come ONLY from GlobalDueDate
+                rfq.DueDate = rfq.GlobalDueDate.Value.Date;
+                rfq.DeadLine = rfq.GlobalDueDate.Value.Date;
+
                 rfq.RfqSent = sendEmail ? 1 : 0;
                 rfq.Status = sendEmail ? "Sent" : "Draft";
                 rfq.CreatedBy = userEmail;
+                rfq.CreatedOn = DateTime.UtcNow;
 
                 // 1️⃣ Create RFQ
                 var rfqId = await _repository.CreateRfqAsync(rfq, subcontractorIds);
 
                 // 2️⃣ Insert work items
                 if (workItems?.Any() == true)
+                {
                     await _repository.InsertRfqWorkItemsAsync(rfqId, workItems);
+                }
 
-                // 3️⃣ Save subcontractor due dates
+                // 3️⃣ Save subcontractor due dates (INDIVIDUAL — DO NOT TOUCH)
                 foreach (var sub in rfq.SubcontractorDueDates)
                 {
+                    if (sub.DueDate == null)
+                        continue;
+
                     await _repository.SaveRfqSubcontractorDueDateAsync(
                         rfqId,
                         sub.SubcontractorID,
-                        sub.DueDate!.Value.Date
+                        sub.DueDate.Value.Date
                     );
                 }
 
@@ -184,7 +194,6 @@ namespace UnibouwAPI.Controllers
 
                     var sentEmails = await _emailRepository.SendRfqEmailAsync(emailRequest);
 
-                    // ❗ Conversation entries
                     foreach (var email in sentEmails)
                     {
                         await _conversationRepo.AddRFQConversationMessageAsync(
@@ -195,7 +204,7 @@ namespace UnibouwAPI.Controllers
                                 SubcontractorID = email.SubcontractorIDs.First(),
                                 SenderType = "PM",
                                 MessageText = HtmlToPlainText(email.Body),
-                                MessageDateTime = amsterdamNow,
+                                MessageDateTime = DateTime.UtcNow,
                                 CreatedBy = userEmail
                             }
                         );
@@ -210,7 +219,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex,"An error occurred while processing the RFQ.");
+                _logger.LogError(ex, "An error occurred while processing the RFQ.");
                 return StatusCode(StatusCodes.Status500InternalServerError, new
                 {
                     message = "An error occurred while processing the RFQ.",
@@ -218,7 +227,6 @@ namespace UnibouwAPI.Controllers
                 });
             }
         }
-
         private static string HtmlToPlainText(string html)
             {
                 if (string.IsNullOrWhiteSpace(html))
