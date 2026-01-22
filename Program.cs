@@ -34,6 +34,7 @@ builder.Services.AddScoped<IEmail, EmailRepository>();
 builder.Services.AddScoped<IRfqResponse, RfqResponseRepository>();
 builder.Services.AddScoped<IRFQConversationMessage, RFQConversationMessageRepository>();
 builder.Services.AddScoped<IMsTeamsNotification, MsTeamsNotificationService>();
+builder.Services.AddScoped<IRfqReminderSet, RfqReminderSetRepository>();
 
 
 // Configure Azure AD authentication with custom Unauthorized/Forbidden responses
