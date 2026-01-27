@@ -148,10 +148,7 @@ namespace UnibouwAPI.Repositories
             // Set system values
             logConversation.LogConversationID = Guid.NewGuid();
             logConversation.CreatedOn = amsterdamNow;
-            logConversation.MessageDateTime =
-    logConversation.MessageDateTime == null
-        ? amsterdamNow
-        : logConversation.MessageDateTime;
+            logConversation.MessageDateTime =amsterdamNow;
             logConversation.RfqID = null;
 
             var sql = @"
