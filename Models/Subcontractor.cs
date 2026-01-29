@@ -9,12 +9,9 @@ public partial class Subcontractor
     //[System.Text.Json.Serialization.JsonIgnore]
     [SwaggerSchema(ReadOnly = true)]
     public Guid SubcontractorID { get; set; }
-    public string? ERP_ID { get; set; }
     public string? Name { get; set; }
     public decimal? Rating { get; set; }
-    public string? EmailID { get; set; }
-    public string? PhoneNumber1 { get; set; }
-    public string? PhoneNumber2 { get; set; }
+    public string? Email { get; set; }
     public string? Location { get; set; }
     public string? Country { get; set; }
     public string? OfficeAddress { get; set; }
@@ -33,6 +30,7 @@ public partial class Subcontractor
     [DefaultValue(null)]
     public string? DeletedBy { get; set; } = null;
     public bool IsDeleted { get; set; } = false; //Default false — appears in Swagger as false automatically
+    public int? RemindersSent { get; set; } = null;
 
     // Navigation
     // [JsonIgnore]

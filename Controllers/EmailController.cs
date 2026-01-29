@@ -73,7 +73,7 @@ namespace UnibouwAPI.Controllers
 
                 var result = await _emailRepository.SendReminderEmailAsync(
                     sub.SubcontractorID,
-                    sub.EmailID,
+                    sub.Email,
                     sub.Name,
                     req.RfqID,
                     req.EmailBody
@@ -114,7 +114,7 @@ namespace UnibouwAPI.Controllers
 
                 // ✅ Send mail using fetched values
                 var result = await _emailRepository.SendMailAsync(
-                    toEmail: sub.EmailID,
+                    toEmail: sub.Email,
                     subject: req.Subject,
                     body: req.Body,
                     name: sub.Name,

@@ -2,7 +2,7 @@
 {
     public class Customer
     {
-        public Guid CustomerID { get; set; }
+        public long CustomerID { get; set; }
         public string? CustomerName { get; set; }
     }
 }

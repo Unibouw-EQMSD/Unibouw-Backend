@@ -165,52 +165,28 @@ namespace UnibouwAPI.Repositories
         }
 
         //--------------------- Auto trigger Reminder ------------------------------------
-        public async Task<IEnumerable<RfqReminderSetSchedule>> GetPendingReminders1(DateTime currentDateTime)
-        {
-            try
-            {
-
-               const string sql = @"
-                    SELECT *
-                    FROM dbo.RfqReminderSetSchedule
-                    WHERE ReminderDateTime = @CurrentDateTime";
-
-
-                using var conn = new SqlConnection(_connectionString);
-                return await conn.QueryAsync<RfqReminderSetSchedule>(
-                    sql,
-                    new { CurrentDateTime = currentDateTime }
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error while fetching pending reminders. CurrentDateTime: ", currentDateTime);
-                throw;
-            }
-        }
-
         public async Task<IEnumerable<RfqReminderSetSchedule>> GetPendingReminders(DateTime currentDateTime)
         {
             try
             {
                 const string sql = @"
-            SELECT
-                rs.RfqReminderSetScheduleID,
-                rs.RfqReminderSetID,
-                rs.ReminderDateTime,
-                rs.SentAt,
+                    SELECT
+                        rs.RfqReminderSetScheduleID,
+                        rs.RfqReminderSetID,
+                        rs.ReminderDateTime,
+                        rs.SentAt,
 
-                r.RfqReminderSetID,
-                r.RfqID,
-                r.SubcontractorID,
-                r.DueDate,
-                r.ReminderEmailBody,
-                r.UpdatedBy,
-                r.UpdatedAt         
-            FROM dbo.RfqReminderSetSchedule rs
-            INNER JOIN dbo.RfqReminderSet r
-                ON rs.RfqReminderSetID = r.RfqReminderSetID
-            WHERE rs.ReminderDateTime = @CurrentDateTime";
+                        r.RfqReminderSetID,
+                        r.RfqID,
+                        r.SubcontractorID,
+                        r.DueDate,
+                        r.ReminderEmailBody,
+                        r.UpdatedBy,
+                        r.UpdatedAt         
+                    FROM dbo.RfqReminderSetSchedule rs
+                    INNER JOIN dbo.RfqReminderSet r
+                        ON rs.RfqReminderSetID = r.RfqReminderSetID
+                    WHERE rs.ReminderDateTime = @CurrentDateTime";
 
                 using var conn = new SqlConnection(_connectionString);
 

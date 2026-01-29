@@ -7,7 +7,7 @@
         public string? Company { get; set; }
         public string? Number { get; set; }
         public string? Name { get; set; }
-        public Guid? CustomerID { get; set; }
+        public long? CustomerID { get; set; }
         public Guid? WorkPlannerID { get; set; }
         public Guid? ProjectManagerID { get; set; }
         public Guid? PersonID { get; set; }

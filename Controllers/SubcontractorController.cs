@@ -163,7 +163,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (InvalidOperationException ex) when (ex.Message.Contains("email", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning(ex, "Duplicate email detected for subcontractor: {Email}", subcontractor.EmailID);
+                _logger.LogWarning(ex, "Duplicate email detected for subcontractor: {Email}", subcontractor.Email);
                 return Conflict(new
                 {
                     Field = "email",
@@ -191,6 +191,76 @@ namespace UnibouwAPI.Controllers
                 });
             }
         }
+
+        [HttpGet("{id}/reminders-sent")]
+        [Authorize]
+        public async Task<IActionResult> GetSubcontractorRemindersSent(Guid id)
+        {
+            try
+            {
+                if (id == Guid.Empty)
+                    return BadRequest(new { message = "Invalid subcontractor id." });
+
+                var subcontractor = await _repository.GetSubcontractorRemindersSent(id);
+
+                if (subcontractor == null)
+                {
+                    return NotFound(new
+                    {
+                        message = $"No subcontractor found for ID: {id}.",
+                        data = (int?)null
+                    });
+                }
+
+                return Ok(new
+                {
+                    SubcontractorID = id,
+                    RemindersSent = subcontractor.RemindersSent
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error while fetching RemindersSent for Subcontractor ID: {Id}", id);
+                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
+            }
+        }
+
+        [HttpPost("{id}/reminders-sent/{reminderSent}")]
+        [Authorize]
+        public async Task<IActionResult> UpdateSubcontractorRemindersSent(Guid id, int reminderSent)
+        {
+            try
+            {
+                if (id == Guid.Empty)
+                    return BadRequest(new { message = "Invalid subcontractor id." });
+
+                if (reminderSent < 0)
+                    return BadRequest(new { message = "ReminderSent value cannot be negative." });
+
+                var result = await _repository.UpdateSubcontractorRemindersSent(id, reminderSent);
+
+                if (result == 0)
+                {
+                    return NotFound(new
+                    {
+                        message = "Subcontractor not found or already deleted."
+                    });
+                }
+
+                return Ok(new
+                {
+                    message = "RemindersSent updated successfully.",
+                    SubcontractorID = id,
+                    RemindersSent = reminderSent
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error while updating RemindersSent for Subcontractor ID: {Id}", id);
+                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
+            }
+        }
+
 
     }
 }

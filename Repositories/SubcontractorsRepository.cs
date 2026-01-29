@@ -109,7 +109,7 @@ namespace UnibouwAPI.Repositories
 
                         int existingEmailCount = await connection.ExecuteScalarAsync<int>(
                             duplicateEmailQuery,
-                            new { subcontractor.EmailID },
+                            new { subcontractor.Email },
                             transaction
                         );
 
@@ -217,6 +217,72 @@ namespace UnibouwAPI.Repositories
                 }
             }
         }
+
+        public async Task<Subcontractor> GetSubcontractorRemindersSent(Guid id)
+        {
+            var query = @"SELECT RemindersSent FROM Subcontractors WHERE IsDeleted = 0";
+
+            return await _connection.QueryFirstOrDefaultAsync<Subcontractor>(query, new { Id = id });
+        }
+
+        public async Task<int> UpdateSubcontractorRemindersSent(Guid id, int reminderSent)
+        {
+            // Check if subcontractor is non-deleted subcontractor
+            var subcontractor = await _connection.QueryFirstOrDefaultAsync<WorkItem>(
+                "SELECT * FROM Subcontractors WHERE SubcontractorID = @Id AND IsDeleted = 0",
+                new { Id = id }
+            );
+
+            // Return 0 if not found (either inactive or deleted)
+            if (subcontractor == null)
+                return 0;
+
+            var query = @"
+            UPDATE Subcontractors SET
+            RemindersSent = @RemindersSent WHERE SubcontractorID = @Id";
+
+            var parameters = new
+            {
+                Id = id,
+                RemindersSent = reminderSent,
+            };
+
+            return await _connection.ExecuteAsync(query, parameters);
+        }
+
+        public async Task<int> DeleteSubcontractor(Guid id)
+        {
+            // Check if subcontractor exists and is not already deleted
+            var subcontractor = await _connection.QueryFirstOrDefaultAsync<Subcontractor>(
+                @"SELECT * 
+          FROM Subcontractors 
+          WHERE SubcontractorID = @Id AND IsDeleted = 0",
+                new { Id = id }
+            );
+
+            // Return 0 if not found or already deleted
+            if (subcontractor == null)
+                return 0;
+
+            var query = @"
+        UPDATE Subcontractors
+        SET
+            IsDeleted = 1,
+            DeletedOn = @DeletedOn,
+            DeletedBy = @DeletedBy
+        WHERE SubcontractorID = @Id";
+
+            var parameters = new
+            {
+                Id = id,
+                DeletedOn = amsterdamNow,
+                DeletedBy = "System auto-deleted at the 3rd reminder."
+            };
+
+            return await _connection.ExecuteAsync(query, parameters);
+        }
+
+
     }
 }
 

@@ -5,6 +5,6 @@ namespace UnibouwAPI.Models;
 
 public partial class WorkItemCategoryType
 {
-    public Guid CategoryID { get; set; }
+    public long CategoryID { get; set; }
     public string? CategoryName { get; set; }
 }

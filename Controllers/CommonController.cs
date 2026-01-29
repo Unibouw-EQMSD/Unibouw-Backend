@@ -16,7 +16,6 @@ namespace UnibouwAPI.Controllers
         private readonly ILogger<CommonController> _logger;
         DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
 
-
         public CommonController(ICommon repositoryCommon, ILogger<CommonController> logger)
         {
             _repositoryCommon = repositoryCommon;

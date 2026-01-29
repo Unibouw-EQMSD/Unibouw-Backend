@@ -8,5 +8,9 @@ namespace UnibouwAPI.Repositories.Interfaces
         Task<Subcontractor?> GetSubcontractorById(Guid id);
         Task<int> UpdateSubcontractorIsActive(Guid id, bool isActive, string modifiedBy);
         Task<bool> CreateSubcontractorWithMappings(Subcontractor subcontractor);
+
+        Task<Subcontractor> GetSubcontractorRemindersSent(Guid id);
+        Task<int> UpdateSubcontractorRemindersSent(Guid id, int reminderSent);
+        Task<int> DeleteSubcontractor(Guid id);
     }
 }
