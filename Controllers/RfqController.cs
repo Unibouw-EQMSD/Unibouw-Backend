@@ -122,11 +122,7 @@ namespace UnibouwAPI.Controllers
 
         [HttpPost("create-simple")]
         [Authorize]
-        public async Task<IActionResult> CreateRfqSimple(
-    [FromBody] Rfq rfq,
-    [FromQuery] List<Guid> subcontractorIds,
-    [FromQuery] List<Guid> workItems,
-    [FromQuery] bool sendEmail = true)
+        public async Task<IActionResult> CreateRfqSimple([FromBody] Rfq rfq, [FromQuery] List<Guid> subcontractorIds, [FromQuery] List<Guid> workItems, [FromQuery] bool sendEmail = true)
         {
             try
             {
@@ -150,7 +146,6 @@ namespace UnibouwAPI.Controllers
 
                 // 🔹 RFQ dates come ONLY from GlobalDueDate
                 rfq.DueDate = rfq.GlobalDueDate.Value.Date;
-                rfq.DeadLine = rfq.GlobalDueDate.Value.Date;
 
                 rfq.RfqSent = sendEmail ? 1 : 0;
                 rfq.Status = sendEmail ? "Sent" : "Draft";
@@ -189,8 +184,8 @@ namespace UnibouwAPI.Controllers
                         RfqID = rfqId,
                         SubcontractorIDs = subcontractorIds,
                         WorkItems = workItems ?? new List<Guid>(),
-                        Subject = rfq.CustomerNote ?? "RFQ Invitation - Unibouw",
-                        Body = rfq.CustomerNote
+                        Subject = "RFQ Invitation - Unibouw",
+                        Body = rfq.CustomNote
                     };
 
                     var sentEmails = await _emailRepository.SendRfqEmailAsync(emailRequest);
@@ -201,7 +196,7 @@ namespace UnibouwAPI.Controllers
                             new RFQConversationMessage
                             {
                                 ProjectID = rfq.ProjectID!.Value,
-                                RfqID = rfqId,
+                                //RfqID = rfqId,
                                 SubcontractorID = email.SubcontractorIDs.First(),
                                 SenderType = "PM",
                                 MessageText = HtmlToPlainText(email.Body),
@@ -306,7 +301,7 @@ namespace UnibouwAPI.Controllers
                         SubcontractorIDs = subcontractorIds ?? new(),
                         WorkItems = workItems ?? new(),
                         Subject = "RFQ Invitation - Unibouw",
-                        Body = rfq.CustomerNote
+                        Body = ""
                     });
                 }
 

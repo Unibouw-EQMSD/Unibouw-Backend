@@ -24,16 +24,10 @@ namespace UnibouwAPI.Repositories.Interfaces
         Task<IEnumerable<Customer>> GetAllCustomer();
         Task<Customer?> GetCustomerById(Guid id);
 
-        Task<IEnumerable<WorkPlanner>> GetAllWorkPlanner();
-        Task<WorkPlanner?> GetWorkPlannerById(Guid id);
-
-        Task<IEnumerable<ProjectManager>> GetAllProjectManager();
-        Task<ProjectManager?> GetProjectManagerById(Guid id);
-
         Task<IEnumerable<RfqResponseStatus>> GetAllRfqResponseStatus();
         Task<RfqResponseStatus?> GetRfqResponseStatusById(Guid id);
 
-        Task<IEnumerable<RfqGolbalReminderSet>> GetRfqGolbalReminderSet();
-        Task<int> UpdateRfqGolbalReminderSet(RfqGolbalReminderSet reminder);
+        Task<IEnumerable<RfqGlobalReminder>> GetRfqGlobalReminder();
+        Task<int> SaveRfqGlobalReminder(RfqGlobalReminder reminder);
     }
 }

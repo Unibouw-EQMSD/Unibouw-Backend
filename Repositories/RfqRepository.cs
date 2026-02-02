@@ -31,11 +31,9 @@ namespace UnibouwAPI.Repositories
             r.*, 
             c.CustomerName,
             p.Name AS ProjectName,
-            rs.RfqResponseStatusName               
         FROM Rfq r
         LEFT JOIN Customers c ON r.CustomerID = c.CustomerID
         LEFT JOIN Projects p ON r.ProjectID = p.ProjectID
-        LEFT JOIN RfqResponseStatus rs ON r.RfqResponseID = rs.RfqResponseID
         WHERE r.IsDeleted = 0";
 
             return await _connection.QueryAsync<Rfq>(query);
@@ -47,13 +45,11 @@ SELECT
     r.*,
     c.CustomerName,
     p.Name AS ProjectName,
-    rs.RfqResponseStatusName,
     wi.WorkItemID,
     wi.Name AS WorkItemName
 FROM Rfq r
 LEFT JOIN Customers c ON r.CustomerID = c.CustomerID
 LEFT JOIN Projects p ON r.ProjectID = p.ProjectID
-LEFT JOIN RfqResponseStatus rs ON r.RfqResponseID = rs.RfqResponseID
 LEFT JOIN RfqWorkItemMapping rw ON r.RfqID = rw.RfqID
 LEFT JOIN WorkItems wi ON rw.WorkItemID = wi.WorkItemID
 WHERE r.RfqID = @Id AND r.IsDeleted = 0";
@@ -103,13 +99,11 @@ SELECT
     r.*,
     c.CustomerName,
     p.Name AS ProjectName,
-    rs.RfqResponseStatusName,
     wi.WorkItemID,
     wi.Name AS WorkItemName
 FROM Rfq r
 LEFT JOIN Customers c ON r.CustomerID = c.CustomerID
 LEFT JOIN Projects p ON r.ProjectID = p.ProjectID
-LEFT JOIN RfqResponseStatus rs ON r.RfqResponseID = rs.RfqResponseID
 LEFT JOIN RfqWorkItemMapping rw ON r.RfqID = rw.RfqID
 LEFT JOIN WorkItems wi ON rw.WorkItemID = wi.WorkItemID
 WHERE p.ProjectID = @projectId
@@ -165,10 +159,7 @@ ORDER BY r.CreatedOn DESC";
 
             return rowsAffected > 0;
         }
-        public async Task<Guid> CreateRfqAsync(
-      Rfq rfq,
-      List<Guid> subcontractorIds
-  )
+        public async Task<Guid> CreateRfqAsync(Rfq rfq, List<Guid> subcontractorIds)
         {
             rfq.RfqID = Guid.NewGuid();
             rfq.CreatedOn = amsterdamNow;
@@ -182,10 +173,10 @@ ORDER BY r.CreatedOn DESC";
                 .Min(x => x.DueDate!.Value.Date);
 
             rfq.DueDate = mainDueDate;
-            rfq.DeadLine = mainDueDate;
 
             // ✅ 2️⃣ Respect frontend GlobalDueDate
             rfq.GlobalDueDate = rfq.GlobalDueDate?.Date ?? mainDueDate;
+            
 
             await using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync();
@@ -194,19 +185,34 @@ ORDER BY r.CreatedOn DESC";
             try
             {
                 // ✅ Insert RFQ
+                /*                const string insertRfq = @"
+                INSERT INTO Rfq
+                (
+                    RfqID, SentDate, DueDate, RfqSent, QuoteReceived,
+                    CustomerID, ProjectID, CustomerNote, DeadLine,
+                    CreatedOn, CreatedBy, IsDeleted, Status, GlobalDueDate
+                )
+                VALUES
+                (
+                    @RfqID, @SentDate, @DueDate, @RfqSent, @QuoteReceived,
+                    @CustomerID, @ProjectID, @CustomerNote, @DeadLine,
+                    @CreatedOn, @CreatedBy, @IsDeleted, @Status, @GlobalDueDate
+                )";*/
+
                 const string insertRfq = @"
-INSERT INTO Rfq
-(
-    RfqID, SentDate, DueDate, RfqSent, QuoteReceived,
-    CustomerID, ProjectID, RfqResponseID, CustomerNote, DeadLine,
-    CreatedOn, CreatedBy, IsDeleted, Status, GlobalDueDate
-)
-VALUES
-(
-    @RfqID, @SentDate, @DueDate, @RfqSent, @QuoteReceived,
-    @CustomerID, @ProjectID, @RfqResponseID, @CustomerNote, @DeadLine,
-    @CreatedOn, @CreatedBy, @IsDeleted, @Status, @GlobalDueDate
-)";
+                        INSERT INTO Rfq
+                        (
+                            RfqID, SentDate, DueDate, GlobalDueDate, RfqSent, QuoteReceived,
+                            CustomerID, ProjectID, Status, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy,
+                            DeletedOn, DeletedBy, IsDeleted
+                        )
+                        VALUES
+                        (
+                            @RfqID, @SentDate, @DueDate, @GlobalDueDate, @RfqSent, @QuoteReceived,
+                            @CustomerID, @ProjectID, @Status, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy,
+                            @DeletedOn, @DeletedBy, @IsDeleted
+                        )";
+
                 await connection.ExecuteAsync(insertRfq, rfq, transaction);
 
                 // ✅ Insert subcontractor-specific due dates
@@ -437,10 +443,9 @@ VALUES (@RfqID, @WorkItemID);";
     UPDATE Rfq
     SET 
         DueDate = @DueDate,
-        DeadLine = @DeadLine,
         Status = @Status,
         RfqSent = @RfqSent,
-        CustomerNote = @CustomerNote,
+        CustomNote = @CustomNote,
         ModifiedBy = @ModifiedBy,
         ModifiedOn = GETUTCDATE(),
         SentDate = @SentDate  

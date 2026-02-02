@@ -66,7 +66,7 @@ namespace UnibouwAPI.Repositories
         private async Task<Guid> GetResponseIdAsync(SqlConnection connection, SqlTransaction tx, string status)
         {
             var id = await connection.ExecuteScalarAsync<Guid?>(@"
-                    SELECT RfqResponseID 
+                    SELECT RfqResponseStatusID 
                     FROM RfqResponseStatus
                     WHERE RfqResponseStatusName = @Status",
                 new { Status = status }, tx);
@@ -148,7 +148,7 @@ namespace UnibouwAPI.Repositories
     RfqID,
     SubcontractorID,
     WorkItemID,
-    RfqResponseID,
+    RfqResponseStatusID,
     CreatedOn
 )
 VALUES
@@ -172,7 +172,7 @@ VALUES
                 {
                     await connection.ExecuteAsync(@"
                         UPDATE RfqSubcontractorResponse
-                        SET RfqResponseID = @RespID,
+                        SET RfqResponseStatusID = @RespID,
                             ModifiedOn = GETUTCDATE()
                         WHERE RfqSubcontractorResponseID = @ID;",
                     new
@@ -210,35 +210,45 @@ VALUES
                 }
 
                 /* ---------------- PROJECT ---------------- */
+                /*const string projectSql = @"
+                    SELECT 
+                        p.ProjectID,
+                        p.Name,
+                        p.Number,
+                        p.Company,
+                        p.StartDate,
+                        p.CompletionDate,
+                        p.Status,
+                        p.SharepointURL,
+                        p.CustomerID,
+                        c.CustomerName
+                    FROM Projects p
+                    INNER JOIN Rfq r 
+                        ON r.ProjectID = p.ProjectID
+                    LEFT JOIN Customers c
+                        ON c.CustomerID = p.CustomerID
+                    WHERE r.RfqID = @RfqID";*/
+
                 const string projectSql = @"
-    SELECT 
-    p.ProjectID,
-    p.Name,
-    p.Number,
-    p.Company,
-    p.StartDate,
-    p.CompletionDate,
-    p.Status,
-    p.SharepointURL,
-
-    p.CustomerID,
-    c.CustomerName,
-
-    p.ProjectManagerID,
-    pm.ProjectManagerName,
-    pm.Email AS ProjectManagerEmail
-
-FROM Projects p
-INNER JOIN Rfq r 
-    ON r.ProjectID = p.ProjectID
-
-LEFT JOIN Customers c
-    ON c.CustomerID = p.CustomerID
-
-LEFT JOIN ProjectManagers pm
-    ON pm.ProjectManagerID = p.ProjectManagerID
-
-WHERE r.RfqID = @RfqID";
+                        SELECT 
+                            p.*,
+                            c.CustomerName,
+                            ppm.PersonID,
+                            per.Name AS PersonName,
+                            per.Email AS PersonEmail,
+                            role.RoleName AS PersonRole
+                        FROM Projects p
+                        INNER JOIN Rfq r 
+                            ON r.ProjectID = p.ProjectID
+                        LEFT JOIN Customers c
+                            ON c.CustomerID = p.CustomerID
+                        LEFT JOIN PersonProjectMapping ppm
+                            ON ppm.ProjectID = p.ProjectID
+                        LEFT JOIN Persons per
+                            ON per.PersonID = ppm.PersonID
+                        LEFT JOIN Roles role
+                            ON role.RoleID = ppm.RoleID
+                        WHERE r.RfqID = @RfqID";
 
                 var project = await conn.QueryFirstOrDefaultAsync<Project>(
                     projectSql,
@@ -368,29 +378,32 @@ WHERE r.RfqID = @RfqID";
                 await file.CopyToAsync(ms);
                 fileBytes = ms.ToArray();
             }
-
+            var documentId = Guid.NewGuid();
             // 3️⃣ Insert quote document
             await conn.ExecuteAsync(@"
-        INSERT INTO RfqResponseDocuments
-        (
-            RfqID,
-            SubcontractorID,
-            FileName,
-            FileData,
-            UploadedOn,
-            IsDeleted
-        )
-        VALUES
-        (
-            @rfqId,
-            @subId,
-            @fileName,
-            @fileData,
-            GETDATE(),
-            0
-        );",
+                INSERT INTO RfqResponseDocuments
+                (
+                    RfqResponseDocumentID,
+                    RfqID,
+                    SubcontractorID,
+                    FileName,
+                    FileData,
+                    UploadedOn,
+                    IsDeleted
+                )
+                VALUES
+                (
+                    @documentId,
+                    @rfqId,
+                    @subId,
+                    @fileName,
+                    @fileData,
+                    GETDATE(),
+                    0
+                );",
                 new
                 {
+                    documentId,
                     rfqId,
                     subId = subcontractorId,
                     fileName = file.FileName,
@@ -410,7 +423,7 @@ WHERE r.RfqID = @RfqID";
         UPDATE RfqSubcontractorResponse
         SET
             TotalQuoteAmount = @amount,
-            Comment = @comment,
+            FileComment = @fileComment,
             ModifiedOn = GETDATE(),
             SubmissionCount = ISNULL(SubmissionCount, 0) + 1
         WHERE RfqID = @rfqId
@@ -419,7 +432,7 @@ WHERE r.RfqID = @RfqID";
                 new
                 {
                     amount = totalAmount,
-                    comment,
+                    fileComment = comment,
                     rfqId,
                     subId = subcontractorId,
                     workItemId
@@ -434,61 +447,61 @@ WHERE r.RfqID = @RfqID";
             using var conn = new SqlConnection(_connectionString);
 
             var sql = @"
-WITH LatestResponse AS (
-    SELECT 
-        r.*,
-        ROW_NUMBER() OVER (
-            PARTITION BY r.RfqID, r.SubcontractorID, r.WorkItemID
-            ORDER BY ISNULL(r.ModifiedOn, r.CreatedOn) DESC
-        ) AS rn
-    FROM RfqSubcontractorResponse r
-),
-DocumentFlag AS (
-    SELECT
-        RfqID,
-        SubcontractorID,
-        MAX(RfqResponseDocumentID) AS DocumentId
-    FROM RfqResponseDocuments
-    WHERE IsDeleted = 0
-    GROUP BY RfqID, SubcontractorID
-)
-SELECT 
-    wi.WorkItemID,
-    wi.Name AS WorkItemName,
-    rfq.RfqID,
-    rfq.RfqNumber,
-    rfq.CreatedOn AS RfqCreatedDate,
-    rfq.DueDate,
+                    WITH LatestResponse AS (
+                        SELECT 
+                            r.*,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY r.RfqID, r.SubcontractorID, r.WorkItemID
+                                ORDER BY ISNULL(r.ModifiedOn, r.CreatedOn) DESC
+                            ) AS rn
+                        FROM RfqSubcontractorResponse r
+                    ),
+                    DocumentFlag AS (
+                        SELECT
+                            RfqID,
+                            SubcontractorID,
+                            MAX(RfqResponseDocumentID) AS DocumentId
+                        FROM RfqResponseDocuments
+                        WHERE IsDeleted = 0
+                        GROUP BY RfqID, SubcontractorID
+                    )
+                    SELECT 
+                        wi.WorkItemID,
+                        wi.Name AS WorkItemName,
+                        rfq.RfqID,
+                        rfq.RfqNumber,
+                        rfq.CreatedOn AS RfqCreatedDate,
+                        rfq.DueDate,
 
-    s.SubcontractorID,
-    s.Name AS SubcontractorName,
-    ISNULL(s.Rating,0) AS Rating,
+                        s.SubcontractorID,
+                        s.Name AS SubcontractorName,
+                        ISNULL(s.Rating,0) AS Rating,
 
-    rs.RfqResponseStatusName AS StatusName,
-    lr.CreatedOn AS ResponseDate,
-    lr.Viewed,
-    lr.TotalQuoteAmount,
-df.DocumentId AS DocumentId,
+                        rs.RfqResponseStatusName AS StatusName,
+                        lr.CreatedOn AS ResponseDate,
+                        lr.Viewed,
+                        lr.TotalQuoteAmount,
+                    df.DocumentId AS DocumentId,
 
-CASE WHEN df.DocumentId IS NULL THEN 0 ELSE 1 END AS HasDocument
-FROM Projects p
-INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
-INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
-INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
-INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = rfq.RfqID
-INNER JOIN Subcontractors s ON s.SubcontractorID = rsm.SubcontractorID
-LEFT JOIN LatestResponse lr
-    ON lr.RfqID = rfq.RfqID
-   AND lr.SubcontractorID = s.SubcontractorID
-   AND lr.WorkItemID = wi.WorkItemID
-   AND lr.rn = 1
-LEFT JOIN RfqResponseStatus rs ON rs.RfqResponseID = lr.RfqResponseID
-LEFT JOIN DocumentFlag df
-    ON df.RfqID = rfq.RfqID
-   AND df.SubcontractorID = s.SubcontractorID
-WHERE p.ProjectID = @ProjectID
-ORDER BY wi.Name, s.Name;
-";
+                    CASE WHEN df.DocumentId IS NULL THEN 0 ELSE 1 END AS HasDocument
+                    FROM Projects p
+                    INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
+                    INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
+                    INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
+                    INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = rfq.RfqID
+                    INNER JOIN Subcontractors s ON s.SubcontractorID = rsm.SubcontractorID
+                    LEFT JOIN LatestResponse lr
+                        ON lr.RfqID = rfq.RfqID
+                       AND lr.SubcontractorID = s.SubcontractorID
+                       AND lr.WorkItemID = wi.WorkItemID
+                       AND lr.rn = 1
+                    LEFT JOIN RfqResponseStatus rs ON rs.RfqResponseStatusID = lr.RfqResponseStatusID
+                    LEFT JOIN DocumentFlag df
+                        ON df.RfqID = rfq.RfqID
+                       AND df.SubcontractorID = s.SubcontractorID
+                    WHERE p.ProjectID = @ProjectID
+                    ORDER BY wi.Name, s.Name;
+                    ";
 
             var rows = (await conn.QueryAsync(sql, new { ProjectID = projectId })).ToList();
             if (!rows.Any()) return new List<object>();
@@ -594,7 +607,7 @@ LEFT JOIN LatestResponse lr
    AND lr.SubcontractorID = s.SubcontractorID
    AND lr.WorkItemID = wi.WorkItemID
    AND lr.rn = 1
-LEFT JOIN RfqResponseStatus rs ON rs.RfqResponseID = lr.RfqResponseID
+LEFT JOIN RfqResponseStatus rs ON rs.RfqResponseStatusID = lr.RfqResponseStatusID
 WHERE p.ProjectID = @ProjectID
 ORDER BY wi.Name, s.Name;
 ";
@@ -666,7 +679,7 @@ ORDER BY wi.Name, s.Name;
                                 RfqID,
                                 SubcontractorID,
                                 WorkItemID,
-                                RfqResponseID,
+                                RfqResponseStatusID,
                                 Viewed,
                                 ViewedOn,
                                 CreatedOn
@@ -755,13 +768,13 @@ ORDER BY wi.Name, s.Name;
             const string sql = @"
         WITH AllMessages AS (
             SELECT SubcontractorID, MessageDateTime
-            FROM dbo.LogConversation
+            FROM dbo.RfqLogConversation
             WHERE ProjectID = @ProjectID
 
             UNION ALL
 
             SELECT SubcontractorID, MessageDateTime
-            FROM dbo.RFQConversationMessage
+            FROM dbo.RfqConversationMessage
             WHERE ProjectID = @ProjectID
         ),
         LatestMessages AS (

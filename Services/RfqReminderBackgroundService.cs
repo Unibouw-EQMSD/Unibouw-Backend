@@ -81,7 +81,7 @@ namespace UnibouwAPI.Services
 
             using var scope = _scopeFactory.CreateScope();
 
-            var reminderRepo = scope.ServiceProvider.GetRequiredService<IRfqReminderSet>();
+            var reminderRepo = scope.ServiceProvider.GetRequiredService<IRfqReminder>();
             var subRepo = scope.ServiceProvider.GetRequiredService<ISubcontractors>();
             var emailRepo = scope.ServiceProvider.GetRequiredService<IEmail>();
 
@@ -100,7 +100,7 @@ namespace UnibouwAPI.Services
 
                 try
                 {
-                    var reminderSet = r.ReminderSet;
+                    var reminderSet = r.Reminder;
                     if (reminderSet == null)
                         continue;
 
@@ -118,7 +118,7 @@ namespace UnibouwAPI.Services
 
                     // ✅ Mark THIS schedule as sent
                     await reminderRepo.MarkReminderSent(
-                        r.RfqReminderSetScheduleID,
+                        r.RfqReminderScheduleID,
                         istNow
                     );
                 }
@@ -127,7 +127,7 @@ namespace UnibouwAPI.Services
                     _logger.LogError(
                         ex,
                         "Failed sending reminder. ScheduleID={ScheduleId}",
-                        r.RfqReminderSetScheduleID
+                        r.RfqReminderScheduleID
                     );
                 }
             }

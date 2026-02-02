@@ -7,6 +7,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
 
 namespace UnibouwAPI.Repositories
 {
@@ -81,24 +82,24 @@ namespace UnibouwAPI.Repositories
                 @"SELECT Name FROM Projects WHERE ProjectID = @id",
                 new { id = rfq.ProjectID });
 
-            var projectManager = await _connection.QuerySingleOrDefaultAsync<dynamic>(
-                @"SELECT ISNULL(pm.ProjectManagerName, 'Project Manager') AS Name
-          FROM Projects p
-          LEFT JOIN ProjectManagers pm ON pm.ProjectManagerID = p.ProjectManagerID
-          WHERE p.ProjectID = @id",
-                new { id = rfq.ProjectID });
+            var personDetails = await _connection.QuerySingleOrDefaultAsync<dynamic>(
+                @"SELECT prj.*, p.Name AS PersonName, ppm.RoleID
+                    FROM Projects prj
+                    LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
+                    LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
+                    WHERE prj.ProjectID = @Id", new { id = rfq.ProjectID });
 
-            string projectManagerName = projectManager?.Name ?? "Project Manager";
+            string personName = personDetails?.PersonName ?? "Project Assignee";
 
             var workItems = (await _connection.QueryAsync<dynamic>(
                 @"SELECT WorkItemID, Name FROM WorkItems WHERE WorkItemID IN @ids",
                 new { ids = request.WorkItems })).ToList();
 
             var subcontractors = (await _connection.QueryAsync<dynamic>(
-                @"SELECT SubcontractorID, EmailID, ISNULL(Name,'Subcontractor') Name
+                @"SELECT SubcontractorID, Email, ISNULL(Name,'Subcontractor') Name
           FROM Subcontractors
           WHERE SubcontractorID IN @ids
-          AND EmailID IS NOT NULL",
+          AND Email IS NOT NULL",
                 new { ids = request.SubcontractorIDs })).ToList();
 
             foreach (var sub in subcontractors)
@@ -109,7 +110,7 @@ namespace UnibouwAPI.Repositories
               FROM RfqSubcontractorMapping
               WHERE RfqID = @RfqID
                 AND SubcontractorID = @SubId
-                AND EmailedOn IS NOT NULL",
+                AND CreatedOn IS NOT NULL",
                     new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID }
                 ) > 0;
 
@@ -133,31 +134,31 @@ namespace UnibouwAPI.Repositories
                     $"&workItemIds={workItemIdsCsv}";
 
                 string body = $@"
-<p>Dear {sub.Name},</p>
+                        <p>Dear {sub.Name},</p>
 
-<p>{request.Body}</p>
+                       <p>{(string.IsNullOrWhiteSpace(request.Body)? "You are invited to submit a quotation for the following details:" : request.Body)}</p>
 
-<ul>
-<li><strong>Project:</strong> {projectName}</li>
-<li><strong>RFQ No:</strong> {rfq.RfqNumber}</li>
-<li><strong>Due Date:</strong> {dueDate:dd-MMM-yyyy}</li>
-</ul>
+                        <ul>
+                        <li><strong>Project:</strong> {projectName}</li>
+                        <li><strong>RFQ No:</strong> {rfq.RfqNumber}</li>
+                        <li><strong>Due Date:</strong> {dueDate:dd-MMM-yyyy}</li>
+                        </ul>
 
-<p><strong>Work Items:</strong></p>
-<ul>{workItemListHtml}</ul>
-
-<p>
-<a href='{summaryUrl}'
-style='padding:12px 20px;background:#f97316;color:#fff;text-decoration:none;border-radius:5px;'>
-View Project Summary
-</a>
-</p>
-
-<p>
-Regards,<br/>
-<strong>{projectManagerName}</strong><br/>
-Project Manager - Unibouw
-</p>";
+                        <p><strong>Work Items:</strong></p>
+                        <ul>{workItemListHtml}</ul>
+                        <br/>
+                        <p>
+                        <a href='{summaryUrl}'
+                        style='padding:12px 20px;background:#f97316;color:#fff;text-decoration:none;border-radius:5px;'>
+                        View Project Summary
+                        </a>
+                        </p>
+                        <br/>
+                        <p>
+                        Regards,<br/>
+                        <strong>{personName}</strong><br/>
+                        Project - Unibouw
+                        </p>";
 
                 var mail = new MailMessage
                 {
@@ -167,14 +168,14 @@ Project Manager - Unibouw
                     IsBodyHtml = true
                 };
 
-                mail.To.Add(sub.EmailID);
+                mail.To.Add(sub.Email);
 
                 await client.SendMailAsync(mail);
 
                 // ✅ MARK AS EMAILED (ONCE)
                 await _connection.ExecuteAsync(
                     @"UPDATE RfqSubcontractorMapping
-              SET EmailedOn = GETDATE()
+              SET CreatedOn = GETDATE()
               WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
                     new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID }
                 );
@@ -183,7 +184,7 @@ Project Manager - Unibouw
                 {
                     RfqID = rfq.RfqID,
                     SubcontractorIDs = new List<Guid> { sub.SubcontractorID },
-                    ToEmail = sub.EmailID,
+                    ToEmail = sub.Email,
                     Subject = request.Subject,
                     WorkItems = request.WorkItems,
                     Body = body
@@ -233,23 +234,23 @@ Project Manager - Unibouw
             string fromName = GetSenderName();         // Logged-in user
             string replyTo = GetSenderEmail();        // Logged-in user's email
 
-            var projectManager = await _connection.QuerySingleOrDefaultAsync<dynamic>(
-                @"SELECT ISNULL(pm.ProjectManagerName, 'Project Manager') AS Name
-          FROM Rfq r
-          INNER JOIN Projects p ON p.ProjectID = r.ProjectID
-          LEFT JOIN ProjectManagers pm ON pm.ProjectManagerID = p.ProjectManagerID
-          WHERE r.RfqID = @rfqId",
-                new { rfqId });
 
-            string pmName = projectManager?.Name ?? "Project Manager";
+            /*var personDetails = await _connection.QuerySingleOrDefaultAsync<dynamic>(
+                @"SELECT prj.*, p.Name AS PersonName, ppm.RoleID
+                    FROM Projects prj
+                    LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
+                    LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
+                    WHERE prj.ProjectID = @Id", new { id = projectId.Value });
+
+            string personName = personDetails?.PersonName ?? "Project Assignee";*/
 
             string htmlBody = $@"
 <p>Dear {WebUtility.HtmlEncode(subcontractorName)},</p>
 <p>{emailBody}</p>
 <p>
 Regards,<br/>
-<strong>{pmName}</strong><br/>
-Project Manager - Unibouw
+<strong>projectAssigneeName</strong><br/>
+Project - Unibouw
 </p>";
 
             var mail = new MailMessage
@@ -288,20 +289,15 @@ Project Manager - Unibouw
                 )
             };
 
-            // ✅ FETCH PROJECT MANAGER USING Projects.ProjectManagerID
-            string projectManagerName = "Project Manager";
+            // ✅ FETCH PROJECT Perosn details
+            var personDetails = await _connection.QuerySingleOrDefaultAsync<dynamic>(
+                @"SELECT prj.*, p.Name AS PersonName, ppm.RoleID
+                    FROM Projects prj
+                    LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
+                    LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
+                    WHERE prj.ProjectID = @Id", new { id = projectId.Value });
 
-            if (projectId.HasValue && projectId.Value != Guid.Empty)
-            {
-                projectManagerName = await _connection.QuerySingleOrDefaultAsync<string>(
-                    @"SELECT ISNULL(pm.ProjectManagerName, 'Project Manager')
-              FROM Projects p
-              LEFT JOIN ProjectManagers pm 
-                ON pm.ProjectManagerID = p.ProjectManagerID
-              WHERE p.ProjectID = @projectId",
-                    new { projectId = projectId.Value }
-                ) ?? "Project Manager";
-            }
+            string personName = personDetails?.PersonName ?? "Project Assignee";
 
             // 🔹 Preserve line breaks
             string formattedBody = body
@@ -315,8 +311,8 @@ Project Manager - Unibouw
 
 <p>
 Regards,<br/>
-<strong>{projectManagerName}</strong><br/>
-Project Manager - Unibouw
+<strong>{personName}</strong><br/>
+Project - Unibouw
 
 </p>";
 

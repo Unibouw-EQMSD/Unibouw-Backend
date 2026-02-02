@@ -9,12 +9,12 @@ namespace UnibouwAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    public class RfqReminderSetController : ControllerBase
+    public class RfqReminderController : ControllerBase
     {
-        private readonly IRfqReminderSet _repository;
-        private readonly ILogger<RfqReminderSetController> _logger;
+        private readonly IRfqReminder _repository;
+        private readonly ILogger<RfqReminderController> _logger;
 
-        public RfqReminderSetController(IRfqReminderSet repository, ILogger<RfqReminderSetController> logger)
+        public RfqReminderController(IRfqReminder repository, ILogger<RfqReminderController> logger)
         {
             _repository = repository;
             _logger = logger;
@@ -22,18 +22,18 @@ namespace UnibouwAPI.Controllers
 
         [HttpGet]
         [Authorize]
-        public async Task<IActionResult> GetAllRfqReminderSet()
+        public async Task<IActionResult> GetAllRfqReminder()
         {
             try
             {
-                var items = await _repository.GetAllRfqReminderSet();
+                var items = await _repository.GetAllRfqReminder();
 
                 if (items == null || !items.Any())
                 {
                     return NotFound(new
                     {
                         message = "No items found.",
-                        data = Array.Empty<IRfqReminderSet>() // return empty array for consistency
+                        data = Array.Empty<IRfqReminder>() // return empty array for consistency
                     });
                 }
                 return Ok(new
@@ -44,14 +44,14 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "An error occurred while fetching Rfq Reminder Set items.");
+                _logger.LogError(ex, "An error occurred while fetching Rfq Reminder items.");
                 return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
             }
         }
 
-        [HttpPost("CreateRfqReminderSet")]
+        [HttpPost("CreateRfqReminder")]
         [Authorize]
-        public async Task<IActionResult> CreateRfqReminderSet([FromBody] RfqReminderSet model)
+        public async Task<IActionResult> CreateRfqReminder([FromBody] RfqReminder model)
         {
             if (model?.ReminderDates == null || string.IsNullOrWhiteSpace(model.ReminderTime))
                 return BadRequest("ReminderDates and ReminderTime are required.");
@@ -78,17 +78,17 @@ namespace UnibouwAPI.Controllers
                 if (!reminderDateTimes.Any())
                     return BadRequest("No valid reminder dates.");
 
-                await _repository.CreateOrUpdateRfqReminderSet(
+                await _repository.CreateOrUpdateRfqReminder(
                     model,
                     reminderDateTimes,
                     userEmail
                 );
 
-                return Ok(new { Message = "Reminder set saved successfully." });
+                return Ok(new { Message = "Reminder saved successfully." });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unexpected error while creating RfqReminderSet(s)");
+                _logger.LogError(ex, "Unexpected error while creating RfqReminder(s)");
                 return StatusCode(500, new
                 {
                     Message = "An unexpected error occurred while processing the request.",

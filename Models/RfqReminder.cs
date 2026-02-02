@@ -1,8 +1,8 @@
 ﻿namespace UnibouwAPI.Models
 {
-    public class RfqReminderSet
+    public class RfqReminder
     {
-        public Guid RfqReminderSetID { get; set; }
+        public Guid RfqReminderID { get; set; }
         public Guid RfqID { get; set; }
         public Guid SubcontractorID { get; set; }
 

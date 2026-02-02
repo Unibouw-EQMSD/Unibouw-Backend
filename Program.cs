@@ -35,7 +35,7 @@ builder.Services.AddScoped<IRfq, RfqRepository>();
 builder.Services.AddScoped<IEmail, EmailRepository>();
 builder.Services.AddScoped<IRfqResponse, RfqResponseRepository>();
 builder.Services.AddScoped<IRFQConversationMessage, RFQConversationMessageRepository>();
-builder.Services.AddScoped<IRfqReminderSet, RfqReminderSetRepository>();
+builder.Services.AddScoped<IRfqReminder, RfqReminderRepository>();
 
 builder.Services.AddScoped<IMsTeamsNotification, MsTeamsNotificationService>();
 builder.Services.AddScoped<DwhTransferService>();

@@ -25,21 +25,29 @@ namespace UnibouwAPI.Repositories
         {
             var isAdmin = role.Equals("Admin", StringComparison.OrdinalIgnoreCase);
 
+            /*var query = @"
+                    SELECT 
+                        prj.*, 
+                        c.CustomerName
+                    FROM Projects prj
+                    LEFT JOIN Customers c ON prj.CustomerID = c.CustomerID
+                    WHERE prj.IsDeleted = 0
+                    " + (isAdmin ? "" : " AND prj.CreatedBy = @Email"); // If user is not an Admin, filter projects to only those created by the logged-in user; Admins see all projects.
+            */
+
             var query = @"
-        SELECT 
-            p.*, 
-            c.CustomerName,
-            wp.WorkPlannerName,
-            pm.ProjectManagerName,
-            pm.Email AS ProjectManagerEmail,
-            per.Name AS PersonName
-        FROM Projects p
-        LEFT JOIN Customers c ON p.CustomerID = c.CustomerID
-        LEFT JOIN WorkPlanners wp ON p.WorkPlannerID = wp.WorkPlannerID
-        LEFT JOIN ProjectManagers pm ON p.ProjectManagerID = pm.ProjectManagerID
-        LEFT JOIN Persons per ON p.PersonID = per.PersonID
-        WHERE p.IsDeleted = 0
-        " + (isAdmin ? "" : "AND pm.Email = @Email");
+                    SELECT 
+                        prj.*, 
+                        c.CustomerName,
+                        p.Name AS PersonName,
+                        r.RoleName AS PersonRole
+                    FROM Projects prj
+                    LEFT JOIN Customers c ON prj.CustomerID = c.CustomerID
+                    LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
+                    LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
+                    LEFT JOIN Roles r ON ppm.RoleID = r.RoleID
+                    WHERE prj.IsDeleted = 0
+                    " + (isAdmin ? "" : " AND prj.CreatedBy = @Email");
 
             return await _connection.QueryAsync<Project>(query, new { Email = loggedInEmail });
         }
@@ -50,21 +58,18 @@ namespace UnibouwAPI.Repositories
             var isAdmin = role.Equals("Admin", StringComparison.OrdinalIgnoreCase);
 
             var query = @"
-        SELECT 
-            p.*, 
-            c.CustomerName,
-            wp.WorkPlannerName,
-            pm.ProjectManagerName,
-            pm.Email AS ProjectManagerEmail,
-            per.Name AS PersonName
-        FROM Projects p
-        LEFT JOIN Customers c ON p.CustomerID = c.CustomerID
-        LEFT JOIN WorkPlanners wp ON p.WorkPlannerID = wp.WorkPlannerID
-        LEFT JOIN ProjectManagers pm ON p.ProjectManagerID = pm.ProjectManagerID
-        LEFT JOIN Persons per ON p.PersonID = per.PersonID
-        WHERE p.ProjectID = @Id
-          AND p.IsDeleted = 0
-          " + (isAdmin ? "" : "AND pm.Email = @Email");
+                    SELECT 
+                        prj.*, 
+                        c.CustomerName,
+                        p.Name AS PersonName,
+                        r.RoleName AS PersonRole
+                    FROM Projects prj
+                    LEFT JOIN Customers c ON prj.CustomerID = c.CustomerID
+                    LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
+                    LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
+                    LEFT JOIN Roles r ON ppm.RoleID = r.RoleID
+                    WHERE prj.ProjectID = @Id AND prj.IsDeleted = 0
+                    " + (isAdmin ? "" : " AND prj.CreatedBy = @Email");
 
             return await _connection.QueryFirstOrDefaultAsync<Project>(query, new { Id = id, Email = loggedInEmail });
         }

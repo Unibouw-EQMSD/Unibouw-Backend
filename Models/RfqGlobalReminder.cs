@@ -2,9 +2,9 @@
 
 namespace UnibouwAPI.Models
 {
-    public class RfqGolbalReminderSet
+    public class RfqGlobalReminder
     {
-        public Guid ID { get; set; }
+        public Guid RfqGlobalReminderID { get; set; }
 
         public string ReminderSequence { get; set; }
 

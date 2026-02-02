@@ -8,6 +8,6 @@
         public DateTime MessageDateTime { get; set; }
         public string Subject { get; set; }
         public string ConversationType { get; set; }
-        public Guid? ParentMessageID { get; set; }
+        public Guid? SubcontractorMessageID { get; set; }
     }
 }
