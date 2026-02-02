@@ -239,7 +239,7 @@ WHERE s.IsDeleted = 0;
         public async Task<int> SaveRfqGlobalReminder(RfqGlobalReminder reminder)
         {
             // Check if exists
-            const string checkSql = "SELECT COUNT(1) FROM RfqGlobalReminder WHERE RfqGlobalReminderID = @RfqGlobalReminderID";
+            const string checkSql = "SELECT COUNT(1) FROM RfqGlobalReminder";
             int exists = await _connection.ExecuteScalarAsync<int>(checkSql, new { reminder.RfqGlobalReminderID });
 
             if (exists > 0)
@@ -257,6 +257,7 @@ WHERE s.IsDeleted = 0;
             }
             else
             {
+                reminder.RfqGlobalReminderID = Guid.NewGuid();
                 const string sql = @"
                 INSERT INTO RfqGlobalReminder
                     (RfqGlobalReminderID, ReminderSequence, ReminderTime, ReminderEmailBody, UpdatedBy, UpdatedAt, IsEnable)

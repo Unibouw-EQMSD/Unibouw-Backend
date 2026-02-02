@@ -1,11 +1,8 @@
 ﻿using Dapper;
-using iText.Layout.Element;
 using Microsoft.Data.SqlClient;
-using System;
 using System.Data;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
-using static iText.StyledXmlParser.Jsoup.Select.Evaluator;
 
 namespace UnibouwAPI.Repositories
 {

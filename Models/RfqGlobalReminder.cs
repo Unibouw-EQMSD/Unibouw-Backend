@@ -1,5 +1,4 @@
-﻿using static iText.StyledXmlParser.Jsoup.Select.Evaluator;
-
+﻿
 namespace UnibouwAPI.Models
 {
     public class RfqGlobalReminder

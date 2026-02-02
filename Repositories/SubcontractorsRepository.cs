@@ -1,7 +1,6 @@
 ﻿using Dapper;
 using Microsoft.Data.SqlClient;
 using System.Data;
-using System.Security.Claims;
 using UnibouwAPI.Helpers;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;

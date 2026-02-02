@@ -380,8 +380,8 @@ namespace UnibouwAPI.Controllers
             }
         }
 
-        // POST: api/RfqGolbalReminder/update
-        [HttpPost("SaveRfqGolbalReminder")]
+        // POST: api/RfqGlobalReminder/update
+        [HttpPost("SaveRfqGlobalReminder")]
         [Authorize]
         public async Task<IActionResult> SaveRfqGlobalReminder([FromBody] RfqGlobalReminder reminder)
         {

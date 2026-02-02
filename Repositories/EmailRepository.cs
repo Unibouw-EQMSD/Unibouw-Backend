@@ -4,10 +4,8 @@ using System.Data;
 using System.Net;
 using System.Net.Mail;
 using System.Security.Claims;
-using Microsoft.AspNetCore.Http;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
-using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
 
 namespace UnibouwAPI.Repositories
 {
@@ -208,12 +206,7 @@ namespace UnibouwAPI.Repositories
         }
 
         // ================= REMINDER EMAIL =================
-        public async Task<bool> SendReminderEmailAsync(
-     Guid subcontractorId,
-     string recipientEmail,
-     string subcontractorName,
-     Guid rfqId,
-     string emailBody)
+        public async Task<bool> SendReminderEmailAsync(Guid subcontractorId, string recipientEmail, string subcontractorName, Guid rfqId, string emailBody)
         {
             if (string.IsNullOrWhiteSpace(recipientEmail))
                 throw new ArgumentException("Recipient email invalid");
@@ -235,21 +228,27 @@ namespace UnibouwAPI.Repositories
             string replyTo = GetSenderEmail();        // Logged-in user's email
 
 
-            /*var personDetails = await _connection.QuerySingleOrDefaultAsync<dynamic>(
-                @"SELECT prj.*, p.Name AS PersonName, ppm.RoleID
-                    FROM Projects prj
-                    LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
-                    LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
-                    WHERE prj.ProjectID = @Id", new { id = projectId.Value });
+            var personDetails = await _connection.QuerySingleOrDefaultAsync<dynamic>(
+                    @"SELECT prj.*, 
+                             p.Name AS PersonName, 
+                             ppm.RoleID
+                      FROM Rfq r
+                      INNER JOIN Projects prj ON r.ProjectID = prj.ProjectID
+                      LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
+                      LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
+                      WHERE r.RfqID = @RfqID",
+                    new { RfqID = rfqId }
+                );
 
-            string personName = personDetails?.PersonName ?? "Project Assignee";*/
+            string personName = personDetails?.PersonName ?? "Project Assignee";
+
 
             string htmlBody = $@"
 <p>Dear {WebUtility.HtmlEncode(subcontractorName)},</p>
 <p>{emailBody}</p>
 <p>
 Regards,<br/>
-<strong>projectAssigneeName</strong><br/>
+<strong>{personName}</strong><br/>
 Project - Unibouw
 </p>";
 
@@ -269,14 +268,9 @@ Project - Unibouw
             await client.SendMailAsync(mail);
             return true;
         }
+
         // ================= GENERIC EMAIL =================
-        public async Task<bool> SendMailAsync(
-    string toEmail,
-    string subject,
-    string body,
-    string name,
-    Guid? projectId,
-    List<string>? attachmentFilePaths = null)
+        public async Task<bool> SendMailAsync( string toEmail, string subject, string body, string name,Guid? projectId, List<string>? attachmentFilePaths = null)
         {
             var smtp = _configuration.GetSection("SmtpSettings");
 
