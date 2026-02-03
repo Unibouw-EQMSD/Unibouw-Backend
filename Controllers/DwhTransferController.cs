@@ -120,7 +120,7 @@ namespace UnibouwAPI.Controllers
                         var subcontractorData = await _subcontractorRepo.GetSubcontractorRemindersSent(subcontractor.SubcontractorID);
                         if (subcontractorData == null)
                             continue;
-                        int reminderCount = subcontractorData?.RemindersSent ?? 0;
+                        int reminderCount = subcontractor?.RemindersSent ?? 0;
 
                         // 2️⃣ Build reminder text
                         string reminderText = reminderCount switch
@@ -160,9 +160,11 @@ This is a follow-up regarding the subcontractor data missing from the DWH after 
                         // 3️⃣ Send Teams notification
                         await _teamsService.SendTeamsMessageAsync(message);
 
+                        reminderCount = reminderCount + 1;
+
                         await _subcontractorRepo.UpdateSubcontractorRemindersSent(
                                subcontractor.SubcontractorID,
-                               reminderCount + 1
+                               reminderCount
                            );
 
                         if (reminderCount >= 2)
