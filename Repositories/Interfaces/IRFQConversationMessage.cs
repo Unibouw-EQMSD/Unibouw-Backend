@@ -14,7 +14,12 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         Task<RFQConversationMessageAttachment> AddAttachmentAsync(RFQConversationMessageAttachment attachment);
 
-        Task<RFQConversationMessage> ReplyToConversationAsync(Guid SubcontractorMessageID, string messageText, string subject, string pmEmail);
-
+        Task<RFQConversationMessage> ReplyToConversationAsync(
+            Guid SubcontractorMessageID,
+            string messageText,
+            string subject,
+            string pmEmail,
+            List<string>? attachmentPaths = null
+        );
     }
 }
