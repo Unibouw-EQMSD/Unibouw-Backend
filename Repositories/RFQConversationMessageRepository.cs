@@ -288,131 +288,119 @@ namespace UnibouwAPI.Repositories
             return attachment;
         }
         public async Task<RFQConversationMessage> ReplyToConversationAsync(
-            Guid SubcontractorMessageID,
-            string messageText,
-            string subject,
-            string pmEmail)
+    Guid SubcontractorMessageID,
+    string messageText,
+    string subject,
+    string pmEmail,
+    List<string>? attachmentPaths = null
+)
+{
+    using var connection = new SqlConnection(_connectionString);
+    await connection.OpenAsync();
+
+    using var transaction = connection.BeginTransaction();
+
+    // 1) Load parent from RFQConversationMessage, else from RfqLogConversation
+    RFQConversationMessage? parent = await connection.QuerySingleOrDefaultAsync<RFQConversationMessage>(
+        @"SELECT * FROM RFQConversationMessage WHERE ConversationMessageID = @Id",
+        new { Id = SubcontractorMessageID },
+        transaction
+    );
+
+    if (parent == null)
+    {
+        parent = await connection.QuerySingleOrDefaultAsync<RFQConversationMessage>(
+            @"SELECT 
+                LogConversationID AS ConversationMessageID,
+                NULL AS SubcontractorMessageID,
+                ProjectID,
+                SubcontractorID,
+                'Subcontractor' AS SenderType,
+                Message AS MessageText,
+                Subject,
+                MessageDateTime,
+                CreatedBy
+              FROM RfqLogConversation
+              WHERE LogConversationID = @Id",
+            new { Id = SubcontractorMessageID },
+            transaction
+        );
+    }
+
+    if (parent == null)
+        throw new Exception("Parent message not found");
+
+    var amsterdamNow = DateTime.UtcNow; // if you already have amsterdamNow logic, keep it
+
+    // 2) Create reply (save quickly)
+    var reply = new RFQConversationMessage
+    {
+        ConversationMessageID = Guid.NewGuid(),
+        SubcontractorMessageID = parent.ConversationMessageID,
+        ProjectID = parent.ProjectID,
+        SubcontractorID = parent.SubcontractorID,
+        SenderType = "PM",
+        Tag = "Outgoing - Reply",
+        Status = "Sending",               // ✅ new
+        MessageText = messageText,
+        Subject = subject,
+        MessageDateTime = amsterdamNow,
+        CreatedBy = pmEmail,
+        CreatedOn = amsterdamNow
+    };
+
+    await connection.ExecuteAsync(
+        @"INSERT INTO RFQConversationMessage
+          (ConversationMessageID, SubcontractorMessageID, ProjectID,
+           SubcontractorID, SenderType, MessageText, MessageDateTime,
+           Status, CreatedBy, CreatedOn, Subject, Tag)
+          VALUES
+          (@ConversationMessageID, @SubcontractorMessageID, @ProjectID,
+           @SubcontractorID, @SenderType, @MessageText, @MessageDateTime,
+           @Status, @CreatedBy, @CreatedOn, @Subject, @Tag)",
+        reply,
+        transaction
+    );
+
+    // 3) Commit BEFORE email (don’t hold transaction open during SMTP)
+    transaction.Commit();
+
+    // 4) Fire-and-forget email send + status update
+    _ = Task.Run(async () =>
+    {
+        try
         {
-            using var connection = new SqlConnection(_connectionString);
-            await connection.OpenAsync();
+            await SendReplyEmailAsync(parent, reply, attachmentPaths);
 
-            using var transaction = connection.BeginTransaction();
-            bool transactionCommitted = false;
-
-            Exception? emailFailure = null;
-
-            try
-            {
-                RFQConversationMessage? parent = null;
-                bool isLogConversation = false;
-
-                parent = await connection.QuerySingleOrDefaultAsync<RFQConversationMessage>(
-                    @"SELECT * FROM RFQConversationMessage WHERE ConversationMessageID = @Id",
-                    new { Id = SubcontractorMessageID },
-                    transaction
-                );
-
-                if (parent == null)
-                {
-                    isLogConversation = true;
-                    parent = await connection.QuerySingleOrDefaultAsync<RFQConversationMessage>(
-    @"SELECT 
-        LogConversationID AS ConversationMessageID,
-        NULL AS SubcontractorMessageID,
-        ProjectID,
-        SubcontractorID,
-        'Subcontractor' AS SenderType,
-        Message AS MessageText,
-        Subject,
-        MessageDateTime,             
-        CreatedBy
-      FROM RfqLogConversation
-      WHERE LogConversationID = @Id",
-    new { Id = SubcontractorMessageID },
-    transaction
-);
-                }
-
-                if (parent == null)
-                    throw new Exception("Parent message not found");
-
-                /*Guid pmId = parent.ProjectManagerID != Guid.Empty
-                    ? parent.ProjectManagerID
-                    : (await connection.QuerySingleOrDefaultAsync<Guid?>(
-                        @"SELECT ProjectManagerID FROM ProjectManagers WHERE Email = @Email",
-                        new { Email = pmEmail },
-                        transaction
-                    )) ?? throw new Exception($"Project Manager not found for email: {pmEmail}");
-*/
-                var reply = new RFQConversationMessage
-                {
-                    ConversationMessageID = Guid.NewGuid(),
-                    SubcontractorMessageID = parent.ConversationMessageID,
-                    ProjectID = parent.ProjectID,
-                    SubcontractorID = parent.SubcontractorID,
-                    SenderType = "PM",
-                    Tag = "Outgoing - Reply",
-                    Status = "Draft",
-                    MessageText = messageText,
-                    Subject = subject,
-                    MessageDateTime = amsterdamNow,
-                    CreatedBy = pmEmail,
-                    CreatedOn = amsterdamNow
-                };
-
-                await connection.ExecuteAsync(
-                    @"INSERT INTO RFQConversationMessage
-              (ConversationMessageID, SubcontractorMessageID, ProjectID,
-               SubcontractorID, SenderType, MessageText, MessageDateTime,
-               Status, CreatedBy, CreatedOn, Subject, Tag)
-              VALUES
-              (@ConversationMessageID, @SubcontractorMessageID, @ProjectID, 
-               @SubcontractorID, @SenderType, @MessageText, @MessageDateTime,
-               @Status, @CreatedBy, @CreatedOn, @Subject, @Tag)",
-                    reply,
-                    transaction
-                );
-
-                // 🔥 EMAIL SEND (CAPTURE REAL ERROR)
-                try
-                {
-                    await SendReplyEmailAsync(parent, reply);
-                    reply.Status = "Sent";
-                }
-                catch (Exception ex)
-                {
-                    reply.Status = "Draft";
-                    emailFailure = ex;
-                }
-
-                await connection.ExecuteAsync(
-                    @"UPDATE RFQConversationMessage
-              SET Status = @Status
-              WHERE ConversationMessageID = @Id",
-                    new { Status = reply.Status, Id = reply.ConversationMessageID },
-                    transaction
-                );
-
-                transaction.Commit();
-                transactionCommitted = true;
-
-                // 🔴 THROW WITH FULL DETAILS
-                if (reply.Status == "Draft")
-                    throw new Exception(
-                        "Email failed. Reply saved as draft. Reason: " +
-                        (emailFailure?.InnerException?.Message ?? emailFailure?.Message)
-                    );
-
-                return reply;
-            }
-            catch
-            {
-                if (!transactionCommitted)
-                    transaction.Rollback();
-                throw;
-            }
+            using var c = new SqlConnection(_connectionString);
+            await c.OpenAsync();
+            await c.ExecuteAsync(
+                @"UPDATE RFQConversationMessage
+                  SET Status = @Status
+                  WHERE ConversationMessageID = @Id",
+                new { Status = "Sent", Id = reply.ConversationMessageID }
+            );
         }
+        catch (Exception ex)
+        {
+            using var c = new SqlConnection(_connectionString);
+            await c.OpenAsync();
 
+            // Optional: store failure reason if you have a column for it
+            // If you don’t have EmailError column, remove EmailError update.
+            await c.ExecuteAsync(
+                @"UPDATE RFQConversationMessage
+                  SET Status = @Status
+                  WHERE ConversationMessageID = @Id",
+                new { Status = "Draft", Id = reply.ConversationMessageID }
+            );
+
+            // log the real reason
+        }
+    });
+
+    return reply; // ✅ returns immediately (fast)
+}
         private static string ConvertToHtml(string text)
         {
             return string.IsNullOrWhiteSpace(text)
@@ -463,6 +451,7 @@ namespace UnibouwAPI.Repositories
 
             // 3️⃣ Prepare the parent message text
             string parentMessageText = ConvertToHtml(parent.MessageText ?? "");
+            string replyMessageText = ConvertToHtml(reply.MessageText ?? "");
             if (!parentMessageText.TrimStart().StartsWith($"Dear {sub.Name}", StringComparison.OrdinalIgnoreCase))
             {
                 parentMessageText = $"Dear {sub.Name},<br/>{parentMessageText}";
@@ -478,7 +467,7 @@ namespace UnibouwAPI.Repositories
 <hr/>
 
 <p><strong>Unibouw Response:</strong><br/>
-{reply.MessageText}</p>
+{replyMessageText}</p>
 
 <p><strong>Replied on:</strong> {reply.MessageDateTime:dd-MMM-yyyy HH:mm}</p>
 
