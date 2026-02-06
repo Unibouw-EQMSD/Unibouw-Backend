@@ -6,13 +6,13 @@ namespace UnibouwAPI.Services
 {
     public class DwhTransferService
     {
-        private readonly string _sourceConnection;
-        private readonly string _targetConnection;
+        private readonly string _dwhConnection;
+        private readonly string _unibouwConnection;
 
         public DwhTransferService(IConfiguration config)
         {
-            _sourceConnection = config.GetConnectionString("DWHDb");
-            _targetConnection = config.GetConnectionString("UnibouwDbConnection");
+            _dwhConnection = config.GetConnectionString("DWHDb");
+            _unibouwConnection = config.GetConnectionString("UnibouwDbConnection");
         }
 
         public async Task<(
@@ -32,7 +32,7 @@ namespace UnibouwAPI.Services
         {
             // Step 1: Read all categories from source
             IEnumerable<WorkItemCategoryType> categories;
-            using (var sourceConn = new SqlConnection(_sourceConnection))
+            using (var sourceConn = new SqlConnection(_dwhConnection))
             {
                 await sourceConn.OpenAsync();
                 string categoryQuery = @"SELECT CategoryID, CategoryName FROM dbo.WorkItemCategoryTypes";
@@ -40,7 +40,7 @@ namespace UnibouwAPI.Services
             }
 
             // Step 2: Upsert categories into target
-            using (var targetConn = new SqlConnection(_targetConnection))
+            using (var targetConn = new SqlConnection(_unibouwConnection))
             {
                 await targetConn.OpenAsync();
                 const string upsertCategorySql = @"
@@ -59,7 +59,7 @@ namespace UnibouwAPI.Services
 
             // Step 3: Read work items from source
             IEnumerable<WorkItem> sourceData;
-            using (var sourceConn = new SqlConnection(_sourceConnection))
+            using (var sourceConn = new SqlConnection(_dwhConnection))
             {
                 await sourceConn.OpenAsync();
                 string selectQuery = @"
@@ -87,7 +87,7 @@ namespace UnibouwAPI.Services
             var updatedIds = new List<long?>();
             var skippedIds = new List<long?>();
 
-            using (var targetConn = new SqlConnection(_targetConnection))
+            using (var targetConn = new SqlConnection(_unibouwConnection))
             {
                 await targetConn.OpenAsync();
                 const string mergeWorkItemSql = @"
@@ -193,7 +193,7 @@ namespace UnibouwAPI.Services
         {
             // Step 1: Read categories from source
             IEnumerable<WorkItemCategoryType> categories;
-            using (var sourceConn = new SqlConnection(_sourceConnection))
+            using (var sourceConn = new SqlConnection(_dwhConnection))
             {
                 await sourceConn.OpenAsync();
 
@@ -209,7 +209,7 @@ namespace UnibouwAPI.Services
             var skippedIds = new List<long?>();
 
             // Step 2: Upsert into target
-            using (var targetConn = new SqlConnection(_targetConnection))
+            using (var targetConn = new SqlConnection(_unibouwConnection))
             {
                 await targetConn.OpenAsync();
 
@@ -262,7 +262,7 @@ namespace UnibouwAPI.Services
         {
             // Step 1: Read work items from source
             IEnumerable<WorkItem> sourceData;
-            using (var sourceConn = new SqlConnection(_sourceConnection))
+            using (var sourceConn = new SqlConnection(_dwhConnection))
             {
                 await sourceConn.OpenAsync();
 
@@ -291,7 +291,7 @@ namespace UnibouwAPI.Services
             var updatedIds = new List<long?>();
             var skippedIds = new List<long?>();
 
-            using (var targetConn = new SqlConnection(_targetConnection))
+            using (var targetConn = new SqlConnection(_unibouwConnection))
             {
                 await targetConn.OpenAsync();
 
@@ -401,7 +401,7 @@ namespace UnibouwAPI.Services
             IEnumerable<Customer> customers;
 
             // Step 1: Read customers from source
-            using (var sourceConn = new SqlConnection(_sourceConnection))
+            using (var sourceConn = new SqlConnection(_dwhConnection))
             {
                 await sourceConn.OpenAsync();
                 const string sql = @"SELECT CustomerID, CustomerName FROM dbo.Customers";
@@ -413,7 +413,7 @@ namespace UnibouwAPI.Services
             var skipped = new List<long?>();
 
             // Step 2: Upsert into target
-            using (var targetConn = new SqlConnection(_targetConnection))
+            using (var targetConn = new SqlConnection(_unibouwConnection))
             {
                 await targetConn.OpenAsync();
 
@@ -461,7 +461,7 @@ namespace UnibouwAPI.Services
             IEnumerable<Project> projects;
 
             // Step 1: Read projects from source
-            using (var sourceConn = new SqlConnection(_sourceConnection))
+            using (var sourceConn = new SqlConnection(_dwhConnection))
             {
                 await sourceConn.OpenAsync();
 
@@ -494,7 +494,7 @@ namespace UnibouwAPI.Services
             var skipped = new List<long?>();
 
             // Step 2: Upsert into target
-            using (var targetConn = new SqlConnection(_targetConnection))
+            using (var targetConn = new SqlConnection(_unibouwConnection))
             {
                 await targetConn.OpenAsync();
 
@@ -606,13 +606,13 @@ namespace UnibouwAPI.Services
             return (inserted, updated, skipped);
         }
 
-        public async Task<List<Subcontractor>> GetMissingSubcontractorDetailsAsync()
+        public async Task<List<Subcontractor>> GetMissingSubcontractorDetailsAsync1()
         {
             IEnumerable<Subcontractor> unibouwSubcontractors;
             IEnumerable<Guid> dwhSubcontractorIds;
 
             // Step 1: Fetch all subcontractor details from unibouw DB
-            using (var unibouwConn = new SqlConnection(_targetConnection)) // unibouw DB
+            using (var unibouwConn = new SqlConnection(_unibouwConnection)) // unibouw DB
             {
                 await unibouwConn.OpenAsync();
                 const string sql = "SELECT * FROM dbo.Subcontractors";
@@ -620,7 +620,7 @@ namespace UnibouwAPI.Services
             }
 
             // Step 2: Fetch SubcontractorID from dwh DB
-            using (var dwhConn = new SqlConnection(_sourceConnection)) // DWH DB
+            using (var dwhConn = new SqlConnection(_dwhConnection)) // DWH DB
             {
                 await dwhConn.OpenAsync();
                 const string sql = "SELECT SubcontractorID FROM dbo.Subcontractors";
@@ -641,5 +641,179 @@ namespace UnibouwAPI.Services
 
             return missingSubcontractors;
         }
+
+        public async Task<MissingSubcontractorResponseDto> GetMissingSubcontractorDetailsAsync()
+        {
+            List<Subcontractor> unibouwSubcontractors;
+            HashSet<Guid> dwhSubcontractorIds;
+
+            using var unibouwConn = new SqlConnection(_unibouwConnection);
+            using var dwhConn = new SqlConnection(_dwhConnection);
+
+            await unibouwConn.OpenAsync();
+            await dwhConn.OpenAsync();
+
+            // Step 1: Fetch all subcontractor details from Unibouw DB
+            const string unibouwSql = @"
+                 SELECT 
+                     s.*, 
+                     p.Name AS ContactName,
+                     p.Email AS ContactEmail,
+                     p.PhoneNumber1 AS ContactPhone
+                 FROM Subcontractors s
+                 LEFT JOIN Persons p ON s.PersonID = p.PersonID
+                 WHERE s.IsDeleted = 0";
+            unibouwSubcontractors = (await unibouwConn.QueryAsync<Subcontractor>(unibouwSql)).ToList();
+
+            // Step 2: Fetch SubcontractorID from DWH DB
+            const string dwhSql = "SELECT SubcontractorID FROM dbo.Subcontractors";
+            dwhSubcontractorIds = (await dwhConn.QueryAsync<Guid>(dwhSql)).ToHashSet();
+
+            // Step 3: Find missing subcontractors
+            var missingSubcontractors = unibouwSubcontractors
+                .Where(x => !dwhSubcontractorIds.Contains(x.SubcontractorID))
+                .ToList();
+
+            if (!missingSubcontractors.Any())
+            {
+                return new MissingSubcontractorResponseDto
+                {
+                    MissingSubcontractorsDetails = new List<Subcontractor>(),
+                    RfqDetails = new List<Rfq>(),
+                    QuoteDetails = new List<RfqSubcontractorResponse>()
+                };
+            }
+
+            // Step 4: Get WorkItems Mapping for missing subcontractors
+            var subcontractorIds = missingSubcontractors.Select(x => x.SubcontractorID).ToList();
+
+            // Fetch mapping of SubcontractorID ↔ WorkItemID and Name
+            var workItemMappings = (await unibouwConn.QueryAsync<(Guid SubcontractorID, Guid WorkItemID, string WorkItemName)>(
+                        @"SELECT sw.SubcontractorID, sw.WorkItemID, wi.Name AS WorkItemName
+              FROM dbo.SubcontractorWorkItemsMapping sw
+              INNER JOIN dbo.WorkItems wi ON sw.WorkItemID = wi.WorkItemID
+              WHERE sw.SubcontractorID IN @SubcontractorIDs",
+                        new { SubcontractorIDs = subcontractorIds }
+                    )).ToList();
+
+            // Build dictionary: SubcontractorID → List of WorkItemIDs/Names
+            var workItemDict = workItemMappings
+                .GroupBy(x => x.SubcontractorID)
+                .ToDictionary(
+                    g => g.Key,
+                    g => new {
+                        WorkItemIDs = g.Select(x => x.WorkItemID).ToList(),
+                        WorkItemNames = g.Select(x => x.WorkItemName).ToList()
+                    }
+                );
+
+            // Assign WorkItemIDs and WorkItemNames to each missing subcontractor
+            foreach (var sub in missingSubcontractors)
+            {
+                if (workItemDict.TryGetValue(sub.SubcontractorID, out var wi))
+                {
+                    sub.WorkItemIDs = wi.WorkItemIDs;
+                    sub.WorkItemName = wi.WorkItemNames;
+                }
+                else
+                {
+                    sub.WorkItemIDs = new List<Guid>();
+                    sub.WorkItemName = new List<string>();
+                }
+            }
+
+            // Step 5: Get RFQ IDs from mapping table
+            var rfqMappings = await unibouwConn.QueryAsync<(Guid SubcontractorID, Guid RfqID)>(
+                @"SELECT SubcontractorID, RfqID
+                  FROM dbo.RfqSubcontractorMapping
+                  WHERE SubcontractorID IN @SubcontractorIDs",
+                new { SubcontractorIDs = subcontractorIds }
+            );
+
+            var rfqIds = rfqMappings.Select(x => x.RfqID).Distinct().ToList();
+
+            if (!rfqIds.Any())
+            {
+                return new MissingSubcontractorResponseDto
+                {
+                    MissingSubcontractorsDetails = missingSubcontractors,
+                    RfqDetails = new List<Rfq>(),
+                    QuoteDetails = new List<RfqSubcontractorResponse>()
+                };
+            }
+
+            // Step 5: Get RFQ details
+           /* var rfqDetails = (await unibouwConn.QueryAsync<Rfq>(
+                @"SELECT RfqID, RfqNumber, ProjectID
+                  FROM dbo.Rfq
+                  WHERE RfqID IN @RfqIDs",
+                new { RfqIDs = rfqIds }
+            )).ToList();*/
+
+            var rfqDetails = (await unibouwConn.QueryAsync<Rfq>(
+                @"SELECT r.RfqID,
+                         r.RfqNumber,
+                         r.ProjectID,
+                         p.Number AS ProjectCode
+                  FROM dbo.Rfq r
+                  INNER JOIN dbo.Projects p ON r.ProjectID = p.ProjectID
+                  WHERE r.RfqID IN @RfqIDs",
+                new { RfqIDs = rfqIds }
+            )).ToList();
+
+
+            // Step 6: Get Project Names
+            var projectIds = rfqDetails
+                .Where(r => r.ProjectID.HasValue)
+                .Select(r => r.ProjectID.Value)
+                .Distinct()
+                .ToList();
+
+            var projects = await unibouwConn.QueryAsync<(Guid ProjectID, string Name)>(
+                @"SELECT ProjectID, Name
+                  FROM dbo.Projects
+                  WHERE ProjectID IN @ProjectIDs",
+                new { ProjectIDs = projectIds }
+            );
+
+            var projectDict = projects.ToDictionary(x => x.ProjectID, x => x.Name);
+
+            foreach (var rfq in rfqDetails)
+            {
+                if (rfq.ProjectID.HasValue && projectDict.TryGetValue(rfq.ProjectID.Value, out var projectName))
+                {
+                    rfq.ProjectName = projectName;
+                }
+                else
+                {
+                    rfq.ProjectName = "N/A";
+                }
+            }
+
+            // Step 7: Get Quote Details
+            /* var quoteDetails = (await unibouwConn.QueryAsync<RfqSubcontractorResponse>(
+                         @"SELECT * FROM dbo.RfqSubcontractorResponse WHERE RfqID IN @RfqIDs",
+                 new { RfqIDs = rfqIds }
+             )).ToList();*/
+
+            var quoteDetails = (await unibouwConn.QueryAsync<RfqSubcontractorResponse>(
+                @"SELECT rsr.*,
+                         wi.Name AS WorkItemName
+                  FROM dbo.RfqSubcontractorResponse rsr
+                  INNER JOIN dbo.WorkItems wi ON rsr.WorkItemID = wi.WorkItemID
+                  WHERE rsr.RfqID IN @RfqIDs",
+                new { RfqIDs = rfqIds }
+            )).ToList();
+
+
+            // Step 8: Return structured response
+            return new MissingSubcontractorResponseDto
+            {
+                MissingSubcontractorsDetails = missingSubcontractors,
+                RfqDetails = rfqDetails,
+                QuoteDetails = quoteDetails
+            };
+        }
+
     }
 }

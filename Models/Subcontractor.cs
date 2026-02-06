@@ -28,5 +28,5 @@ public partial class Subcontractor
     public string? ContactPhone { get; set; }       
 
     public List<Guid>? WorkItemIDs { get; set; }
-
+    public List<string>? WorkItemName { get; set; }
 }

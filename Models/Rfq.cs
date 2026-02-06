@@ -24,6 +24,7 @@
         // Navigation
         public string? CustomerName { get; set; }
         public string? ProjectName { get; set; }
+        public string? ProjectCode { get; set; }
         public List<WorkItem> WorkItems { get; set; } = new();
         public List<RfqSubcontractorMapping> SubcontractorDueDates { get; set; } = new();
 
