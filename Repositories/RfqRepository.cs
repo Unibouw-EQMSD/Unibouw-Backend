@@ -439,23 +439,30 @@ VALUES (@RfqID, @WorkItemID);";
 
         public async Task<bool> UpdateRfqMainAsync(Rfq rfq)
         {
-            var query = @"
-    UPDATE Rfq
-    SET 
-        DueDate = @DueDate,
-        Status = @Status,
-        RfqSent = @RfqSent,
-        CustomNote = @CustomNote,
-        ModifiedBy = @ModifiedBy,
-        ModifiedOn = GETUTCDATE(),
-        SentDate = @SentDate  
-    WHERE RfqID = @RfqID";
+            const string sql = @"
+        UPDATE Rfq
+        SET
+            GlobalDueDate = @GlobalDueDate,
+            DueDate = @DueDate,
+            CustomNote = @CustomNote,
+            ModifiedBy = @ModifiedBy,
+            ModifiedOn = @ModifiedOn,
+            Status = @Status
+        WHERE RfqID = @RfqID";
 
-            using var connection = _connection;
-            var rows = await connection.ExecuteAsync(query, rfq);
-            return rows > 0;
+            var rowsAffected = await _connection.ExecuteAsync(sql, new
+            {
+                rfq.GlobalDueDate,
+                rfq.DueDate,
+                rfq.CustomNote,
+                rfq.ModifiedBy,
+                rfq.ModifiedOn,
+                rfq.Status,
+                rfq.RfqID
+            });
+
+            return rowsAffected > 0;
         }
-
 
         public async Task UpdateRfqWorkItemsAsync(Guid rfqId, List<Guid> workItemIds)
         {
