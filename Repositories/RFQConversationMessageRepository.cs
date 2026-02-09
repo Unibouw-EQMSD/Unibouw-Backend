@@ -150,8 +150,8 @@ namespace UnibouwAPI.Repositories
             logConversation.LogConversationID = Guid.NewGuid();
             logConversation.CreatedOn = amsterdamNow;
             logConversation.MessageDateTime = logConversation.MessageDateTime == null
-                ? amsterdamNow
-                : logConversation.MessageDateTime;
+               ? amsterdamNow
+               : logConversation.MessageDateTime;
 
             var sql = @"
         INSERT INTO RfqLogConversation
