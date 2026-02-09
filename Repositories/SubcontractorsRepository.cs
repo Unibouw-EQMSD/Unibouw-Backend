@@ -39,19 +39,56 @@ namespace UnibouwAPI.Repositories
             return await _connection.QueryAsync<Subcontractor>(query);
         }
 
-        public async Task<Subcontractor?> GetSubcontractorById(Guid id)
+        public async Task<dynamic?> GetSubcontractorById(Guid id)
         {
+            // 1. Basic subcontractor info + contact
             var query = @"
-                    SELECT 
-                        s.*, 
-                        p.Name AS ContactName,
-                        p.Email AS ContactEmail,
-                        p.PhoneNumber1 AS ContactPhone
-                    FROM Subcontractors s
-                    LEFT JOIN Persons p ON s.PersonID = p.PersonID
-                    WHERE s.SubcontractorID = @Id AND s.IsDeleted = 0";
+        SELECT 
+            s.*, 
+            p.Name AS ContactName,
+            p.Email AS ContactEmail,
+            p.PhoneNumber1 AS ContactPhone
+        FROM Subcontractors s
+        LEFT JOIN Persons p ON s.PersonID = p.PersonID
+        WHERE s.SubcontractorID = @Id AND s.IsDeleted = 0";
+            var sub = await _connection.QueryFirstOrDefaultAsync<Subcontractor>(query, new { Id = id });
+            if (sub == null) return null;
 
-            return await _connection.QueryFirstOrDefaultAsync<Subcontractor>(query, new { Id = id });
+            // 2. Unibouw work items (CategoryID = 1)
+            var unibouwWorkItems = await _connection.QueryAsync<string>(
+                @"SELECT w.Name
+          FROM SubcontractorWorkItemsMapping m
+          INNER JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
+          WHERE m.SubcontractorID = @Id AND w.CategoryID = 1",
+                new { Id = id });
+
+            // 3. Standard work items (CategoryID = 2, 'NL-SfB')
+            var standardWorkItems = await _connection.QueryAsync<string>(
+                @"SELECT w.Name
+          FROM SubcontractorWorkItemsMapping m
+          INNER JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
+          WHERE m.SubcontractorID = @Id AND w.CategoryID = 2",
+                new { Id = id });
+
+            // 4. Return as an anonymous object (matching your Angular expectations)
+            return new
+            {
+                sub.SubcontractorID,
+                sub.Name,
+                sub.Rating,
+                sub.Email,
+                sub.Location,
+                sub.Country,
+                sub.OfficeAddress,
+                sub.BillingAddress,
+                sub.RegisteredDate,
+                sub.IsActive,
+                sub.ContactName,
+                sub.ContactEmail,
+                sub.ContactPhone,
+                unibouwWorkItems = unibouwWorkItems.ToList(),
+                standardWorkItems = standardWorkItems.ToList()
+            };
         }
 
         public async Task<int> UpdateSubcontractorIsActive(Guid id, bool isActive, string modifiedBy)
@@ -238,6 +275,8 @@ namespace UnibouwAPI.Repositories
 
             return await _connection.ExecuteAsync(query, parameters);
         }
+
+
 
         public async Task<int> DeleteSubcontractor(Guid id)
         {

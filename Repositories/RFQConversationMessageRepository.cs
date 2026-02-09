@@ -7,6 +7,12 @@ using System.Security.Claims;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 using UnibouwAPI.Helpers;
+using Microsoft.Graph;
+using Microsoft.Graph.Models;
+using Microsoft.Graph.Users.Item.SendMail;
+using Azure.Identity;
+
+
 
 namespace UnibouwAPI.Repositories
 {
@@ -330,10 +336,10 @@ namespace UnibouwAPI.Repositories
     if (parent == null)
         throw new Exception("Parent message not found");
 
-    var amsterdamNow = DateTime.UtcNow; // if you already have amsterdamNow logic, keep it
+    var amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow); // if you already have amsterdamNow logic, keep it
 
-    // 2) Create reply (save quickly)
-    var reply = new RFQConversationMessage
+            // 2) Create reply (save quickly)
+            var reply = new RFQConversationMessage
     {
         ConversationMessageID = Guid.NewGuid(),
         SubcontractorMessageID = parent.ConversationMessageID,
@@ -409,128 +415,113 @@ namespace UnibouwAPI.Repositories
                     .Replace("\r\n", "<br/>")
                     .Replace("\n", "<br/>");
         }
-        private async Task<bool> SendReplyEmailAsync(RFQConversationMessage parent, RFQConversationMessage reply, List<string>? attachmentPaths = null)
+        private async Task<bool> SendReplyEmailAsync(
+            RFQConversationMessage parent,
+            RFQConversationMessage reply,
+            List<string>? attachmentPaths = null)
         {
             using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync();
 
             // 1️⃣ Fetch subcontractor details
             var sub = await connection.QuerySingleOrDefaultAsync<SubcontractorEmailDto>(
-                        @"SELECT Email, ISNULL(Name,'Subcontractor') AS Name
-                  FROM Subcontractors
-                  WHERE SubcontractorID = @Id",
+                @"SELECT Email, ISNULL(Name,'Subcontractor') AS Name
+          FROM Subcontractors
+          WHERE SubcontractorID = @Id",
                 new { Id = parent.SubcontractorID }
             );
-
             if (sub == null || string.IsNullOrWhiteSpace(sub.Email))
                 throw new Exception("Subcontractor email not found");
 
-            // 2️⃣ Fetch Project Manager name directly from ProjectManagerID
-            /*string projectManagerName = "Project Manager";
-            if (parent.ProjectManagerID != Guid.Empty)
-            {
-                var pm = await connection.QuerySingleOrDefaultAsync<dynamic>(
-                    @"SELECT ISNULL(ProjectManagerName,'Project Manager') AS Name
-              FROM ProjectManagers
-              WHERE ProjectManagerID = @id",
-                    new { id = parent.ProjectManagerID }
-                );
-
-                projectManagerName = pm?.Name ?? "Project Manager";
-            }*/
-
+            // 2️⃣ Fetch Project Manager name
             var personDetails = await _connection.QuerySingleOrDefaultAsync<dynamic>(
-    @"SELECT prj.*, p.Name AS PersonName, ppm.RoleID
-                    FROM Projects prj
-                    LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
-                    LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
-                    WHERE prj.ProjectID = @Id", new { id = parent.ProjectID });
-
+                @"SELECT prj.*, p.Name AS PersonName, ppm.RoleID
+          FROM Projects prj
+          LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
+          LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
+          WHERE prj.ProjectID = @Id", new { id = parent.ProjectID }
+            );
             string personName = personDetails?.PersonName ?? "Project Assignee";
 
-
-            // 3️⃣ Prepare the parent message text
+            // 3️⃣ Prepare message body
             string parentMessageText = ConvertToHtml(parent.MessageText ?? "");
             string replyMessageText = ConvertToHtml(reply.MessageText ?? "");
             if (!parentMessageText.TrimStart().StartsWith($"Dear {sub.Name}", StringComparison.OrdinalIgnoreCase))
             {
                 parentMessageText = $"Dear {sub.Name},<br/>{parentMessageText}";
             }
-
-            // 4️⃣ Build email body
             string body = $@"
-<p><strong>Your message:</strong><br/>
-{parentMessageText}</p>
-
+<p><strong>Your message:</strong><br/>{parentMessageText}</p>
 <p><strong>Sent on:</strong> {parent.MessageDateTime:dd-MMM-yyyy HH:mm}</p>
-
 <hr/>
-
-<p><strong>Unibouw Response:</strong><br/>
-{replyMessageText}</p>
-
+<p><strong>Unibouw Response:</strong><br/>{replyMessageText}</p>
 <p><strong>Replied on:</strong> {reply.MessageDateTime:dd-MMM-yyyy HH:mm}</p>
-
-<p>
-Regards,<br/>
+<p>Regards,<br/>
 <strong>{personName}</strong><br/>
 Project - Unibouw
 </p>";
 
-            var smtp = _configuration.GetSection("SmtpSettings");
+            // 4️⃣ Send via Microsoft Graph
+            var tenantId = _configuration["GraphEmail:TenantId"];
+            var clientId = _configuration["GraphEmail:ClientId"];
+            var clientSecret = _configuration["GraphEmail:ClientSecret"];
+            var senderUser = _configuration["GraphEmail:SenderUser"];
+            var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+            var graphClient = new GraphServiceClient(credential);
 
-            using var client = new SmtpClient(smtp["Host"], int.Parse(smtp["Port"]))
+            var message = new Message
             {
-                EnableSsl = true,
-                Credentials = new NetworkCredential(
-                    smtp["Username"],
-                    smtp["Password"]
-                )
-            };
-
-            // 🔑 Use logged-in user safely
-            string fromEmail = smtp["Username"];           // Authenticated mailbox (must stay)
-            string fromName = GetSenderName();            // Logged-in user's name
-            string replyTo = GetSenderEmail();            // Logged-in user's email
-
-            var mail = new MailMessage
-            {
-                From = new MailAddress(fromEmail, fromName),
                 Subject = reply.Subject ?? "Unibouw – Reply",
-                Body = body,
-                IsBodyHtml = true
+                Body = new ItemBody
+                {
+                    ContentType = BodyType.Html,
+                    Content = body
+                },
+                ToRecipients = new List<Recipient>
+        {
+            new Recipient { EmailAddress = new EmailAddress { Address = sub.Email } }
+        }
             };
 
-            mail.To.Add(sub.Email);
-
-            // ✅ Key change: logged-in user in Reply-To
-            mail.ReplyToList.Add(new MailAddress(replyTo, fromName));
-
-            // Attachments
+            // Attachments (if any)
             if (attachmentPaths?.Any() == true)
             {
+                message.Attachments = new List<Microsoft.Graph.Models.Attachment>();
                 foreach (var path in attachmentPaths.Where(File.Exists))
                 {
-                    mail.Attachments.Add(new Attachment(path));
+                    var bytes = await File.ReadAllBytesAsync(path);
+                    message.Attachments.Add(new FileAttachment
+                    {
+                        OdataType = "#microsoft.graph.fileAttachment",
+                        Name = Path.GetFileName(path),
+                        ContentBytes = bytes,
+                        ContentType = "application/octet-stream"
+                    });
                 }
             }
 
-            await client.SendMailAsync(mail);
+            var sendMailBody = new SendMailPostRequestBody
+            {
+                Message = message,
+                SaveToSentItems = true
+            };
+
+            await graphClient.Users[senderUser].SendMail.PostAsync(sendMailBody);
+
             return true;
         }
-
         // 🔹 Helper methods from your working RFQ/Reminder
         private string GetSenderEmail()
         {
             var email = _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.Email)?.Value
                         ?? _httpContextAccessor.HttpContext?.User?.FindFirst("email")?.Value;
-            return email ?? _configuration["SmtpSettings:FromEmail"];
+            return _configuration["GraphEmail:SenderUser"];
         }
 
         private string GetSenderName()
         {
             return _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.Name)?.Value
-                   ?? _configuration["SmtpSettings:DisplayName"];
+                   ?? _configuration["GraphEmail:DisplayName"] ?? "Unibouw Communications";
         }
     }
 }

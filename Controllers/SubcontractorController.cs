@@ -261,6 +261,21 @@ namespace UnibouwAPI.Controllers
             }
         }
 
-
+        [HttpGet("view/{id}")] // Changed route to avoid collision with existing "{id}"
+        public async Task<IActionResult> ViewSubcontractorById(Guid id)
+        {
+            try
+            {
+                var item = await _repository.GetSubcontractorById(id);
+                if (item == null)
+                    return NotFound(new { message = $"Subcontractor not found.", data = (object?)null });
+                return Ok(new { data = item });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching subcontractor {id}", id);
+                return StatusCode(500, new { message = "Unable to load subcontractor details. Please try again." });
+            }
+        }
     }
 }
