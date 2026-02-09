@@ -149,8 +149,9 @@ namespace UnibouwAPI.Repositories
             // Set system values
             logConversation.LogConversationID = Guid.NewGuid();
             logConversation.CreatedOn = amsterdamNow;
-            logConversation.MessageDateTime =
-            logConversation.MessageDateTime == null ? amsterdamNow : logConversation.MessageDateTime;
+            logConversation.MessageDateTime = logConversation.MessageDateTime == null
+                ? amsterdamNow
+                : logConversation.MessageDateTime;
 
             var sql = @"
         INSERT INTO RfqLogConversation
