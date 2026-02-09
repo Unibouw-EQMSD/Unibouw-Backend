@@ -64,8 +64,8 @@ namespace UnibouwAPI.Repositories
                 INNER JOIN Roles r ON ppm.RoleID = r.RoleID
                 LEFT JOIN Customers c ON prj.CustomerID = c.CustomerID
                 WHERE prj.IsDeleted = 0
-                  AND p.Email = @Email
-                  AND r.RoleName = @Role";
+                    AND p.Email = @Email";
+                 /*AND r.RoleName = @Role*/
 
             var projects = await _connection.QueryAsync<Project>(queryForUser,
                 new { Email = loggedInEmail, Role = role });
