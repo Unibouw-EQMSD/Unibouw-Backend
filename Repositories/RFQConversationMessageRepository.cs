@@ -7,6 +7,12 @@ using System.Security.Claims;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
 using UnibouwAPI.Helpers;
+using Microsoft.Graph;
+using Microsoft.Graph.Models;
+using Microsoft.Graph.Users.Item.SendMail;
+using Azure.Identity;
+
+
 
 namespace UnibouwAPI.Repositories
 {
@@ -41,7 +47,7 @@ namespace UnibouwAPI.Repositories
             await connection.OpenAsync();
 
             // 1️⃣ Get ProjectManagerID using CreatedBy (email)
-            var getPmSql = @"
+            /*var getPmSql = @"
         SELECT ProjectManagerID
         FROM ProjectManagers
         WHERE Email = @Email";
@@ -50,13 +56,12 @@ namespace UnibouwAPI.Repositories
                 getPmSql,
                 new { Email = message.CreatedBy }
             );
-
             if (projectManagerId == null)
-                throw new Exception($"Project manager not found for email: {message.CreatedBy}");
+                throw new Exception($"Project manager not found for email: {message.CreatedBy}");*/
+
 
             // 2️⃣ Set message fields
             message.ConversationMessageID = Guid.NewGuid();
-            message.ProjectManagerID = projectManagerId.Value;
             message.CreatedOn = amsterdamNow;
             message.MessageDateTime = amsterdamNow;
             message.Status = "Active";
@@ -64,36 +69,32 @@ namespace UnibouwAPI.Repositories
 
             // 3️⃣ Insert conversation message
             var insertSql = @"
-        INSERT INTO RFQConversationMessage
-        (
-            ConversationMessageID,
-            ProjectID,
-            WorkItemID,
-            SubcontractorID,
-            ProjectManagerID,
-            SenderType,
-            MessageText,
-            MessageDateTime,
-            Status,
-            CreatedBy,
-            CreatedOn,
-            Subject
-        )
-        VALUES
-        (
-            @ConversationMessageID,
-            @ProjectID,
-            @WorkItemID,
-            @SubcontractorID,
-            @ProjectManagerID,
-            @SenderType,
-            @MessageText,
-            @MessageDateTime,
-            @Status,
-            @CreatedBy,
-            @CreatedOn,
-            @Subject
-        )";
+                INSERT INTO RFQConversationMessage
+                (
+                    ConversationMessageID,
+                    ProjectID,
+                    SubcontractorID,
+                    SenderType,
+                    MessageText,
+                    MessageDateTime,
+                    Status,
+                    CreatedBy,
+                    CreatedOn,
+                    Subject
+                )
+                VALUES
+                (
+                    @ConversationMessageID,
+                    @ProjectID,
+                    @SubcontractorID,
+                    @SenderType,
+                    @MessageText,
+                    @MessageDateTime,
+                    @Status,
+                    @CreatedBy,
+                    @CreatedOn,
+                    @Subject
+                )";
 
             var rows = await connection.ExecuteAsync(insertSql, message);
 
@@ -120,7 +121,7 @@ namespace UnibouwAPI.Repositories
             return messages;
         }
 
-        public async Task<LogConversation> AddLogConversationAsync(LogConversation logConversation)
+        public async Task<RfqLogConversation> AddLogConversationAsync(RfqLogConversation logConversation)
         {
             if (logConversation == null)
                 throw new ArgumentNullException(nameof(logConversation));
@@ -132,7 +133,7 @@ namespace UnibouwAPI.Repositories
             if (logConversation.SubcontractorID != Guid.Empty)
             {
                 const string emailSql = @"
-                    SELECT EmailID
+                    SELECT Email
                     FROM Subcontractors
                     WHERE SubcontractorID = @SubcontractorID";
 
@@ -153,17 +154,15 @@ namespace UnibouwAPI.Repositories
                : logConversation.MessageDateTime;
 
             var sql = @"
-        INSERT INTO LogConversation
+        INSERT INTO RfqLogConversation
         (
             LogConversationID,
             ProjectID,
-            RfqID,
             SubcontractorID,
-            ProjectManagerID,
             ConversationType,
+            MessageDateTime,
             Subject,
             Message,
-            MessageDateTime,
             CreatedBy,
             CreatedOn
         )
@@ -171,13 +170,11 @@ namespace UnibouwAPI.Repositories
         (
             @LogConversationID,
             @ProjectID,
-            @RfqID,
             @SubcontractorID,
-            @ProjectManagerID,
             @ConversationType,
+            @MessageDateTime,
             @Subject,
             @Message,
-            @MessageDateTime,
             @CreatedBy,
             @CreatedOn
         )";
@@ -190,29 +187,27 @@ namespace UnibouwAPI.Repositories
             return logConversation;
         }
 
-        public async Task<IEnumerable<LogConversation>> GetLogConversationsByProjectIdAsync(Guid projectId)
+        public async Task<IEnumerable<RfqLogConversation>> GetLogConversationsByProjectIdAsync(Guid projectId)
         {
             var sql = @"
-        SELECT
-            LogConversationID,
-            ProjectID,
-            RfqID,
-            SubcontractorID,
-            ProjectManagerID,
-            ConversationType,
-            Subject,
-            Message,
-            MessageDateTime,
-            CreatedBy,
-            CreatedOn
-        FROM LogConversation
-        WHERE ProjectID = @ProjectID
-        ORDER BY MessageDateTime ASC";
+                SELECT
+                    LogConversationID,
+                    ProjectID,
+                    SubcontractorID,
+                    ConversationType,
+                    Subject,
+                    Message,
+                    MessageDateTime,
+                    CreatedBy,
+                    CreatedOn
+                FROM RfqLogConversation
+                WHERE ProjectID = @ProjectID
+                ORDER BY MessageDateTime ASC";
 
             using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync();
 
-            return await connection.QueryAsync<LogConversation>(
+            return await connection.QueryAsync<RfqLogConversation>(
                 sql,
                 new { ProjectID = projectId }
             );
@@ -225,7 +220,7 @@ namespace UnibouwAPI.Repositories
                 (
                     SELECT
                         ConversationMessageID AS MessageID,
-                        ParentMessageID,
+                        SubcontractorMessageID,
                         'PM' AS SenderType,
                         MessageText,
                         MessageDateTime,
@@ -239,13 +234,13 @@ namespace UnibouwAPI.Repositories
  
                     SELECT
                         LogConversationID AS MessageID,
-                        CAST(NULL AS UNIQUEIDENTIFIER) AS ParentMessageID,
+                        CAST(NULL AS UNIQUEIDENTIFIER) AS SubcontractorMessageID,
                         'Subcontractor' AS SenderType,
                         Message AS MessageText,
                         MessageDateTime,
                         Subject,
                         ConversationType
-                    FROM LogConversation
+                    FROM RfqLogConversation
                     WHERE ProjectID = @projectId
                       AND SubcontractorID = @subcontractorId
                 )
@@ -269,30 +264,30 @@ namespace UnibouwAPI.Repositories
             attachment.IsActive = true;
 
             const string sql = @"
-        INSERT INTO dbo.RFQConversationMessageAttachment
-        (
-            AttachmentID,
-            ConversationMessageID,
-            FileName,
-            FileExtension,
-            FileSize,
-            FilePath,
-            UploadedBy,
-            UploadedOn,
-            IsActive
-        )
-        VALUES
-        (
-            @AttachmentID,
-            @ConversationMessageID,
-            @FileName,
-            @FileExtension,
-            @FileSize,
-            @FilePath,
-            @UploadedBy,
-            @UploadedOn,
-            @IsActive
-        );";
+                INSERT INTO dbo.RFQConversationMessageAttachment
+                (
+                    AttachmentID,
+                    ConversationMessageID,
+                    FileName,
+                    FileExtension,
+                    FileSize,
+                    FilePath,
+                    UploadedBy,
+                    UploadedOn,
+                    IsActive
+                )
+                VALUES
+                (
+                    @AttachmentID,
+                    @ConversationMessageID,
+                    @FileName,
+                    @FileExtension,
+                    @FileSize,
+                    @FilePath,
+                    @UploadedBy,
+                    @UploadedOn,
+                    @IsActive
+                );";
 
             using var connection = new SqlConnection(_connectionString);
             await connection.ExecuteAsync(sql, attachment);
@@ -300,137 +295,119 @@ namespace UnibouwAPI.Repositories
             return attachment;
         }
         public async Task<RFQConversationMessage> ReplyToConversationAsync(
-            Guid parentMessageId,
-            string messageText,
-            string subject,
-            string pmEmail)
+    Guid SubcontractorMessageID,
+    string messageText,
+    string subject,
+    string pmEmail,
+    List<string>? attachmentPaths = null
+)
+{
+    using var connection = new SqlConnection(_connectionString);
+    await connection.OpenAsync();
+
+    using var transaction = connection.BeginTransaction();
+
+    // 1) Load parent from RFQConversationMessage, else from RfqLogConversation
+    RFQConversationMessage? parent = await connection.QuerySingleOrDefaultAsync<RFQConversationMessage>(
+        @"SELECT * FROM RFQConversationMessage WHERE ConversationMessageID = @Id",
+        new { Id = SubcontractorMessageID },
+        transaction
+    );
+
+    if (parent == null)
+    {
+        parent = await connection.QuerySingleOrDefaultAsync<RFQConversationMessage>(
+            @"SELECT 
+                LogConversationID AS ConversationMessageID,
+                NULL AS SubcontractorMessageID,
+                ProjectID,
+                SubcontractorID,
+                'Subcontractor' AS SenderType,
+                Message AS MessageText,
+                Subject,
+                MessageDateTime,
+                CreatedBy
+              FROM RfqLogConversation
+              WHERE LogConversationID = @Id",
+            new { Id = SubcontractorMessageID },
+            transaction
+        );
+    }
+
+    if (parent == null)
+        throw new Exception("Parent message not found");
+
+    var amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow); // if you already have amsterdamNow logic, keep it
+
+            // 2) Create reply (save quickly)
+            var reply = new RFQConversationMessage
+    {
+        ConversationMessageID = Guid.NewGuid(),
+        SubcontractorMessageID = parent.ConversationMessageID,
+        ProjectID = parent.ProjectID,
+        SubcontractorID = parent.SubcontractorID,
+        SenderType = "PM",
+        Tag = "Outgoing - Reply",
+        Status = "Sending",               // ✅ new
+        MessageText = messageText,
+        Subject = subject,
+        MessageDateTime = amsterdamNow,
+        CreatedBy = pmEmail,
+        CreatedOn = amsterdamNow
+    };
+
+    await connection.ExecuteAsync(
+        @"INSERT INTO RFQConversationMessage
+          (ConversationMessageID, SubcontractorMessageID, ProjectID,
+           SubcontractorID, SenderType, MessageText, MessageDateTime,
+           Status, CreatedBy, CreatedOn, Subject, Tag)
+          VALUES
+          (@ConversationMessageID, @SubcontractorMessageID, @ProjectID,
+           @SubcontractorID, @SenderType, @MessageText, @MessageDateTime,
+           @Status, @CreatedBy, @CreatedOn, @Subject, @Tag)",
+        reply,
+        transaction
+    );
+
+    // 3) Commit BEFORE email (don’t hold transaction open during SMTP)
+    transaction.Commit();
+
+    // 4) Fire-and-forget email send + status update
+    _ = Task.Run(async () =>
+    {
+        try
         {
-            using var connection = new SqlConnection(_connectionString);
-            await connection.OpenAsync();
+            await SendReplyEmailAsync(parent, reply, attachmentPaths);
 
-            using var transaction = connection.BeginTransaction();
-            bool transactionCommitted = false;
-
-            Exception? emailFailure = null;
-
-            try
-            {
-                RFQConversationMessage? parent = null;
-                bool isLogConversation = false;
-
-                parent = await connection.QuerySingleOrDefaultAsync<RFQConversationMessage>(
-                    @"SELECT * FROM RFQConversationMessage WHERE ConversationMessageID = @Id",
-                    new { Id = parentMessageId },
-                    transaction
-                );
-
-                if (parent == null)
-                {
-                    isLogConversation = true;
-                    parent = await connection.QuerySingleOrDefaultAsync<RFQConversationMessage>(
-    @"SELECT 
-        LogConversationID AS ConversationMessageID,
-        NULL AS ParentMessageID,
-        ProjectID,
-        RfqID,
-        NULL AS WorkItemID,
-        SubcontractorID,
-        ProjectManagerID,
-        'Subcontractor' AS SenderType,
-        Message AS MessageText,
-        Subject,
-        MessageDateTime,             
-        CreatedBy
-      FROM LogConversation
-      WHERE LogConversationID = @Id",
-    new { Id = parentMessageId },
-    transaction
-);
-                }
-
-                if (parent == null)
-                    throw new Exception("Parent message not found");
-
-                Guid pmId = parent.ProjectManagerID != Guid.Empty
-                    ? parent.ProjectManagerID
-                    : (await connection.QuerySingleOrDefaultAsync<Guid?>(
-                        @"SELECT ProjectManagerID FROM ProjectManagers WHERE Email = @Email",
-                        new { Email = pmEmail },
-                        transaction
-                    )) ?? throw new Exception($"Project Manager not found for email: {pmEmail}");
-
-                var reply = new RFQConversationMessage
-                {
-                    ConversationMessageID = Guid.NewGuid(),
-                    ParentMessageID = parent.ConversationMessageID,
-                    ProjectID = parent.ProjectID,
-                    RfqID = isLogConversation ? null : parent.RfqID,
-                    WorkItemID = parent.WorkItemID,
-                    SubcontractorID = parent.SubcontractorID,
-                    ProjectManagerID = pmId,
-                    SenderType = "PM",
-                    Tag = "Outgoing - Reply",
-                    Status = "Draft",
-                    MessageText = messageText,
-                    Subject = subject,
-                    MessageDateTime = amsterdamNow,
-                    CreatedBy = pmEmail,
-                    CreatedOn = amsterdamNow
-                };
-
-                await connection.ExecuteAsync(
-                    @"INSERT INTO RFQConversationMessage
-              (ConversationMessageID, ParentMessageID, ProjectID, RfqID, WorkItemID,
-               SubcontractorID, ProjectManagerID, SenderType, MessageText, MessageDateTime,
-               Status, CreatedBy, CreatedOn, Subject, Tag)
-              VALUES
-              (@ConversationMessageID, @ParentMessageID, @ProjectID, @RfqID, @WorkItemID,
-               @SubcontractorID, @ProjectManagerID, @SenderType, @MessageText, @MessageDateTime,
-               @Status, @CreatedBy, @CreatedOn, @Subject, @Tag)",
-                    reply,
-                    transaction
-                );
-
-                // 🔥 EMAIL SEND (CAPTURE REAL ERROR)
-                try
-                {
-                    await SendReplyEmailAsync(parent, reply);
-                    reply.Status = "Sent";
-                }
-                catch (Exception ex)
-                {
-                    reply.Status = "Draft";
-                    emailFailure = ex;
-                }
-
-                await connection.ExecuteAsync(
-                    @"UPDATE RFQConversationMessage
-              SET Status = @Status
-              WHERE ConversationMessageID = @Id",
-                    new { Status = reply.Status, Id = reply.ConversationMessageID },
-                    transaction
-                );
-
-                transaction.Commit();
-                transactionCommitted = true;
-
-                // 🔴 THROW WITH FULL DETAILS
-                if (reply.Status == "Draft")
-                    throw new Exception(
-                        "Email failed. Reply saved as draft. Reason: " +
-                        (emailFailure?.InnerException?.Message ?? emailFailure?.Message)
-                    );
-
-                return reply;
-            }
-            catch
-            {
-                if (!transactionCommitted)
-                    transaction.Rollback();
-                throw;
-            }
+            using var c = new SqlConnection(_connectionString);
+            await c.OpenAsync();
+            await c.ExecuteAsync(
+                @"UPDATE RFQConversationMessage
+                  SET Status = @Status
+                  WHERE ConversationMessageID = @Id",
+                new { Status = "Sent", Id = reply.ConversationMessageID }
+            );
         }
+        catch (Exception ex)
+        {
+            using var c = new SqlConnection(_connectionString);
+            await c.OpenAsync();
 
+            // Optional: store failure reason if you have a column for it
+            // If you don’t have EmailError column, remove EmailError update.
+            await c.ExecuteAsync(
+                @"UPDATE RFQConversationMessage
+                  SET Status = @Status
+                  WHERE ConversationMessageID = @Id",
+                new { Status = "Draft", Id = reply.ConversationMessageID }
+            );
+
+            // log the real reason
+        }
+    });
+
+    return reply; // ✅ returns immediately (fast)
+}
         private static string ConvertToHtml(string text)
         {
             return string.IsNullOrWhiteSpace(text)
@@ -440,119 +417,112 @@ namespace UnibouwAPI.Repositories
                     .Replace("\n", "<br/>");
         }
         private async Task<bool> SendReplyEmailAsync(
-      RFQConversationMessage parent,
-      RFQConversationMessage reply,
-      List<string>? attachmentPaths = null)
+            RFQConversationMessage parent,
+            RFQConversationMessage reply,
+            List<string>? attachmentPaths = null)
         {
             using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync();
 
             // 1️⃣ Fetch subcontractor details
             var sub = await connection.QuerySingleOrDefaultAsync<SubcontractorEmailDto>(
-                @"SELECT EmailID, ISNULL(Name,'Subcontractor') AS Name
+                @"SELECT Email, ISNULL(Name,'Subcontractor') AS Name
           FROM Subcontractors
           WHERE SubcontractorID = @Id",
                 new { Id = parent.SubcontractorID }
             );
-
-            if (sub == null || string.IsNullOrWhiteSpace(sub.EmailID))
+            if (sub == null || string.IsNullOrWhiteSpace(sub.Email))
                 throw new Exception("Subcontractor email not found");
 
-            // 2️⃣ Fetch Project Manager name directly from ProjectManagerID
-            string projectManagerName = "Project Manager";
-            if (parent.ProjectManagerID != Guid.Empty)
-            {
-                var pm = await connection.QuerySingleOrDefaultAsync<dynamic>(
-                    @"SELECT ISNULL(ProjectManagerName,'Project Manager') AS Name
-              FROM ProjectManagers
-              WHERE ProjectManagerID = @id",
-                    new { id = parent.ProjectManagerID }
-                );
+            // 2️⃣ Fetch Project Manager name
+            var personDetails = await _connection.QuerySingleOrDefaultAsync<dynamic>(
+                @"SELECT prj.*, p.Name AS PersonName, ppm.RoleID
+          FROM Projects prj
+          LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
+          LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
+          WHERE prj.ProjectID = @Id", new { id = parent.ProjectID }
+            );
+            string personName = personDetails?.PersonName ?? "Project Assignee";
 
-                projectManagerName = pm?.Name ?? "Project Manager";
-            }
-
-            // 3️⃣ Prepare the parent message text
+            // 3️⃣ Prepare message body
             string parentMessageText = ConvertToHtml(parent.MessageText ?? "");
+            string replyMessageText = ConvertToHtml(reply.MessageText ?? "");
             if (!parentMessageText.TrimStart().StartsWith($"Dear {sub.Name}", StringComparison.OrdinalIgnoreCase))
             {
                 parentMessageText = $"Dear {sub.Name},<br/>{parentMessageText}";
             }
-
-            // 4️⃣ Build email body
             string body = $@"
-<p><strong>Your message:</strong><br/>
-{parentMessageText}</p>
-
+<p><strong>Your message:</strong><br/>{parentMessageText}</p>
 <p><strong>Sent on:</strong> {parent.MessageDateTime:dd-MMM-yyyy HH:mm}</p>
-
 <hr/>
-
-<p><strong>Unibouw Response:</strong><br/>
-{reply.MessageText}</p>
-
+<p><strong>Unibouw Response:</strong><br/>{replyMessageText}</p>
 <p><strong>Replied on:</strong> {reply.MessageDateTime:dd-MMM-yyyy HH:mm}</p>
-
-<p>
-Regards,<br/>
-<strong>{projectManagerName}</strong><br/>
-Project Manager - Unibouw
+<p>Regards,<br/>
+<strong>{personName}</strong><br/>
+Project - Unibouw
 </p>";
 
-            var smtp = _configuration.GetSection("SmtpSettings");
+            // 4️⃣ Send via Microsoft Graph
+            var tenantId = _configuration["GraphEmail:TenantId"];
+            var clientId = _configuration["GraphEmail:ClientId"];
+            var clientSecret = _configuration["GraphEmail:ClientSecret"];
+            var senderUser = _configuration["GraphEmail:SenderUser"];
+            var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+            var graphClient = new GraphServiceClient(credential);
 
-            using var client = new SmtpClient(smtp["Host"], int.Parse(smtp["Port"]))
+            var message = new Message
             {
-                EnableSsl = true,
-                Credentials = new NetworkCredential(
-                    smtp["Username"],
-                    smtp["Password"]
-                )
-            };
-
-            // 🔑 Use logged-in user safely
-            string fromEmail = smtp["Username"];           // Authenticated mailbox (must stay)
-            string fromName = GetSenderName();            // Logged-in user's name
-            string replyTo = GetSenderEmail();            // Logged-in user's email
-
-            var mail = new MailMessage
-            {
-                From = new MailAddress(fromEmail, fromName),
                 Subject = reply.Subject ?? "Unibouw – Reply",
-                Body = body,
-                IsBodyHtml = true
+                Body = new ItemBody
+                {
+                    ContentType = BodyType.Html,
+                    Content = body
+                },
+                ToRecipients = new List<Recipient>
+        {
+            new Recipient { EmailAddress = new EmailAddress { Address = sub.Email } }
+        }
             };
 
-            mail.To.Add(sub.EmailID);
-
-            // ✅ Key change: logged-in user in Reply-To
-            mail.ReplyToList.Add(new MailAddress(replyTo, fromName));
-
-            // Attachments
+            // Attachments (if any)
             if (attachmentPaths?.Any() == true)
             {
+                message.Attachments = new List<Microsoft.Graph.Models.Attachment>();
                 foreach (var path in attachmentPaths.Where(File.Exists))
                 {
-                    mail.Attachments.Add(new Attachment(path));
+                    var bytes = await File.ReadAllBytesAsync(path);
+                    message.Attachments.Add(new FileAttachment
+                    {
+                        OdataType = "#microsoft.graph.fileAttachment",
+                        Name = Path.GetFileName(path),
+                        ContentBytes = bytes,
+                        ContentType = "application/octet-stream"
+                    });
                 }
             }
 
-            await client.SendMailAsync(mail);
+            var sendMailBody = new SendMailPostRequestBody
+            {
+                Message = message,
+                SaveToSentItems = true
+            };
+
+            await graphClient.Users[senderUser].SendMail.PostAsync(sendMailBody);
+
             return true;
         }
-
         // 🔹 Helper methods from your working RFQ/Reminder
         private string GetSenderEmail()
         {
             var email = _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.Email)?.Value
                         ?? _httpContextAccessor.HttpContext?.User?.FindFirst("email")?.Value;
-            return email ?? _configuration["SmtpSettings:FromEmail"];
+            return _configuration["GraphEmail:SenderUser"];
         }
 
         private string GetSenderName()
         {
             return _httpContextAccessor.HttpContext?.User?.FindFirst(ClaimTypes.Name)?.Value
-                   ?? _configuration["SmtpSettings:DisplayName"];
+                   ?? _configuration["GraphEmail:DisplayName"] ?? "Unibouw Communications";
         }
     }
 }

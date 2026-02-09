@@ -2,7 +2,7 @@
 {
     public class RfqResponseStatus
     {
-        public Guid RfqResponseID { get; set; }
+        public Guid RfqResponseStatusID { get; set; }
         public string? RfqResponseStatusName { get; set; }
     }
 }

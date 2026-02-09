@@ -16,7 +16,6 @@ namespace UnibouwAPI.Controllers
         private readonly ILogger<CommonController> _logger;
         DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
 
-
         public CommonController(ICommon repositoryCommon, ILogger<CommonController> logger)
         {
             _repositoryCommon = repositoryCommon;
@@ -363,56 +362,15 @@ namespace UnibouwAPI.Controllers
             }
         }
 
-        //--- Work Planner
-        [HttpGet("workplanner")]
+        //------------ Global RFQ Reminder 
+        // GET: api/RfqGlobalReminder
+        [HttpGet("GetRfqGlobalReminder")]
         [Authorize]
-        public async Task<IActionResult> GetAllWorkPlanner()
+        public async Task<IActionResult> GetRfqGlobalReminder()
         {
             try
             {
-                var items = await _repositoryCommon.GetAllWorkPlanner();
-
-                if (items == null || !items.Any())
-                    return NotFound(new { message = "No work planners found.", data = Array.Empty<WorkPlanner>() });
-
-                return Ok(new { count = items.Count(), data = items });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error fetching work planners.");
-                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
-            }
-        }
-
-        [HttpGet("workplanner/{id}")]
-        [Authorize]
-        public async Task<IActionResult> GetWorkPlannerById(Guid id)
-        {
-            try
-            {
-                var item = await _repositoryCommon.GetWorkPlannerById(id);
-
-                if (item == null)
-                    return NotFound(new { message = $"No work planner found for ID: {id}.", data = (WorkPlanner?)null });
-
-                return Ok(new { data = item });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error fetching work planner by ID: {Id}", id);
-                return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
-            }
-        }
-
-        //------------ Global RFQ Reminder set
-        // GET: api/RfqGolbalReminderSet
-        [HttpGet("GetRfqGolbalReminderSet")]
-        [Authorize]
-        public async Task<IActionResult> GetRfqGolbalReminderSet()
-        {
-            try
-            {
-                var data = await _repositoryCommon.GetRfqGolbalReminderSet();
+                var data = await _repositoryCommon.GetRfqGlobalReminder();
                 return Ok(data);
             }
             catch (Exception ex)
@@ -422,10 +380,10 @@ namespace UnibouwAPI.Controllers
             }
         }
 
-        // PUT: api/RfqGolbalReminderSet/update
-        [HttpPost("UpdateRfqGolbalReminderSet")]
+        // POST: api/RfqGlobalReminder/update
+        [HttpPost("SaveRfqGlobalReminder")]
         [Authorize]
-        public async Task<IActionResult> UpdateRfqGolbalReminderSet([FromBody] RfqGolbalReminderSet reminder)
+        public async Task<IActionResult> SaveRfqGlobalReminder([FromBody] RfqGlobalReminder reminder)
         {
             if (reminder == null)
                 return BadRequest("Invalid data");
@@ -447,7 +405,7 @@ namespace UnibouwAPI.Controllers
 
                 reminder.UpdatedAt = amsterdamNow;
 
-                var result = await _repositoryCommon.UpdateRfqGolbalReminderSet(reminder);
+                var result = await _repositoryCommon.SaveRfqGlobalReminder(reminder);
 
                 if (result > 0)
                     return Ok(new { message = "Reminder configuration updated successfully" });

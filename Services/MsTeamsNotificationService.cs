@@ -20,13 +20,13 @@ namespace UnibouwAPI.Service
         {
             var payload = new
             {
-                text = message
+                message = message
             };
 
             await PostAsync(payload);
         }
 
-        public async Task SendRfqTeamsNotificationAsync(string rfqId, string client, string status)
+       public async Task SendRfqTeamsNotificationAsync(string rfqId, string client, string status)
         {
             var payload = new
             {

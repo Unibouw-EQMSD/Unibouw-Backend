@@ -8,13 +8,13 @@ using UnibouwAPI.Repositories.Interfaces;
 
 namespace UnibouwAPI.Repositories
 {
-    public class RfqReminderSetRepository : IRfqReminderSet
+    public class RfqReminderRepository : IRfqReminder
     {
         private readonly IConfiguration _configuration;
         private readonly string _connectionString;
-        private readonly ILogger<RfqReminderSetController> _logger;
+        private readonly ILogger<RfqReminderController> _logger;
 
-        public RfqReminderSetRepository(IConfiguration configuration, ILogger<RfqReminderSetController> logger)
+        public RfqReminderRepository(IConfiguration configuration, ILogger<RfqReminderController> logger)
         {
             _logger = logger;
             _configuration = configuration;
@@ -25,14 +25,14 @@ namespace UnibouwAPI.Repositories
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
-        public async Task<IEnumerable<RfqReminderSet>> GetAllRfqReminderSet()
+        public async Task<IEnumerable<RfqReminder>> GetAllRfqReminder()
         {
-            var query = @"SELECT * FROM RfqReminderSet";
+            var query = @"SELECT * FROM RfqReminder";
 
-            return await _connection.QueryAsync<RfqReminderSet>(query);
+            return await _connection.QueryAsync<RfqReminder>(query);
          }
 
-        public async Task CreateOrUpdateRfqReminderSet(RfqReminderSet model, List<DateTime> reminderDateTimes, string updatedBy)
+        public async Task CreateOrUpdateRfqReminder(RfqReminder model, List<DateTime> reminderDateTimes, string updatedBy)
         {
             using var connection = new SqlConnection(_connectionString);
             await connection.OpenAsync();
@@ -40,25 +40,25 @@ namespace UnibouwAPI.Repositories
 
             try
             {
-                // 1️⃣ Check if ReminderSet exists
-                var reminderSetId = await connection.QuerySingleOrDefaultAsync<Guid?>(
-                    @"SELECT RfqReminderSetID
-              FROM dbo.RfqReminderSet
+                // 1️⃣ Check if Reminder exists
+                var reminderId = await connection.QuerySingleOrDefaultAsync<Guid?>(
+                    @"SELECT RfqReminderID
+              FROM dbo.RfqReminder
               WHERE RfqID = @RfqID
                 AND SubcontractorID = @SubcontractorID",
                     model,
                     tx
                 );
 
-                // 2️⃣ Insert or Update RfqReminderSet
-                if (reminderSetId == null)
+                // 2️⃣ Insert or Update RfqReminder
+                if (reminderId == null)
                 {
-                    reminderSetId = Guid.NewGuid();
+                    reminderId = Guid.NewGuid();
 
                     await connection.ExecuteAsync(
-                        @"INSERT INTO dbo.RfqReminderSet
+                        @"INSERT INTO dbo.RfqReminder
                   (
-                      RfqReminderSetID,
+                      RfqReminderID,
                       RfqID,
                       SubcontractorID,
                       DueDate,
@@ -68,7 +68,7 @@ namespace UnibouwAPI.Repositories
                   )
                   VALUES
                   (
-                      @RfqReminderSetID,
+                      @RfqReminderID,
                       @RfqID,
                       @SubcontractorID,
                       @DueDate,
@@ -78,7 +78,7 @@ namespace UnibouwAPI.Repositories
                   )",
                         new
                         {
-                            RfqReminderSetID = reminderSetId,
+                            RfqReminderID = reminderId,
                             model.RfqID,
                             model.SubcontractorID,
                             model.DueDate,
@@ -91,16 +91,16 @@ namespace UnibouwAPI.Repositories
                 else
                 {
                     await connection.ExecuteAsync(
-                        @"UPDATE dbo.RfqReminderSet
+                        @"UPDATE dbo.RfqReminder
                   SET
                       DueDate = @DueDate,
                       ReminderEmailBody = @ReminderEmailBody,
                       UpdatedBy = @UpdatedBy,
                       UpdatedAt = SYSDATETIME()
-                  WHERE RfqReminderSetID = @RfqReminderSetID",
+                  WHERE RfqReminderID = @RfqReminderID",
                         new
                         {
-                            RfqReminderSetID = reminderSetId,
+                            RfqReminderID = reminderId,
                             model.DueDate,
                             model.ReminderEmailBody,
                             UpdatedBy = updatedBy
@@ -117,38 +117,38 @@ namespace UnibouwAPI.Repositories
                         IF EXISTS
                         (
                             SELECT 1
-                            FROM dbo.RfqReminderSetSchedule
-                            WHERE RfqReminderSetID = @RfqReminderSetID
+                            FROM dbo.RfqReminderSchedule
+                            WHERE RfqReminderID = @RfqReminderID
                               AND ReminderDateTime = @ReminderDateTime
                         )
                         BEGIN
                             -- Update existing reminder (reset sent status)
                             UPDATE dbo.RfqReminderSetSchedule
                             SET SentAt = NULL
-                            WHERE RfqReminderSetID = @RfqReminderSetID
+                            WHERE RfqReminderID = @RfqReminderID
                               AND ReminderDateTime = @ReminderDateTime
                         END
                         ELSE
                         BEGIN
                             -- Insert new reminder
-                            INSERT INTO dbo.RfqReminderSetSchedule
+                            INSERT INTO dbo.RfqReminderSchedule
                             (
-                                RfqReminderSetScheduleID,
-                                RfqReminderSetID,
+                                RfqReminderScheduleID,
+                                RfqReminderID,
                                 ReminderDateTime,
                                 SentAt
                             )
                             VALUES
                             (
                                 NEWID(),
-                                @RfqReminderSetID,
+                                @RfqReminderID,
                                 @ReminderDateTime,
                                 NULL
                             )
                         END",
                         new
                         {
-                            RfqReminderSetID = reminderSetId,
+                            RfqReminderID = reminderId,
                             ReminderDateTime = reminderDateTime
                         },
                         tx
@@ -165,67 +165,43 @@ namespace UnibouwAPI.Repositories
         }
 
         //--------------------- Auto trigger Reminder ------------------------------------
-        public async Task<IEnumerable<RfqReminderSetSchedule>> GetPendingReminders1(DateTime currentDateTime)
-        {
-            try
-            {
-
-               const string sql = @"
-                    SELECT *
-                    FROM dbo.RfqReminderSetSchedule
-                    WHERE ReminderDateTime = @CurrentDateTime";
-
-
-                using var conn = new SqlConnection(_connectionString);
-                return await conn.QueryAsync<RfqReminderSetSchedule>(
-                    sql,
-                    new { CurrentDateTime = currentDateTime }
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error while fetching pending reminders. CurrentDateTime: ", currentDateTime);
-                throw;
-            }
-        }
-
-        public async Task<IEnumerable<RfqReminderSetSchedule>> GetPendingReminders(DateTime currentDateTime)
+        public async Task<IEnumerable<RfqReminderSchedule>> GetPendingReminders(DateTime currentDateTime)
         {
             try
             {
                 const string sql = @"
-            SELECT
-                rs.RfqReminderSetScheduleID,
-                rs.RfqReminderSetID,
-                rs.ReminderDateTime,
-                rs.SentAt,
+                    SELECT
+                        rs.RfqReminderScheduleID,
+                        rs.RfqReminderID,
+                        rs.ReminderDateTime,
+                        rs.SentAt,
 
-                r.RfqReminderSetID,
-                r.RfqID,
-                r.SubcontractorID,
-                r.DueDate,
-                r.ReminderEmailBody,
-                r.UpdatedBy,
-                r.UpdatedAt         
-            FROM dbo.RfqReminderSetSchedule rs
-            INNER JOIN dbo.RfqReminderSet r
-                ON rs.RfqReminderSetID = r.RfqReminderSetID
-            WHERE rs.ReminderDateTime = @CurrentDateTime";
+                        r.RfqReminderID,
+                        r.RfqID,
+                        r.SubcontractorID,
+                        r.DueDate,
+                        r.ReminderEmailBody,
+                        r.UpdatedBy,
+                        r.UpdatedAt         
+                    FROM dbo.RfqReminderSchedule rs
+                    INNER JOIN dbo.RfqReminder r
+                        ON rs.RfqReminderID = r.RfqReminderID
+                    WHERE rs.ReminderDateTime = @CurrentDateTime";
 
                 using var conn = new SqlConnection(_connectionString);
 
                 var result = await conn.QueryAsync<
-                    RfqReminderSetSchedule,
-                    RfqReminderSet,
-                    RfqReminderSetSchedule>(
+                    RfqReminderSchedule,
+                    RfqReminder,
+                    RfqReminderSchedule>(
                     sql,
-                    (schedule, reminderSet) =>
+                    (schedule, reminder) =>
                     {
-                        schedule.ReminderSet = reminderSet;
+                        schedule.Reminder = reminder;
                         return schedule;
                     },
                     new { CurrentDateTime = currentDateTime },
-                    splitOn: "RfqReminderSetID"
+                    splitOn: "RfqReminderID"
                 );
 
                 return result;
@@ -240,18 +216,18 @@ namespace UnibouwAPI.Repositories
         }
 
 
-        public async Task MarkReminderSent(Guid reminderSetId, DateTime sentDateTime)
+        public async Task MarkReminderSent(Guid reminderId, DateTime sentDateTime)
         {
             const string sql = @"
-                UPDATE dbo.RfqReminderSetSchedule
+                UPDATE dbo.RfqReminderSchedule
                 SET SentAt = @sentDateTime
-                WHERE RfqReminderSetScheduleID = @reminderSetId
+                WHERE RfqReminderScheduleID = @reminderId
                 ";
 
             using var conn = new SqlConnection(_connectionString);
             await conn.ExecuteAsync(sql, new
             {
-                reminderSetId,
+                reminderId,
                 sentDateTime
             });
         }

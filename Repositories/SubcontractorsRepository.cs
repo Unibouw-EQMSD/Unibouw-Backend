@@ -1,7 +1,6 @@
 ﻿using Dapper;
 using Microsoft.Data.SqlClient;
 using System.Data;
-using System.Security.Claims;
 using UnibouwAPI.Helpers;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
@@ -28,32 +27,68 @@ namespace UnibouwAPI.Repositories
         public async Task<IEnumerable<Subcontractor>> GetAllSubcontractor()
         {
             var query = @"
-         SELECT 
-             s.*, 
-             p.Name AS PersonName
-         FROM Subcontractors s
-         LEFT JOIN Persons p ON s.PersonID = p.PersonID
-         WHERE s.IsDeleted = 0";
+                 SELECT 
+                     s.*, 
+                     p.Name AS ContactName,
+                     p.Email AS ContactEmail,
+                     p.PhoneNumber1 AS ContactPhone
+                 FROM Subcontractors s
+                 LEFT JOIN Persons p ON s.PersonID = p.PersonID
+                 WHERE s.IsDeleted = 0";
 
             return await _connection.QueryAsync<Subcontractor>(query);
-
-            //return await _connection.QueryAsync<Subcontractor>("SELECT * FROM Subcontractors");
         }
 
-
-        public async Task<Subcontractor?> GetSubcontractorById(Guid id)
+        public async Task<dynamic?> GetSubcontractorById(Guid id)
         {
+            // 1. Basic subcontractor info + contact
             var query = @"
         SELECT 
             s.*, 
-            p.Name AS PersonName
+            p.Name AS ContactName,
+            p.Email AS ContactEmail,
+            p.PhoneNumber1 AS ContactPhone
         FROM Subcontractors s
         LEFT JOIN Persons p ON s.PersonID = p.PersonID
         WHERE s.SubcontractorID = @Id AND s.IsDeleted = 0";
+            var sub = await _connection.QueryFirstOrDefaultAsync<Subcontractor>(query, new { Id = id });
+            if (sub == null) return null;
 
-            return await _connection.QueryFirstOrDefaultAsync<Subcontractor>(query, new { Id = id });
+            // 2. Unibouw work items (CategoryID = 1)
+            var unibouwWorkItems = await _connection.QueryAsync<string>(
+                @"SELECT w.Name
+          FROM SubcontractorWorkItemsMapping m
+          INNER JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
+          WHERE m.SubcontractorID = @Id AND w.CategoryID = 1",
+                new { Id = id });
 
-            //return await _connection.QueryFirstOrDefaultAsync<Subcontractor>("SELECT * FROM Subcontractors WHERE SubcontractorID = @Id", new { Id = id });
+            // 3. Standard work items (CategoryID = 2, 'NL-SfB')
+            var standardWorkItems = await _connection.QueryAsync<string>(
+                @"SELECT w.Name
+          FROM SubcontractorWorkItemsMapping m
+          INNER JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
+          WHERE m.SubcontractorID = @Id AND w.CategoryID = 2",
+                new { Id = id });
+
+            // 4. Return as an anonymous object (matching your Angular expectations)
+            return new
+            {
+                sub.SubcontractorID,
+                sub.Name,
+                sub.Rating,
+                sub.Email,
+                sub.Location,
+                sub.Country,
+                sub.OfficeAddress,
+                sub.BillingAddress,
+                sub.RegisteredDate,
+                sub.IsActive,
+                sub.ContactName,
+                sub.ContactEmail,
+                sub.ContactPhone,
+                unibouwWorkItems = unibouwWorkItems.ToList(),
+                standardWorkItems = standardWorkItems.ToList()
+            };
         }
 
         public async Task<int> UpdateSubcontractorIsActive(Guid id, bool isActive, string modifiedBy)
@@ -95,26 +130,23 @@ namespace UnibouwAPI.Repositories
                 {
                     try
                     {
-
-                        // ============================
                         //  STEP 1: CHECK DUPLICATE EMAIL or NAME
-                        // ============================
                         // Email check
                         string duplicateEmailQuery = @"
                                 SELECT COUNT(1) 
                                 FROM Subcontractors 
-                                WHERE LOWER(EmailID) = LOWER(@EmailID)
+                                WHERE LOWER(Email) = LOWER(@Email)
                                   AND IsDeleted = 0;
                             ";
 
                         int existingEmailCount = await connection.ExecuteScalarAsync<int>(
                             duplicateEmailQuery,
-                            new { subcontractor.EmailID },
+                            new { subcontractor.Email },
                             transaction
                         );
 
                         if (existingEmailCount > 0)
-                            throw new InvalidOperationException("A subcontractor with this email already exists");
+                            throw new InvalidOperationException("A subcontractor with this email already exists.");
 
                         // Name check
                         string duplicateNameQuery = @"
@@ -131,17 +163,14 @@ namespace UnibouwAPI.Repositories
                         );
 
                         if (existingNameCount > 0)
-                            throw new InvalidOperationException("A subcontractor with this name already exists");
+                            throw new InvalidOperationException("A subcontractor with this name already exists.");
 
-
-                        // ============================
-                        //  STEP 2: CREATE CONTACT PERSON
-                        // ============================
+                        //  STEP 2: INSERT INTO PERSONS TABLE
                         var person = new Person
                         {
                             PersonID = Guid.NewGuid(),
                             Name = subcontractor.ContactName,
-                            Mail = subcontractor.ContactEmailID,
+                            Email = subcontractor.ContactEmail,
                             PhoneNumber1 = subcontractor.ContactPhone,
                             CreatedOn = amsterdamNow,
                             CreatedBy = subcontractor.CreatedBy,
@@ -149,63 +178,60 @@ namespace UnibouwAPI.Repositories
                         };
 
                         string insertPersonQuery = @"
-                INSERT INTO Persons
-                (PersonID, ERP_ID, Name, Mail, PhoneNumber1, PhoneNumber2, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
-                VALUES
-                (@PersonID, @ERP_ID, @Name, @Mail, @PhoneNumber1, @PhoneNumber2, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
-            ";
+                                INSERT INTO Persons
+                                (PersonID, Name, Email, PhoneNumber1, PhoneNumber2, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
+                                VALUES
+                                (@PersonID, @Name, @Email, @PhoneNumber1, @PhoneNumber2, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
+                            ";
 
                         await connection.ExecuteAsync(insertPersonQuery, person, transaction);
 
                         // Store generated PersonID in subcontractor
                         subcontractor.PersonID = person.PersonID;
 
-
-                        // ============================
-                        //  STEP 3: INSERT SUBCONTRACTOR
-                        // ============================
+                        //  STEP 3: INSERT INTO SUBCONTRACTORS TABLE
                         subcontractor.SubcontractorID = Guid.NewGuid();
                         subcontractor.CreatedOn = amsterdamNow;
                         subcontractor.IsActive ??= true;
                         subcontractor.IsDeleted = false;
 
                         string insertSubcontractorQuery = @"
-                INSERT INTO Subcontractors 
-                (SubcontractorID, ERP_ID, Name, Rating, EmailID, PhoneNumber1, PhoneNumber2, 
-                 Location, Country, OfficeAddress, BillingAddress, RegisteredDate, PersonID, 
-                 IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
-                VALUES 
-                (@SubcontractorID, @ERP_ID, @Name, @Rating, @EmailID, @PhoneNumber1, @PhoneNumber2, 
-                 @Location, @Country, @OfficeAddress, @BillingAddress, @RegisteredDate, @PersonID, 
-                 @IsActive, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
-            ";
+                                INSERT INTO Subcontractors 
+                                (SubcontractorID, Name, Rating, Email, Location, Country, OfficeAddress, BillingAddress, RegisteredDate, PersonID, 
+                                 IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted, RemindersSent)
+                                VALUES 
+                                (@SubcontractorID, @Name, @Rating, @Email, @Location, @Country, @OfficeAddress, @BillingAddress, @RegisteredDate, @PersonID, 
+                                 @IsActive, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted, @RemindersSent);
+                            ";
 
                         await connection.ExecuteAsync(insertSubcontractorQuery, subcontractor, transaction);
 
-
-                        // ============================
-                        //  STEP 4: INSERT WORKITEM MAPPINGS
-                        // ============================
+                        //  STEP 4: INSERT INTO SubcontractorWorkItemsMapping table 
                         if (subcontractor.WorkItemIDs != null && subcontractor.WorkItemIDs.Any())
                         {
                             string insertMappingQuery = @"
-                    INSERT INTO SubcontractorWorkItemsMapping 
-                    (SubcontractorID, WorkItemID)
-                    VALUES (@SubcontractorID, @WorkItemID);
-                ";
+                                INSERT INTO SubcontractorWorkItemsMapping 
+                                (SubcontractorID, WorkItemID, CreatedOn, CreatedBy)
+                                VALUES (@SubcontractorID, @WorkItemID, @CreatedOn, @CreatedBy);
+                            ";
 
                             foreach (var workItemId in subcontractor.WorkItemIDs)
                             {
-                                await connection.ExecuteAsync(insertMappingQuery,
-                                    new { SubcontractorID = subcontractor.SubcontractorID, WorkItemID = workItemId },
-                                    transaction
-                                );
+                                await connection.ExecuteAsync(
+                                        insertMappingQuery,
+                                        new
+                                        {
+                                            SubcontractorID = subcontractor.SubcontractorID,
+                                            WorkItemID = workItemId,
+                                            CreatedOn = amsterdamNow,
+                                            CreatedBy = subcontractor.CreatedBy
+                                        },
+                                        transaction
+                                    );
                             }
                         }
 
-                        // ============================
                         //  STEP 5: COMMIT
-                        // ============================
                         transaction.Commit();
                         return true;
                     }
@@ -217,6 +243,74 @@ namespace UnibouwAPI.Repositories
                 }
             }
         }
+
+        public async Task<Subcontractor> GetSubcontractorRemindersSent(Guid id)
+        {
+            var query = @"SELECT RemindersSent FROM Subcontractors WHERE IsDeleted = 0";
+
+            return await _connection.QueryFirstOrDefaultAsync<Subcontractor>(query, new { Id = id });
+        }
+
+        public async Task<int> UpdateSubcontractorRemindersSent(Guid id, int reminderSent)
+        {
+            // Check if subcontractor is non-deleted subcontractor
+            var subcontractor = await _connection.QueryFirstOrDefaultAsync<WorkItem>(
+                "SELECT * FROM Subcontractors WHERE SubcontractorID = @Id AND IsDeleted = 0",
+                new { Id = id }
+            );
+
+            // Return 0 if not found (either inactive or deleted)
+            if (subcontractor == null)
+                return 0;
+
+            var query = @"
+            UPDATE Subcontractors SET
+            RemindersSent = @RemindersSent WHERE SubcontractorID = @Id";
+
+            var parameters = new
+            {
+                Id = id,
+                RemindersSent = reminderSent,
+            };
+
+            return await _connection.ExecuteAsync(query, parameters);
+        }
+
+
+
+        public async Task<int> DeleteSubcontractor(Guid id)
+        {
+            // Check if subcontractor exists and is not already deleted
+            var subcontractor = await _connection.QueryFirstOrDefaultAsync<Subcontractor>(
+                @"SELECT * 
+          FROM Subcontractors 
+          WHERE SubcontractorID = @Id AND IsDeleted = 0",
+                new { Id = id }
+            );
+
+            // Return 0 if not found or already deleted
+            if (subcontractor == null)
+                return 0;
+
+            var query = @"
+        UPDATE Subcontractors
+        SET
+            IsDeleted = 1,
+            DeletedOn = @DeletedOn,
+            DeletedBy = @DeletedBy
+        WHERE SubcontractorID = @Id";
+
+            var parameters = new
+            {
+                Id = id,
+                DeletedOn = amsterdamNow,
+                DeletedBy = "System auto-deleted at the 3rd reminder."
+            };
+
+            return await _connection.ExecuteAsync(query, parameters);
+        }
+
+
     }
 }
 

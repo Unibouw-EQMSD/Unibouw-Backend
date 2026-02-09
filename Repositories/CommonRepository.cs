@@ -213,34 +213,6 @@ WHERE s.IsDeleted = 0;
                 new { Id = id });
         }
 
-        //------ WorkPlanner
-        public async Task<IEnumerable<WorkPlanner>> GetAllWorkPlanner()
-        {
-            return await _connection.QueryAsync<WorkPlanner>(
-                "SELECT * FROM WorkPlanners");
-        }
-
-        public async Task<WorkPlanner?> GetWorkPlannerById(Guid id)
-        {
-            return await _connection.QueryFirstOrDefaultAsync<WorkPlanner>(
-                "SELECT * FROM WorkPlanners WHERE WorkPlannerID = @Id",
-                new { Id = id });
-        }
-
-        //------ ProjectManager
-        public async Task<IEnumerable<ProjectManager>> GetAllProjectManager()
-        {
-            return await _connection.QueryAsync<ProjectManager>(
-                "SELECT * FROM ProjectManagers");
-        }
-
-        public async Task<ProjectManager?> GetProjectManagerById(Guid id)
-        {
-            return await _connection.QueryFirstOrDefaultAsync<ProjectManager>(
-                "SELECT * FROM ProjectManagers WHERE ProjectManagerID = @Id",
-                new { Id = id });
-        }
-
         //------ RfqResponseStatus
         public async Task<IEnumerable<RfqResponseStatus>> GetAllRfqResponseStatus()
         {
@@ -257,28 +229,44 @@ WHERE s.IsDeleted = 0;
 
         //------ Global Rfq Reminder Set
         // Get all reminder settings
-        public async Task<IEnumerable<RfqGolbalReminderSet>> GetRfqGolbalReminderSet()
+        public async Task<IEnumerable<RfqGlobalReminder>> GetRfqGlobalReminder()
         {
-            string query = @"SELECT * FROM RfqGolbalReminderSet";
-            return await _connection.QueryAsync<RfqGolbalReminderSet>(query);
+            string query = @"SELECT * FROM RfqGlobalReminder";
+            return await _connection.QueryAsync<RfqGlobalReminder>(query);
         }
 
         // Update reminder settings
-        public async Task<int> UpdateRfqGolbalReminderSet(RfqGolbalReminderSet reminder)
+        public async Task<int> SaveRfqGlobalReminder(RfqGlobalReminder reminder)
         {
-            const string sql = @"
-        UPDATE TOP (1) RfqGolbalReminderSet
-        SET 
-            ReminderSequence = @ReminderSequence,
-            ReminderTime = @ReminderTime,
-            ReminderEmailBody = @ReminderEmailBody,
-            UpdatedBy = @UpdatedBy,
-            UpdatedAt = @UpdatedAt,
-            IsEnable = @IsEnable";
+            // Check if exists
+            const string checkSql = "SELECT COUNT(1) FROM RfqGlobalReminder";
+            int exists = await _connection.ExecuteScalarAsync<int>(checkSql, new { reminder.RfqGlobalReminderID });
 
-            return await _connection.ExecuteAsync(sql, reminder);
+            if (exists > 0)
+            {
+                const string sql = @"
+                    UPDATE TOP (1) RfqGlobalReminder
+                    SET 
+                        ReminderSequence = @ReminderSequence,
+                        ReminderTime = @ReminderTime,
+                        ReminderEmailBody = @ReminderEmailBody,
+                        UpdatedBy = @UpdatedBy,
+                        UpdatedAt = @UpdatedAt,
+                        IsEnable = @IsEnable";
+                return await _connection.ExecuteAsync(sql, reminder);
+            }
+            else
+            {
+                reminder.RfqGlobalReminderID = Guid.NewGuid();
+                const string sql = @"
+                INSERT INTO RfqGlobalReminder
+                    (RfqGlobalReminderID, ReminderSequence, ReminderTime, ReminderEmailBody, UpdatedBy, UpdatedAt, IsEnable)
+                VALUES
+                    (@RfqGlobalReminderID, @ReminderSequence, @ReminderTime, @ReminderEmailBody, @UpdatedBy, @UpdatedAt, @IsEnable)";
 
-
+                return await _connection.ExecuteAsync(sql, reminder);
+            }
         }
+            
     }
 }

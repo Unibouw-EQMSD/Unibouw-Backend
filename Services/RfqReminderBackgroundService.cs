@@ -14,7 +14,7 @@ namespace UnibouwAPI.Services
             _logger = logger;
         }
 
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        /*protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -30,54 +30,37 @@ namespace UnibouwAPI.Services
                 // Runs every minute for accuracy
                 await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
             }
-        }
+        }*/
 
-
-       /* private async Task ProcessReminders(CancellationToken stoppingToken)
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            var now = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, "India Standard Time");
-
-            DateTime currentDateTime = DateTime.Now;    // current date + time
-
-            DateTime dateHoursMinsOnly = new DateTime(
-                currentDateTime.Year,
-                currentDateTime.Month,
-                currentDateTime.Day,
-                currentDateTime.Hour,
-                currentDateTime.Minute,
-                0
-            );
-
-            using var scope = _scopeFactory.CreateScope();
-
-            var reminderRepo = scope.ServiceProvider.GetRequiredService<IRfqReminderSet>();
-            var subRepo = scope.ServiceProvider.GetRequiredService<ISubcontractors>();
-            var emailRepo = scope.ServiceProvider.GetRequiredService<IEmail>();
-
-            var reminders = await reminderRepo.GetPendingReminders(dateHoursMinsOnly);
-
-            _logger.LogInformation("Reminder triggered at {Time}. Found {Count} reminders.", now.ToString("HH:mm"), reminders.Count());
-
-            foreach (var r in reminders)
+            while (!stoppingToken.IsCancellationRequested)
             {
-                if (stoppingToken.IsCancellationRequested)
-                    break;
-
                 try
                 {
-                    var sub = await subRepo.GetSubcontractorById(r.SubcontractorID);
-                    if (sub == null) continue;
-
-                    await emailRepo.SendReminderEmailAsync(r.SubcontractorID, sub.EmailID, sub.Name, r.RfqID, r.ReminderEmailBody);
-
-                    await reminderRepo.MarkReminderSent(r.RfqReminderSetID, currentDateTime);
+                    await ProcessReminders(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    // Expected during shutdown — do nothing
+                    break;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed sending reminder. RfqReminderSetID={Id}", r.RfqReminderSetID);
+                    _logger.LogError(ex, "Reminder scheduler failed.");
+                }
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
                 }
             }
-        }*/
+        }
+
 
         private async Task ProcessReminders(CancellationToken stoppingToken)
         {
@@ -98,7 +81,7 @@ namespace UnibouwAPI.Services
 
             using var scope = _scopeFactory.CreateScope();
 
-            var reminderRepo = scope.ServiceProvider.GetRequiredService<IRfqReminderSet>();
+            var reminderRepo = scope.ServiceProvider.GetRequiredService<IRfqReminder>();
             var subRepo = scope.ServiceProvider.GetRequiredService<ISubcontractors>();
             var emailRepo = scope.ServiceProvider.GetRequiredService<IEmail>();
 
@@ -117,7 +100,7 @@ namespace UnibouwAPI.Services
 
                 try
                 {
-                    var reminderSet = r.ReminderSet;
+                    var reminderSet = r.Reminder;
                     if (reminderSet == null)
                         continue;
 
@@ -127,7 +110,7 @@ namespace UnibouwAPI.Services
 
                     await emailRepo.SendReminderEmailAsync(
                         reminderSet.SubcontractorID,
-                        sub.EmailID,
+                        sub.Email,
                         sub.Name,
                         reminderSet.RfqID,
                         reminderSet.ReminderEmailBody
@@ -135,7 +118,7 @@ namespace UnibouwAPI.Services
 
                     // ✅ Mark THIS schedule as sent
                     await reminderRepo.MarkReminderSent(
-                        r.RfqReminderSetScheduleID,
+                        r.RfqReminderScheduleID,
                         istNow
                     );
                 }
@@ -144,7 +127,7 @@ namespace UnibouwAPI.Services
                     _logger.LogError(
                         ex,
                         "Failed sending reminder. ScheduleID={ScheduleId}",
-                        r.RfqReminderSetScheduleID
+                        r.RfqReminderScheduleID
                     );
                 }
             }

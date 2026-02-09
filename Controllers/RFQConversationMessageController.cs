@@ -108,7 +108,7 @@ namespace UnibouwAPI.Controllers
         }
 
         [HttpPost("AddLogConversation")]
-        public async Task<IActionResult> AddLogConversation([FromBody] LogConversation logConversation)
+        public async Task<IActionResult> AddLogConversation([FromBody] RfqLogConversation logConversation)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
@@ -274,7 +274,7 @@ namespace UnibouwAPI.Controllers
 
         [HttpPost("Reply")]
         [Authorize]
-        public async Task<IActionResult> Reply([FromForm] Guid parentMessageId, [FromForm] string message, [FromForm] string subject)
+        public async Task<IActionResult> Reply([FromForm] Guid SubcontractorMessageID, [FromForm] string message, [FromForm] string subject)
         {
             try
             {
@@ -286,7 +286,7 @@ namespace UnibouwAPI.Controllers
                     return BadRequest("PM email could not be captured. Please log in again.");
                 }
 
-                var reply = await _repository.ReplyToConversationAsync(parentMessageId,message,subject,pmEmail);
+                var reply = await _repository.ReplyToConversationAsync(SubcontractorMessageID,message,subject,pmEmail);
 
                 if (reply.Status == "Draft")
                     return StatusCode(500, "Email failed. Reply saved as draft.");

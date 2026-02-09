@@ -1,8 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using UnibouwAPI.Models;
-using System;
-using System.Threading.Tasks;
 using UnibouwAPI.Repositories.Interfaces;
 
 namespace UnibouwAPI.Controllers
@@ -82,11 +80,11 @@ namespace UnibouwAPI.Controllers
 
         [HttpGet("WorkItemByCategory/{categoryId}")]
         [Authorize]
-        public async Task<IActionResult> GetWorkItemByCategory(Guid categoryId)
+        public async Task<IActionResult> GetWorkItemByCategory(long categoryId)
         {
             try
             {
-                if (categoryId == Guid.Empty)
+                if (categoryId == null)
                     return BadRequest(new { message = "Invalid category ID." });
 
                 var items = await _repository.GetAllWorkItems();

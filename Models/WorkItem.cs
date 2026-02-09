@@ -3,12 +3,11 @@
 public partial class WorkItem
 {
     public Guid WorkItemID { get; set; }
-    public string? ERP_ID { get; set; }
-    public Guid CategoryID { get; set; }
+    public long? ERP_ID { get; set; }
+    public long CategoryID { get; set; }
     public string? Number { get; set; }
     public string? Name { get; set; }
     public int? WorkItemParentID { get; set; }
-    public string? Description { get; set; }
     public bool IsActive { get; set; }
     public DateTime CreatedOn { get; set; }
     public string? CreatedBy { get; set; }

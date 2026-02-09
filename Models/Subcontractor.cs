@@ -1,20 +1,12 @@
-﻿using Swashbuckle.AspNetCore.Annotations;
-using System.ComponentModel;
-using System.Text.Json.Serialization;
-
-namespace UnibouwAPI.Models;
+﻿namespace UnibouwAPI.Models;
 
 public partial class Subcontractor
 {
-    //[System.Text.Json.Serialization.JsonIgnore]
-    [SwaggerSchema(ReadOnly = true)]
+    //[SwaggerSchema(ReadOnly = true)]
     public Guid SubcontractorID { get; set; }
-    public string? ERP_ID { get; set; }
     public string? Name { get; set; }
     public decimal? Rating { get; set; }
-    public string? EmailID { get; set; }
-    public string? PhoneNumber1 { get; set; }
-    public string? PhoneNumber2 { get; set; }
+    public string? Email { get; set; }
     public string? Location { get; set; }
     public string? Country { get; set; }
     public string? OfficeAddress { get; set; }
@@ -24,25 +16,17 @@ public partial class Subcontractor
     public bool? IsActive { get; set; } = true;
     public DateTime? CreatedOn { get; set; }
     public string? CreatedBy { get; set; }
-    [DefaultValue(null)]
     public DateTime? ModifiedOn { get; set; } = null;
-    [DefaultValue(null)]
     public string? ModifiedBy { get; set; } = null;
-    [DefaultValue(null)]
     public DateTime? DeletedOn { get; set; } = null;
-    [DefaultValue(null)]
     public string? DeletedBy { get; set; } = null;
-    public bool IsDeleted { get; set; } = false; //Default false — appears in Swagger as false automatically
+    public bool IsDeleted { get; set; } = false; 
+    public int? RemindersSent { get; set; } = null;
 
-    // Navigation
-    // [JsonIgnore]
-    //[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    [SwaggerSchema(ReadOnly = true)]
-    public string? PersonName { get; set; }
+    public string? ContactName { get; set; }        
+    public string? ContactEmail { get; set; }       
+    public string? ContactPhone { get; set; }       
 
     public List<Guid>? WorkItemIDs { get; set; }
-
-    public string? ContactName { get; set; }        // INPUT from form
-    public string? ContactEmailID { get; set; }     // INPUT from form
-    public string? ContactPhone { get; set; }       // INPUT from form
+    public List<string>? WorkItemName { get; set; }
 }
