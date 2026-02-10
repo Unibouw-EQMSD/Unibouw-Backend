@@ -295,13 +295,12 @@ namespace UnibouwAPI.Repositories
             return attachment;
         }
         public async Task<RFQConversationMessage> ReplyToConversationAsync(
-    Guid SubcontractorMessageID,
-    string messageText,
-    string subject,
-    string pmEmail,
-    List<string>? attachmentPaths = null
-)
-{
+   Guid SubcontractorMessageID,
+   string messageText,
+   string subject,
+   string pmEmail,
+   List<IFormFile>? files = null)
+        {
     using var connection = new SqlConnection(_connectionString);
     await connection.OpenAsync();
 
@@ -368,16 +367,85 @@ namespace UnibouwAPI.Repositories
         reply,
         transaction
     );
+            var savedPaths = new List<string>();
 
-    // 3) Commit BEFORE email (don’t hold transaction open during SMTP)
-    transaction.Commit();
+            if (files?.Any() == true)
+            {
+                var uploadsFolder = Path.Combine("Uploads", "RFQ");
+                Directory.CreateDirectory(uploadsFolder);
+
+                foreach (var file in files.Where(f => f != null && f.Length > 0))
+                {
+                    var originalFileName = Path.GetFileName(file.FileName);
+
+                    // IMPORTANT: avoid overwriting when same name repeats
+                    var storedFileName = $"{Guid.NewGuid()}_{originalFileName}";
+                    var filePath = Path.Combine(uploadsFolder, storedFileName);
+
+                    using (var stream = new FileStream(filePath, FileMode.Create))
+                        await file.CopyToAsync(stream);
+
+                    // Save DB record
+                    var attachment = new RFQConversationMessageAttachment
+                    {
+                        ConversationMessageID = reply.ConversationMessageID,
+                        FileName = originalFileName,
+                        FileExtension = Path.GetExtension(originalFileName),
+                        FileSize = file.Length,
+                        FilePath = filePath,
+                        UploadedBy = Guid.TryParse(pmEmail, out var g) ? g : (Guid?)null
+                    };
+
+                    const string insertAttachmentSql = @"
+INSERT INTO dbo.RfqConversationMessageAttachment
+(
+  AttachmentID,
+  ConversationMessageID,
+  FileName,
+  FileExtension,
+  FileSize,
+  FilePath,
+  IsActive,
+  UploadedBy,
+  UploadedOn
+)
+VALUES
+(
+  @AttachmentID,
+  @ConversationMessageID,
+  @FileName,
+  @FileExtension,
+  @FileSize,
+  @FilePath,
+  @IsActive,
+  @UploadedBy,
+  @UploadedOn
+);";
+
+                    attachment.AttachmentID = Guid.NewGuid();
+                    attachment.IsActive = true;
+                    attachment.UploadedOn = amsterdamNow;
+
+                    // If UploadedBy is Guid? in DB/model, keep it Guid?; else use string
+                    await connection.ExecuteAsync(
+                      insertAttachmentSql,
+                      attachment,
+                      transaction,
+                      commandTimeout: 120
+                    );
+                    savedPaths.Add(filePath);
+                }
+            }
+
+            // 3) Commit BEFORE email (don’t hold transaction open during SMTP)
+            transaction.Commit();
 
     // 4) Fire-and-forget email send + status update
     _ = Task.Run(async () =>
     {
         try
         {
-            await SendReplyEmailAsync(parent, reply, attachmentPaths);
+            await SendReplyEmailAsync(parent, reply, savedPaths);
 
             using var c = new SqlConnection(_connectionString);
             await c.OpenAsync();
@@ -435,7 +503,7 @@ namespace UnibouwAPI.Repositories
                 throw new Exception("Subcontractor email not found");
 
             // 2️⃣ Fetch Project Manager name
-            var personDetails = await _connection.QuerySingleOrDefaultAsync<dynamic>(
+            var personDetails = await connection.QuerySingleOrDefaultAsync<dynamic>(
                 @"SELECT prj.*, p.Name AS PersonName, ppm.RoleID
           FROM Projects prj
           LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID

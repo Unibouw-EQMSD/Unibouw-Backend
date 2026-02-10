@@ -270,23 +270,23 @@ namespace UnibouwAPI.Controllers
             }
 
         }
-
-
         [HttpPost("Reply")]
         [Authorize]
-        public async Task<IActionResult> Reply([FromForm] Guid SubcontractorMessageID, [FromForm] string message, [FromForm] string subject)
+        public async Task<IActionResult> Reply(
+          [FromForm(Name = "subcontractorMessageID")] Guid SubcontractorMessageID,
+          [FromForm] string message,
+          [FromForm] string subject,
+          [FromForm(Name = "attachments")] List<IFormFile>? files)
         {
             try
             {
-                // var pmEmail = User.FindFirst(ClaimTypes.Email)?.Value;
                 var pmEmail = User.Identity?.Name;
-
                 if (string.IsNullOrWhiteSpace(pmEmail))
-                {
                     return BadRequest("PM email could not be captured. Please log in again.");
-                }
 
-                var reply = await _repository.ReplyToConversationAsync(SubcontractorMessageID,message,subject,pmEmail);
+                var reply = await _repository.ReplyToConversationAsync(
+                  SubcontractorMessageID, message, subject, pmEmail, files
+                );
 
                 if (reply.Status == "Draft")
                     return StatusCode(500, "Email failed. Reply saved as draft.");
@@ -296,10 +296,8 @@ namespace UnibouwAPI.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "An unexpected error occurred.");
-
                 return StatusCode(500, ex.Message);
             }
         }
-
     }
 }
