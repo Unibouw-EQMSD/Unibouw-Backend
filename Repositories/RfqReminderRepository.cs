@@ -123,7 +123,7 @@ namespace UnibouwAPI.Repositories
                         )
                         BEGIN
                             -- Update existing reminder (reset sent status)
-                            UPDATE dbo.RfqReminderSetSchedule
+                            UPDATE dbo.RfqReminderSchedule
                             SET SentAt = NULL
                             WHERE RfqReminderID = @RfqReminderID
                               AND ReminderDateTime = @ReminderDateTime
