@@ -61,18 +61,6 @@ namespace UnibouwAPI.Services
 
         private async Task ProcessReminders(CancellationToken stoppingToken)
         {
-            /* var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(
-                DateTime.UtcNow,
-                "Indian Standard Time"
-            );
-            */
-
-            /* var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(
-                 amsterdamNow,
-                 "Europe Standard Time"
-             );*/
-
-
             var timeZoneId = OperatingSystem.IsWindows()
                 ? "India Standard Time"
                 : "Asia/Kolkata";
@@ -90,7 +78,6 @@ namespace UnibouwAPI.Services
             );
 
             using var scope = _scopeFactory.CreateScope();
-
             var reminderRepo = scope.ServiceProvider.GetRequiredService<IRfqReminder>();
             var subRepo = scope.ServiceProvider.GetRequiredService<ISubcontractors>();
             var emailRepo = scope.ServiceProvider.GetRequiredService<IEmail>();
@@ -107,6 +94,13 @@ namespace UnibouwAPI.Services
             {
                 if (stoppingToken.IsCancellationRequested)
                     break;
+
+                // ✅ Stop immediately if admin disabled reminders mid-run
+                if (!await IsReminderEnabled(stoppingToken))
+                {
+                    _logger.LogInformation("Reminders disabled mid-run. Stopping reminder processing.");
+                    break;
+                }
 
                 try
                 {
@@ -147,18 +141,13 @@ namespace UnibouwAPI.Services
         {
             try
             {
-                const string sql = @"
-                SELECT TOP 1 IsEnable
-                FROM dbo.RfqGlobalReminder";
-
+                const string sql = @"SELECT TOP 1 IsEnable FROM dbo.RfqGlobalReminder;";
                 using var conn = new SqlConnection(_connectionString);
                 var chk = await conn.ExecuteScalarAsync<bool>(sql);
-                return false;
-                /*return await _connectionString.QueryAsync<bool>(sql);*/
+                return chk; // ✅ FIX
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                // Expected during shutdown
                 return false;
             }
             catch (Exception ex)

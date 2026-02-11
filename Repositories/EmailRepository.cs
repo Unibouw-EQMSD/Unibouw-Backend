@@ -90,10 +90,10 @@ namespace UnibouwAPI.Repositories
         }
 
         private async Task SendGraphEmailAsyncWithAttachments(
-    string toEmail,
-    string subject,
-    string htmlBody,
-    List<Microsoft.Graph.Models.Attachment>? attachments = null)
+      string toEmail,
+      string subject,
+      string htmlBody,
+      List<Microsoft.Graph.Models.Attachment>? attachments = null)
         {
             var tenantId = _configuration["GraphEmail:TenantId"];
             var clientId = _configuration["GraphEmail:ClientId"];
@@ -103,22 +103,25 @@ namespace UnibouwAPI.Repositories
             var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
             var graphClient = new GraphServiceClient(credential);
 
-            var message = new Message
+            var message = new Microsoft.Graph.Models.Message
             {
                 Subject = subject,
-                Body = new ItemBody
+                Body = new Microsoft.Graph.Models.ItemBody
                 {
-                    ContentType = BodyType.Html,
+                    ContentType = Microsoft.Graph.Models.BodyType.Html,
                     Content = htmlBody
                 },
-                ToRecipients = new List<Recipient>
+                ToRecipients = new List<Microsoft.Graph.Models.Recipient>
         {
-            new Recipient { EmailAddress = new EmailAddress { Address = toEmail } }
+            new Microsoft.Graph.Models.Recipient
+            {
+                EmailAddress = new Microsoft.Graph.Models.EmailAddress { Address = toEmail }
+            }
         },
-                Attachments = attachments
+                Attachments = attachments ?? new List<Microsoft.Graph.Models.Attachment>() // ✅ LIST
             };
 
-            var sendMailBody = new SendMailPostRequestBody
+            var sendMailBody = new Microsoft.Graph.Users.Item.SendMail.SendMailPostRequestBody
             {
                 Message = message,
                 SaveToSentItems = true
@@ -251,6 +254,13 @@ Project - Unibouw
         // ================= REMINDER EMAIL =================
         public async Task<bool> SendReminderEmailAsync(Guid subcontractorId, string recipientEmail, string subcontractorName, Guid rfqId, string emailBody)
         {
+            var enabled = await _connection.ExecuteScalarAsync<bool>(
+        "SELECT TOP 1 IsEnable FROM dbo.RfqGlobalReminder"
+    );
+
+            if (!enabled)
+                return false;
+
             if (string.IsNullOrWhiteSpace(recipientEmail))
                 throw new ArgumentException("Recipient email invalid");
 
@@ -270,7 +280,7 @@ Project - Unibouw
 <p>{emailBody}</p>
 <p>Regards,<br/>
 <strong>{personName}</strong><br/>
-Project - Unibouw testing
+Project - Unibouw
 </p>";
 
             await SendGraphEmailAsync(recipientEmail, "Reminder: Upload Your Quote - Unibouw", htmlBody);

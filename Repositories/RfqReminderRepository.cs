@@ -170,23 +170,24 @@ namespace UnibouwAPI.Repositories
             try
             {
                 const string sql = @"
-                    SELECT
-                        rs.RfqReminderScheduleID,
-                        rs.RfqReminderID,
-                        rs.ReminderDateTime,
-                        rs.SentAt,
-
-                        r.RfqReminderID,
-                        r.RfqID,
-                        r.SubcontractorID,
-                        r.DueDate,
-                        r.ReminderEmailBody,
-                        r.UpdatedBy,
-                        r.UpdatedAt         
-                    FROM dbo.RfqReminderSchedule rs
-                    INNER JOIN dbo.RfqReminder r
-                        ON rs.RfqReminderID = r.RfqReminderID
-                    WHERE rs.ReminderDateTime = @CurrentDateTime";
+SELECT
+    rs.RfqReminderScheduleID,
+    rs.RfqReminderID,
+    rs.ReminderDateTime,
+    rs.SentAt,
+    r.RfqReminderID,
+    r.RfqID,
+    r.SubcontractorID,
+    r.DueDate,
+    r.ReminderEmailBody,
+    r.UpdatedBy,
+    r.UpdatedAt
+FROM dbo.RfqReminderSchedule rs
+INNER JOIN dbo.RfqReminder r
+    ON rs.RfqReminderID = r.RfqReminderID
+WHERE rs.ReminderDateTime = @CurrentDateTime
+  AND rs.SentAt IS NULL
+  AND EXISTS (SELECT 1 FROM dbo.RfqGlobalReminder WHERE IsEnable = 1);";
 
                 using var conn = new SqlConnection(_connectionString);
 
