@@ -1,5 +1,6 @@
 ﻿using Dapper;
 using Microsoft.Data.SqlClient;
+using System;
 using UnibouwAPI.Helpers;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
@@ -61,11 +62,19 @@ namespace UnibouwAPI.Services
 
         private async Task ProcessReminders(CancellationToken stoppingToken)
         {
-            var timeZoneId = OperatingSystem.IsWindows()
-                ? "India Standard Time"
-                : "Asia/Kolkata";
+            //var timeZoneId = OperatingSystem.IsWindows()
+            //    ? "India Standard Time"
+            //    : "Asia/Kolkata";
 
-            var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, timeZoneId);
+
+            //var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, timeZoneId);
+
+            var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(
+                 amsterdamNow,
+                 "Europe Standard Time"
+             );
+
+          
 
             // Ignore seconds
             var dateHoursMinsOnly = new DateTime(
