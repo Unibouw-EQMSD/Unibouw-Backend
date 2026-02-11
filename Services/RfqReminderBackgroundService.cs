@@ -62,27 +62,18 @@ namespace UnibouwAPI.Services
 
         private async Task ProcessReminders(CancellationToken stoppingToken)
         {
-            //var timeZoneId = OperatingSystem.IsWindows()
-            //    ? "India Standard Time"
-            //    : "Asia/Kolkata";
+            var timeZoneId = OperatingSystem.IsWindows()
+                ? "W. Europe Standard Time"
+                : "Europe/Amsterdam";
 
+            var amsNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, timeZoneId);
 
-            //var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, timeZoneId);
-
-            var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(
-                 amsterdamNow,
-                 "Europe Standard Time"
-             );
-
-          
-
-            // Ignore seconds
             var dateHoursMinsOnly = new DateTime(
-                istNow.Year,
-                istNow.Month,
-                istNow.Day,
-                istNow.Hour,
-                istNow.Minute,
+                amsNow.Year,
+                amsNow.Month,
+                amsNow.Day,
+                amsNow.Hour,
+                amsNow.Minute,
                 0
             );
 
@@ -95,7 +86,7 @@ namespace UnibouwAPI.Services
 
             _logger.LogInformation(
                 "Reminder triggered at {Time}. Found {Count} reminders.",
-                istNow.ToString("HH:mm"),
+                amsNow.ToString("HH:mm"),
                 reminders.Count()
             );
 
@@ -132,7 +123,7 @@ namespace UnibouwAPI.Services
                     // ✅ Mark THIS schedule as sent
                     await reminderRepo.MarkReminderSent(
                         r.RfqReminderScheduleID,
-                        istNow
+                        amsNow
                     );
                 }
                 catch (Exception ex)
