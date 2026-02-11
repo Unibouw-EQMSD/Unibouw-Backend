@@ -44,7 +44,7 @@ namespace UnibouwAPI.Services
                 }
                 catch (Exception ex)
                 {
-                    /*_logger.LogError(ex, "Reminder scheduler failed.");*/
+                    _logger.LogError(ex, "Reminder scheduler failed.");
                 }
 
                 try
@@ -62,14 +62,22 @@ namespace UnibouwAPI.Services
         private async Task ProcessReminders(CancellationToken stoppingToken)
         {
             /* var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(
+                DateTime.UtcNow,
+                "Indian Standard Time"
+            );
+            */
+
+            /* var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(
                  amsterdamNow,
                  "Europe Standard Time"
              );*/
 
-            var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(
-               DateTime.UtcNow,
-               "Indian Standard Time"
-           );
+
+            var timeZoneId = OperatingSystem.IsWindows()
+                ? "India Standard Time"
+                : "Asia/Kolkata";
+
+            var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, timeZoneId);
 
             // Ignore seconds
             var dateHoursMinsOnly = new DateTime(
@@ -145,7 +153,7 @@ namespace UnibouwAPI.Services
 
                 using var conn = new SqlConnection(_connectionString);
                 var chk = await conn.ExecuteScalarAsync<bool>(sql);
-                return chk;
+                return false;
                 /*return await _connectionString.QueryAsync<bool>(sql);*/
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
