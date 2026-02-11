@@ -62,12 +62,7 @@ namespace UnibouwAPI.Repositories
 
             var user = _httpContextAccessor.HttpContext?.User;
 
-            var senderUser =
-                user?.FindFirst("preferred_username")?.Value
-                ?? user?.FindFirst("email")?.Value
-                ?? user?.FindFirst(ClaimTypes.Email)?.Value
-                ?? user?.Identity?.Name
-                ?? _configuration["GraphEmail:SenderUser"];
+            var senderUser = _configuration["GraphEmail:SenderUser"];
             var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
             var graphClient = new GraphServiceClient(credential);
 
