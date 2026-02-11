@@ -11,7 +11,7 @@ namespace UnibouwAPI.Repositories.Interfaces
         Task<Person?> GetPersonById(Guid id);
         Task<int> CreatePerson(Person person);
 
-        Task<IEnumerable<SubcontractorWorkItemMapping>> GetAllSubcontractorWorkItemMapping();
+        Task<IEnumerable<SubcontractorWorkItemMapping>> GetAllSubcontractorWorkItemMapping(bool onlyActive = false);
         Task<List<SubcontractorWorkItemMapping?>> GetSubcontractorWorkItemMappingById(Guid id);
         Task<bool> CreateSubcontractorWorkItemMapping(SubcontractorWorkItemMapping mapping);
 

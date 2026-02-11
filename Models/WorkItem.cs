@@ -19,4 +19,5 @@ public partial class WorkItem
 
     // Navigation
     public string? CategoryName { get; set; }
+    public DateTime? DueDate { get; set; }
 }

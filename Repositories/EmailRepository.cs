@@ -59,8 +59,15 @@ namespace UnibouwAPI.Repositories
             var tenantId = _configuration["GraphEmail:TenantId"];
             var clientId = _configuration["GraphEmail:ClientId"];
             var clientSecret = _configuration["GraphEmail:ClientSecret"];
-            var senderUser = _configuration["GraphEmail:SenderUser"];
 
+            var user = _httpContextAccessor.HttpContext?.User;
+
+            var senderUser =
+                user?.FindFirst("preferred_username")?.Value
+                ?? user?.FindFirst("email")?.Value
+                ?? user?.FindFirst(ClaimTypes.Email)?.Value
+                ?? user?.Identity?.Name
+                ?? _configuration["GraphEmail:SenderUser"];
             var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
             var graphClient = new GraphServiceClient(credential);
 
@@ -86,7 +93,6 @@ namespace UnibouwAPI.Repositories
 
             await graphClient.Users[senderUser].SendMail.PostAsync(sendMailBody);
         }
-
 
         private async Task SendGraphEmailAsyncWithAttachments(
     string toEmail,

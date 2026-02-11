@@ -190,7 +190,11 @@ VALUES
         }
 
 
-        public async Task<object?> GetProjectSummaryAsync(Guid rfqId, Guid? subcontractorId = null, List<Guid>? workItemIds = null, Guid? workItemId = null)
+        public async Task<object?> GetProjectSummaryAsync(
+      Guid rfqId,
+      Guid? subcontractorId = null,
+      List<Guid>? workItemIds = null,
+      Guid? workItemId = null)
         {
             using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync();
@@ -202,56 +206,25 @@ VALUES
                     throw new Exception("Missing subcontractorId.");
 
                 if ((workItemIds == null || !workItemIds.Any()) && workItemId.HasValue)
-                {
                     workItemIds = new List<Guid> { workItemId.Value };
-                }
 
-                /* ---------------- PROJECT ---------------- */
-                /*const string projectSql = @"
-                    SELECT 
-                        p.ProjectID,
-                        p.Name,
-                        p.Number,
-                        p.Company,
-                        p.StartDate,
-                        p.CompletionDate,
-                        p.Status,
-                        p.SharepointURL,
-                        p.CustomerID,
-                        c.CustomerName
-                    FROM Projects p
-                    INNER JOIN Rfq r 
-                        ON r.ProjectID = p.ProjectID
-                    LEFT JOIN Customers c
-                        ON c.CustomerID = p.CustomerID
-                    WHERE r.RfqID = @RfqID";*/
-
+                // 1. Project
                 const string projectSql = @"
-                        SELECT 
-                            p.*,
-                            c.CustomerName,
-                            ppm.PersonID,
-                            per.Name AS PersonName,
-                            per.Email AS PersonEmail,
-                            role.RoleName AS PersonRole
-                        FROM Projects p
-                        INNER JOIN Rfq r 
-                            ON r.ProjectID = p.ProjectID
-                        LEFT JOIN Customers c
-                            ON c.CustomerID = p.CustomerID
-                        LEFT JOIN PersonProjectMapping ppm
-                            ON ppm.ProjectID = p.ProjectID
-                        LEFT JOIN Persons per
-                            ON per.PersonID = ppm.PersonID
-                        LEFT JOIN Roles role
-                            ON role.RoleID = ppm.RoleID
-                        WHERE r.RfqID = @RfqID";
-
-                var project = await conn.QueryFirstOrDefaultAsync<Project>(
-                    projectSql,
-                    new { RfqID = rfqId },
-                    tran
-                );
+SELECT 
+    p.*,
+    c.CustomerName,
+    ppm.PersonID,
+    per.Name  AS PersonName,
+    per.Email AS PersonEmail,
+    role.RoleName AS PersonRole
+FROM Projects p
+INNER JOIN Rfq r ON r.ProjectID = p.ProjectID
+LEFT JOIN Customers c ON c.CustomerID = p.CustomerID
+LEFT JOIN PersonProjectMapping ppm ON ppm.ProjectID = p.ProjectID
+LEFT JOIN Persons per ON per.PersonID = ppm.PersonID
+LEFT JOIN Roles role ON role.RoleID = ppm.RoleID
+WHERE r.RfqID = @RfqID";
+                var project = await conn.QueryFirstOrDefaultAsync<Project>(projectSql, new { RfqID = rfqId }, tran);
 
                 if (project == null)
                 {
@@ -259,34 +232,44 @@ VALUES
                     return null;
                 }
 
-                /* ---------------- RFQ (CRITICAL) ---------------- */
+                // 2. RFQ
                 const string rfqSql = @"
-                    SELECT 
-                        RfqID,
-                        RfqNumber,
-                        DueDate,
-                        GlobalDueDate,
-                        SentDate
-                    FROM Rfq
-                    WHERE RfqID = @RfqID";
+SELECT 
+    RfqID,
+    RfqNumber,
+    DueDate,
+    GlobalDueDate,
+    SentDate
+FROM Rfq
+WHERE RfqID = @RfqID";
+                var rfq = await conn.QueryFirstOrDefaultAsync<Rfq>(rfqSql, new { RfqID = rfqId }, tran);
 
-                var rfq = await conn.QueryFirstOrDefaultAsync<Rfq>(
-                    rfqSql,
-                    new { RfqID = rfqId },
+                // 3. Subcontractor-specific DueDate
+                const string subDueSql = @"
+SELECT TOP 1 DueDate
+FROM dbo.RfqSubcontractorMapping
+WHERE RfqID = @RfqID
+  AND SubcontractorID = @SubcontractorID
+ORDER BY CreatedOn DESC";
+                var subcontractorDueDate = await conn.QueryFirstOrDefaultAsync<DateTime?>(
+                    subDueSql,
+                    new { RfqID = rfqId, SubcontractorID = subcontractorId.Value },
                     tran
                 );
 
-                /* ---------------- WORK ITEMS ---------------- */
-                string workItemSql = @"
-                    SELECT 
-                        w.WorkItemID,
-                        w.Name,
-                        w.Number
-                    FROM WorkItems w
-                    INNER JOIN RfqWorkItemMapping rwim 
-                        ON rwim.WorkItemID = w.WorkItemID
-                    WHERE rwim.RfqID = @RfqID";
+                // Override DueDate with subcontractor-specific one if found
+                if (rfq != null && subcontractorDueDate.HasValue)
+                    rfq.DueDate = subcontractorDueDate.Value;
 
+                // 4. Work Items
+                string workItemSql = @"
+SELECT 
+    w.WorkItemID,
+    w.Name,
+    w.Number
+FROM WorkItems w
+INNER JOIN RfqWorkItemMapping rwim ON rwim.WorkItemID = w.WorkItemID
+WHERE rwim.RfqID = @RfqID";
                 if (workItemIds != null && workItemIds.Any())
                     workItemSql += " AND w.WorkItemID IN @WorkItemIds";
 
@@ -298,11 +281,10 @@ VALUES
 
                 tran.Commit();
 
-                /* ---------------- RETURN EVERYTHING ---------------- */
                 return new
                 {
                     Project = project,
-                    Rfq = rfq,
+                    Rfq = rfq, // <-- .DueDate is now individualized
                     WorkItems = workItems
                 };
             }
@@ -312,9 +294,6 @@ VALUES
                 throw;
             }
         }
-
-
-
         public async Task<List<dynamic>> GetPreviousSubmissionsAsync(
      Guid rfqId,
      Guid subcontractorId)

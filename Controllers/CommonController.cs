@@ -130,19 +130,16 @@ namespace UnibouwAPI.Controllers
                 return StatusCode(500, "An unexpected error occurred.");
             }
         }
-    
-        //--- Subcontractor WorkItem Mapping
+
         [HttpGet("subcontractorworkitemmapping")]
         [Authorize]
-        public async Task<IActionResult> GetAllSubcontractorWorkItemMapping()
+        public async Task<IActionResult> GetAllSubcontractorWorkItemMapping([FromQuery] bool onlyActive = false)
         {
             try
             {
-                var items = await _repositoryCommon.GetAllSubcontractorWorkItemMapping();
-
+                var items = await _repositoryCommon.GetAllSubcontractorWorkItemMapping(onlyActive);
                 if (items == null || !items.Any())
                     return NotFound(new { message = "No subcontractor work item mappings found.", data = Array.Empty<SubcontractorWorkItemMapping>() });
-
                 return Ok(new { count = items.Count(), data = items });
             }
             catch (Exception ex)

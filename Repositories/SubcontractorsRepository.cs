@@ -50,7 +50,7 @@ namespace UnibouwAPI.Repositories
             p.PhoneNumber1 AS ContactPhone
         FROM Subcontractors s
         LEFT JOIN Persons p ON s.PersonID = p.PersonID
-        WHERE s.SubcontractorID = @Id AND s.IsDeleted = 0";
+        WHERE s.SubcontractorID = @Id AND s.IsDeleted = 0 AND s.IsActive = 1;";
             var sub = await _connection.QueryFirstOrDefaultAsync<Subcontractor>(query, new { Id = id });
             if (sub == null) return null;
 
