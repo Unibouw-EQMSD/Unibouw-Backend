@@ -1,36 +1,29 @@
-﻿using UnibouwAPI.Models;
+﻿using Dapper;
+using Microsoft.Data.SqlClient;
+using UnibouwAPI.Helpers;
+using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory;
 
 namespace UnibouwAPI.Services
 {
     public class RfqReminderBackgroundService : BackgroundService
     {
-        private readonly IServiceScopeFactory _scopeFactory;
+        private readonly IConfiguration _configuration;
+        private readonly string _connectionString;
         private readonly ILogger<RfqReminderBackgroundService> _logger;
+        private readonly IServiceScopeFactory _scopeFactory;
+        DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
 
-        public RfqReminderBackgroundService(IServiceScopeFactory scopeFactory, ILogger<RfqReminderBackgroundService> logger)
+        public RfqReminderBackgroundService(IConfiguration configuration, IServiceScopeFactory scopeFactory, ILogger<RfqReminderBackgroundService> logger)
         {
             _scopeFactory = scopeFactory;
             _logger = logger;
+            _configuration = configuration;
+            _connectionString = _configuration.GetConnectionString("UnibouwDbConnection");
+            if (string.IsNullOrEmpty(_connectionString))
+                throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
         }
-
-        /*protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-        {
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                try
-                {
-                    await ProcessReminders(stoppingToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Reminder scheduler failed.");
-                }
-
-                // Runs every minute for accuracy
-                await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
-            }
-        }*/
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -38,7 +31,11 @@ namespace UnibouwAPI.Services
             {
                 try
                 {
-                    await ProcessReminders(stoppingToken);
+                    // Check if reminder scheduler is enabled
+                    if (await IsReminderEnabled(stoppingToken))
+                    {
+                        await ProcessReminders(stoppingToken);
+                    }
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -47,7 +44,7 @@ namespace UnibouwAPI.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Reminder scheduler failed.");
+                    /*_logger.LogError(ex, "Reminder scheduler failed.");*/
                 }
 
                 try
@@ -64,10 +61,15 @@ namespace UnibouwAPI.Services
 
         private async Task ProcessReminders(CancellationToken stoppingToken)
         {
+            /* var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(
+                 amsterdamNow,
+                 "Europe Standard Time"
+             );*/
+
             var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(
-                DateTime.UtcNow,
-                "India Standard Time"
-            );
+               DateTime.UtcNow,
+               "Indian Standard Time"
+           );
 
             // Ignore seconds
             var dateHoursMinsOnly = new DateTime(
@@ -132,6 +134,33 @@ namespace UnibouwAPI.Services
                 }
             }
         }
+
+        private async Task<bool> IsReminderEnabled(CancellationToken stoppingToken)
+        {
+            try
+            {
+                const string sql = @"
+                SELECT TOP 1 IsEnable
+                FROM dbo.RfqGlobalReminder";
+
+                using var conn = new SqlConnection(_connectionString);
+                var chk = await conn.ExecuteScalarAsync<bool>(sql);
+                return chk;
+                /*return await _connectionString.QueryAsync<bool>(sql);*/
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // Expected during shutdown
+                return false;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to check reminder enable status from RfqGlobalReminder table.");
+                return false;
+            }
+        }
+
+
 
     }
 }

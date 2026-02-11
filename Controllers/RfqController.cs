@@ -150,7 +150,7 @@ namespace UnibouwAPI.Controllers
                 rfq.RfqSent = sendEmail ? 1 : 0;
                 rfq.Status = sendEmail ? "Sent" : "Draft";
                 rfq.CreatedBy = userEmail;
-                rfq.CreatedOn = DateTime.UtcNow;
+                rfq.CreatedOn = amsterdamNow;
 
                 // 1️⃣ Create RFQ
                 var rfqId = await _repository.CreateRfqAsync(rfq, subcontractorIds);
@@ -200,7 +200,7 @@ namespace UnibouwAPI.Controllers
                                 SubcontractorID = email.SubcontractorIDs.First(),
                                 SenderType = "PM",
                                 MessageText = HtmlToPlainText(email.Body),
-                                MessageDateTime = DateTime.UtcNow,
+                                MessageDateTime = amsterdamNow,
                                 CreatedBy = userEmail
                             }
                         );

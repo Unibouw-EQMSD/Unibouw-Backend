@@ -62,19 +62,5 @@ namespace UnibouwAPI.BackgroundServices
             return nextRun - amsterdamNow;
         }
 
-        //For testing purpose
-/* private static TimeSpan GetDelayUntilNext730AMAmsterdam()
-        {
-            var istNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(
-                DateTime.UtcNow,
-                "India Standard Time"
-            );
-
-            // Run after 2 minutes (testing only)
-            var nextRun = istNow.AddMinutes(2);
-
-            return nextRun - istNow;
-        }*/
-
     }
 }

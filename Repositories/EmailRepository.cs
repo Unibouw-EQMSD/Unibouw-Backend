@@ -88,11 +88,7 @@ namespace UnibouwAPI.Repositories
         }
 
 
-        private async Task SendGraphEmailAsyncWithAttachments(
-    string toEmail,
-    string subject,
-    string htmlBody,
-    List<Microsoft.Graph.Models.Attachment>? attachments = null)
+        private async Task SendGraphEmailAsyncWithAttachments(string toEmail, string subject, string htmlBody, List<Microsoft.Graph.Models.Attachment>? attachments = null)
         {
             var tenantId = _configuration["GraphEmail:TenantId"];
             var clientId = _configuration["GraphEmail:ClientId"];
@@ -248,12 +244,7 @@ Project - Unibouw
         }
 
         // ================= REMINDER EMAIL =================
-        public async Task<bool> SendReminderEmailAsync(
-      Guid subcontractorId,
-      string recipientEmail,
-      string subcontractorName,
-      Guid rfqId,
-      string emailBody)
+        public async Task<bool> SendReminderEmailAsync(Guid subcontractorId, string recipientEmail, string subcontractorName, Guid rfqId, string emailBody)
         {
             if (string.IsNullOrWhiteSpace(recipientEmail))
                 throw new ArgumentException("Recipient email invalid");
