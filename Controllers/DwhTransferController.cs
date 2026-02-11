@@ -14,6 +14,7 @@ namespace UnibouwAPI.Controllers
         private readonly IMsTeamsNotification _teamsService;
         private readonly ISubcontractors _subcontractorRepo;
         private readonly ILogger<DwhTransferController> _logger;
+        DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
 
         public DwhTransferController(DwhTransferService transferService,IMsTeamsNotification teamsService, ISubcontractors subcontractorRepo, ILogger<DwhTransferController> logger)
         {
@@ -28,7 +29,7 @@ namespace UnibouwAPI.Controllers
         {
             try
             {
-                _logger.LogInformation("DWH Sync started at {Time}", DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow));
+                _logger.LogInformation("DWH Sync started at {Time}", amsterdamNow);
                 var result = await _transferService.SyncAllAsync();
 
                 // ✅ Success logger
@@ -38,7 +39,7 @@ namespace UnibouwAPI.Controllers
                     "WorkItems:  Inserted={WI}, Updated={WU}, Skipped={WS}\n" +
                     "Customers:  Inserted={CUI}, Updated={CUU}, Skipped={CUS}\n" +
                     "Projects:   Inserted={PI}, Updated={PU}, Skipped={PS}",
-                    DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow),
+                    amsterdamNow,
 
                     // Categories
                     result.Categories.Inserted.Count,
@@ -183,7 +184,7 @@ This is a follow-up regarding the subcontractor data missing from the DWH after 
                             "📨 Reminder {ReminderNumber} sent for Subcontractor Email {Email} at {Time}",
                             reminderCount + 1,
                             subcontractor.Email,
-                            DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow)
+                            amsterdamNow
                           );
                     }
                 }
@@ -358,7 +359,7 @@ This is a follow-up regarding the subcontractor data missing from the DWH after 
                         "📨 Reminder {ReminderNumber} sent for Subcontractor Email {Email} at {Time}",
                         reminderCount,
                         subcontractor.Email,
-                        DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow)
+                        amsterdamNow
                     );
                 }
 

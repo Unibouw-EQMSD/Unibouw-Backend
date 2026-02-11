@@ -242,33 +242,49 @@ namespace UnibouwAPI.Repositories
         {
             // Check if exists
             const string checkSql = "SELECT COUNT(1) FROM RfqGlobalReminder";
-            int exists = await _connection.ExecuteScalarAsync<int>(checkSql, new { reminder.RfqGlobalReminderID });
+            int exists = await _connection.ExecuteScalarAsync<int>(checkSql);
 
             if (exists > 0)
             {
-                const string sql = @"
-                    UPDATE TOP (1) RfqGlobalReminder
-                    SET 
-                        ReminderSequence = @ReminderSequence,
-                        ReminderTime = @ReminderTime,
-                        ReminderEmailBody = @ReminderEmailBody,
-                        UpdatedBy = @UpdatedBy,
-                        UpdatedAt = @UpdatedAt,
-                        IsEnable = @IsEnable";
+                string sql;
+
+                if (reminder.IsEnable == false)
+                {
+                    sql = @"
+                UPDATE TOP (1) RfqGlobalReminder
+                SET 
+                    IsEnable = @IsEnable,
+                    UpdatedBy = @UpdatedBy,
+                    UpdatedAt = @UpdatedAt";
+                }
+                else
+                {
+                    sql = @"
+                UPDATE TOP (1) RfqGlobalReminder
+                SET 
+                    ReminderSequence = @ReminderSequence,
+                    ReminderTime = @ReminderTime,
+                    ReminderEmailBody = @ReminderEmailBody,
+                    UpdatedBy = @UpdatedBy,
+                    UpdatedAt = @UpdatedAt,
+                    IsEnable = @IsEnable";
+                }
+
                 return await _connection.ExecuteAsync(sql, reminder);
             }
             else
             {
                 reminder.RfqGlobalReminderID = Guid.NewGuid();
+
                 const string sql = @"
-                INSERT INTO RfqGlobalReminder
-                    (RfqGlobalReminderID, ReminderSequence, ReminderTime, ReminderEmailBody, UpdatedBy, UpdatedAt, IsEnable)
-                VALUES
-                    (@RfqGlobalReminderID, @ReminderSequence, @ReminderTime, @ReminderEmailBody, @UpdatedBy, @UpdatedAt, @IsEnable)";
+            INSERT INTO RfqGlobalReminder
+                (RfqGlobalReminderID, ReminderSequence, ReminderTime, ReminderEmailBody, UpdatedBy, UpdatedAt, IsEnable)
+            VALUES
+                (@RfqGlobalReminderID, @ReminderSequence, @ReminderTime, @ReminderEmailBody, @UpdatedBy, @UpdatedAt, @IsEnable)";
 
                 return await _connection.ExecuteAsync(sql, reminder);
             }
         }
-            
+
     }
 }
