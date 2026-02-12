@@ -10,5 +10,8 @@ namespace UnibouwAPI.Repositories.Interfaces
         //--------------------- Auto trigger Reminder ------------------------------------
         Task<IEnumerable<RfqReminderSchedule>> GetPendingReminders(DateTime currentDateTime);
         Task MarkReminderSent(Guid reminderId, DateTime sentDateTime);
+        Task<AutoScheduleGenerateResult> GenerateAutoSchedulesFromGlobalConfigAsync(string updatedBy);
+        Task<bool> HasUploadedQuoteAsync(Guid rfqId, Guid subcontractorId);
+        Task MarkAllSchedulesSentForSubAtTime(Guid subcontractorId, DateTime reminderDateTime, DateTime sentAt);
     }
 }

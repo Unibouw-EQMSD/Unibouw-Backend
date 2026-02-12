@@ -521,7 +521,7 @@ WHERE rwim.RfqID = @RfqID";
                             subcontractorId = (Guid)row.SubcontractorID,
                             name = (string)row.SubcontractorName,
                             rating = (int)row.Rating,
-                            documentId = row.DocumentId,
+                            documentId = row.DocumentId != null ? row.DocumentId.ToString() : null,
                             date = finalDate.ToString("dd-MM-yyyy"),
                             rfqId = g.Key.RfqID.ToString(),
 
@@ -549,7 +549,6 @@ WHERE rwim.RfqID = @RfqID";
         public async Task<object?> GetRfqResponsesByProjectSubcontractorAsync(Guid projectId)
         {
             using var conn = new SqlConnection(_connectionString);
-
             var sql = @"
 WITH LatestResponse AS (
     SELECT 
@@ -559,6 +558,15 @@ WITH LatestResponse AS (
             ORDER BY ISNULL(r.ModifiedOn, r.CreatedOn) DESC
         ) AS rn
     FROM RfqSubcontractorResponse r
+),
+DocumentFlag AS (
+    SELECT
+        RfqID,
+        SubcontractorID,
+        MAX(RfqResponseDocumentID) AS DocumentId
+    FROM RfqResponseDocuments
+    WHERE IsDeleted = 0
+    GROUP BY RfqID, SubcontractorID
 )
 SELECT 
     wi.WorkItemID,
@@ -566,12 +574,12 @@ SELECT
     rfq.RfqID,
     rfq.RfqNumber,
     rfq.CreatedOn AS RfqCreatedDate,
-
     s.SubcontractorID,
     s.Name AS SubcontractorName,
     rs.RfqResponseStatusName AS StatusName,
     lr.CreatedOn AS ResponseDate,
-    lr.Viewed
+    lr.Viewed,
+    df.DocumentId AS DocumentId
 FROM Projects p
 INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
 INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
@@ -584,6 +592,9 @@ LEFT JOIN LatestResponse lr
    AND lr.WorkItemID = wi.WorkItemID
    AND lr.rn = 1
 LEFT JOIN RfqResponseStatus rs ON rs.RfqResponseStatusID = lr.RfqResponseStatusID
+LEFT JOIN DocumentFlag df
+    ON df.RfqID = rfq.RfqID
+   AND df.SubcontractorID = s.SubcontractorID
 WHERE p.ProjectID = @ProjectID
 ORDER BY wi.Name, s.Name;
 ";
@@ -609,15 +620,16 @@ ORDER BY wi.Name, s.Name;
                     workItemName = (string)r.WorkItemName,
                     rfqId = ((Guid)r.RfqID).ToString(),
                     rfqNumber = (string)r.RfqNumber,
-
                     subcontractorId = (Guid)r.SubcontractorID,
                     subcontractorName = (string)r.SubcontractorName,
+
+                    // ✅ added without changing structure
+                    documentId = r.DocumentId != null ? r.DocumentId.ToString() : null,
 
                     responded = hasResponse,
                     interested = hasResponse && status == "Interested",
                     maybeLater = hasResponse && status == "Maybe Later",
                     notInterested = hasResponse && status == "Not Interested",
-
                     viewed = r.Viewed != null && r.Viewed == true,
                     date = finalDate.ToString("dd/MM/yyyy")
                 };

@@ -295,6 +295,7 @@ namespace UnibouwAPI.Controllers
                 // ✅ 4️⃣ Send email
                 if (sendEmail)
                 {
+                    rfq.SentDate = DateTime.UtcNow;
                     await _emailRepository.SendRfqEmailAsync(new EmailRequest
                     {
                         RfqID = rfqId,

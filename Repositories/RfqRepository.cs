@@ -447,7 +447,9 @@ VALUES (@RfqID, @WorkItemID);";
             CustomNote = @CustomNote,
             ModifiedBy = @ModifiedBy,
             ModifiedOn = @ModifiedOn,
-            Status = @Status
+            Status = @Status,
+            SentDate = @SentDate
+
         WHERE RfqID = @RfqID";
 
             var rowsAffected = await _connection.ExecuteAsync(sql, new
@@ -458,6 +460,7 @@ VALUES (@RfqID, @WorkItemID);";
                 rfq.ModifiedBy,
                 rfq.ModifiedOn,
                 rfq.Status,
+                rfq.SentDate,
                 rfq.RfqID
             });
 

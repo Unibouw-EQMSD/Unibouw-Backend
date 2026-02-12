@@ -97,5 +97,34 @@ namespace UnibouwAPI.Controllers
             }
         }
 
+
+
+        [HttpPost("GenerateAutoSchedulesFromGlobalConfig")]
+        [Authorize]
+        public async Task<IActionResult> GenerateAutoSchedulesFromGlobalConfig()
+        {
+            try
+            {
+                var userEmail =
+                    HttpContext.User.FindFirst("preferred_username")?.Value ??
+                    HttpContext.User.FindFirst(ClaimTypes.Email)?.Value ??
+                    HttpContext.User.Identity?.Name ??
+                    "System";
+
+                var result = await _repository.GenerateAutoSchedulesFromGlobalConfigAsync(userEmail);
+
+                return Ok(new
+                {
+                    message = "Auto reminder schedules generated.",
+                    totalEligible = result.TotalEligible,
+                    totalSchedulesCreatedOrReset = result.TotalSchedulesCreatedOrReset
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error generating auto reminder schedules from global config.");
+                return StatusCode(500, new { message = "Failed to generate auto schedules.", error = ex.Message });
+            }
+        }
     }
 }

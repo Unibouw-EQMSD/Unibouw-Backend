@@ -4,7 +4,7 @@ namespace UnibouwAPI.Repositories.Interfaces
 {
     public interface ISubcontractors
     {
-        Task<IEnumerable<Subcontractor>> GetAllSubcontractor();
+        Task<IEnumerable<Subcontractor>> GetAllSubcontractor(bool onlyActive = false);
         Task<dynamic?> GetSubcontractorById(Guid id);
         Task<int> UpdateSubcontractorIsActive(Guid id, bool isActive, string modifiedBy);
         Task<bool> CreateSubcontractorWithMappings(Subcontractor subcontractor);

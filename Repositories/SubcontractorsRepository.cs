@@ -24,21 +24,22 @@ namespace UnibouwAPI.Repositories
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
-        public async Task<IEnumerable<Subcontractor>> GetAllSubcontractor()
+        public async Task<IEnumerable<Subcontractor>> GetAllSubcontractor(bool onlyActive = false)
         {
             var query = @"
-                 SELECT 
-                     s.*, 
-                     p.Name AS ContactName,
-                     p.Email AS ContactEmail,
-                     p.PhoneNumber1 AS ContactPhone
-                 FROM Subcontractors s
-                 LEFT JOIN Persons p ON s.PersonID = p.PersonID
-                 WHERE s.IsDeleted = 0";
+         SELECT 
+             s.*, 
+             p.Name AS ContactName,
+             p.Email AS ContactEmail,
+             p.PhoneNumber1 AS ContactPhone
+         FROM Subcontractors s
+         LEFT JOIN Persons p ON s.PersonID = p.PersonID
+         WHERE s.IsDeleted = 0";
+            if (onlyActive)
+                query += " AND s.IsActive = 1";
 
             return await _connection.QueryAsync<Subcontractor>(query);
         }
-
         public async Task<dynamic?> GetSubcontractorById(Guid id)
         {
             // 1. Basic subcontractor info + contact

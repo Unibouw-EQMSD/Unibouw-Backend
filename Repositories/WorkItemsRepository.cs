@@ -22,7 +22,7 @@ namespace UnibouwAPI.Repositories
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
-        public async Task<IEnumerable<WorkItem>> GetAllWorkItems()
+        public async Task<IEnumerable<WorkItem>> GetAllWorkItems(bool onlyActive = false)
         {
             var query = @"
         SELECT 
@@ -32,8 +32,10 @@ namespace UnibouwAPI.Repositories
         LEFT JOIN WorkItemCategoryTypes c ON w.CategoryID = c.CategoryID
         WHERE w.IsDeleted = 0";
 
+            if (onlyActive)
+                query += " AND w.IsActive = 1";
+
             return await _connection.QueryAsync<WorkItem>(query);
-            //return await _connection.QueryAsync<WorkItem>("SELECT * FROM WorkItems WHERE isDeleted=0");
         }
 
         public async Task<WorkItem?> GetWorkItemById(Guid id)

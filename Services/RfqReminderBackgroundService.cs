@@ -108,6 +108,17 @@ namespace UnibouwAPI.Services
                     if (reminderSet == null)
                         continue;
 
+                    var hasQuote = await reminderRepo.HasUploadedQuoteAsync(reminderSet.RfqID, reminderSet.SubcontractorID);
+                    if (hasQuote)
+                    {
+                        await reminderRepo.MarkAllSchedulesSentForSubAtTime(
+                            reminderSet.SubcontractorID,
+                            r.ReminderDateTime,
+                            amsNow
+                        );
+                        continue;
+                    }
+
                     var sub = await subRepo.GetSubcontractorById(reminderSet.SubcontractorID);
                     if (sub == null)
                         continue;
@@ -121,8 +132,9 @@ namespace UnibouwAPI.Services
                     );
 
                     // ✅ Mark THIS schedule as sent
-                    await reminderRepo.MarkReminderSent(
-                        r.RfqReminderScheduleID,
+                    await reminderRepo.MarkAllSchedulesSentForSubAtTime(
+                        reminderSet.SubcontractorID,
+                        r.ReminderDateTime,
                         amsNow
                     );
                 }

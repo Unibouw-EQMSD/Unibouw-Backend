@@ -21,14 +21,14 @@ namespace UnibouwAPI.Controllers
             _logger = logger;
         }
 
+
         [HttpGet]
         [Authorize]
-        public async Task<IActionResult> GetAllSubcontractor()
+        public async Task<IActionResult> GetAllSubcontractor([FromQuery] bool onlyActive = false)
         {
             try
             {
-                var items = await _repository.GetAllSubcontractor();
-
+                var items = await _repository.GetAllSubcontractor(onlyActive);
                 if (items == null || !items.Any())
                 {
                     return NotFound(new
@@ -45,7 +45,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "An error occurred while fetching work items.");
+                _logger.LogError(ex, "An error occurred while fetching subcontractors.");
                 return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
             }
         }

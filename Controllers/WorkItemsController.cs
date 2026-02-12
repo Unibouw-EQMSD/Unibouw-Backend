@@ -22,25 +22,16 @@ namespace UnibouwAPI.Controllers
 
         [HttpGet]
         [Authorize]
-        public async Task<IActionResult> GetAllWorkItems()
+        public async Task<IActionResult> GetAllWorkItems([FromQuery] bool onlyActive = false)
         {
             try
             {
-                var items = await _repository.GetAllWorkItems();
+                var items = await _repository.GetAllWorkItems(onlyActive);
 
                 if (items == null || !items.Any())
-                {              
-                    return NotFound(new
-                    {
-                        message = "No work items found.",
-                        data = Array.Empty<WorkItem>() // return empty array for consistency
-                    });
-                }
-                return Ok(new
-                {
-                    count = items.Count(),
-                    data = items
-                });
+                    return NotFound(new { message = "No work items found.", data = Array.Empty<WorkItem>() });
+
+                return Ok(new { count = items.Count(), data = items });
             }
             catch (Exception ex)
             {
@@ -80,19 +71,27 @@ namespace UnibouwAPI.Controllers
 
         [HttpGet("WorkItemByCategory/{categoryId}")]
         [Authorize]
-        public async Task<IActionResult> GetWorkItemByCategory(long categoryId)
+        public async Task<IActionResult> GetWorkItemByCategory(long categoryId, [FromQuery] bool onlyActive = false)
         {
             try
             {
-                if (categoryId == null)
+                if (categoryId <= 0)
                     return BadRequest(new { message = "Invalid category ID." });
 
                 var items = await _repository.GetAllWorkItems();
 
                 // Filter by category
-                var filteredItems = items.Where(w => w.CategoryID == categoryId).ToList();
+                var filteredItems = items.Where(w => w.CategoryID == categoryId);
 
-                if (!filteredItems.Any())
+                // If onlyActive, filter by IsActive as well
+                if (onlyActive)
+                {
+                    filteredItems = filteredItems.Where(w => w.IsActive);
+                }
+
+                var resultList = filteredItems.ToList();
+
+                if (!resultList.Any())
                 {
                     return NotFound(new
                     {
@@ -103,8 +102,8 @@ namespace UnibouwAPI.Controllers
 
                 return Ok(new
                 {
-                    count = filteredItems.Count,
-                    data = filteredItems
+                    count = resultList.Count,
+                    data = resultList
                 });
             }
             catch (Exception ex)
@@ -113,7 +112,7 @@ namespace UnibouwAPI.Controllers
                 return StatusCode(500, new { message = "An unexpected error occurred. Try again later." });
             }
         }
-    
+
 
         [HttpPost("{id}/{isActive}")]
         [Authorize(Roles = "Admin")]
