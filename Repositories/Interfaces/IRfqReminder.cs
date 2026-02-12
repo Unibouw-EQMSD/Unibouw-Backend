@@ -12,6 +12,5 @@ namespace UnibouwAPI.Repositories.Interfaces
         Task MarkReminderSent(Guid reminderId, DateTime sentDateTime);
         Task<AutoScheduleGenerateResult> GenerateAutoSchedulesFromGlobalConfigAsync(string updatedBy);
         Task<bool> HasUploadedQuoteAsync(Guid rfqId, Guid subcontractorId);
-        Task MarkAllSchedulesSentForSubAtTime(Guid subcontractorId, DateTime reminderDateTime, DateTime sentAt);
-    }
+        Task MarkScheduleSentForSubAtTime(Guid rfqId, Guid subcontractorId, DateTime reminderDateTime, DateTime sentAt);    }
 }

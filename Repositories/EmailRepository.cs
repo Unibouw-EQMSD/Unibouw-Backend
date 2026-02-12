@@ -254,12 +254,9 @@ Project - Unibouw
         // ================= REMINDER EMAIL =================
         public async Task<bool> SendReminderEmailAsync(Guid subcontractorId, string recipientEmail, string subcontractorName, Guid rfqId, string emailBody)
         {
-            var enabled = await _connection.ExecuteScalarAsync<bool>(
-        "SELECT TOP 1 IsEnable FROM dbo.RfqGlobalReminder"
-    );
+            
 
-            if (!enabled)
-                return false;
+       
 
             if (string.IsNullOrWhiteSpace(recipientEmail))
                 throw new ArgumentException("Recipient email invalid");

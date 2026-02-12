@@ -92,26 +92,19 @@ namespace UnibouwAPI.Services
 
             foreach (var r in reminders)
             {
-                if (stoppingToken.IsCancellationRequested)
-                    break;
-
-                // ✅ Stop immediately if admin disabled reminders mid-run
-                if (!await IsReminderEnabled(stoppingToken))
-                {
-                    _logger.LogInformation("Reminders disabled mid-run. Stopping reminder processing.");
-                    break;
-                }
+                if (stoppingToken.IsCancellationRequested) break;
+                if (!await IsReminderEnabled(stoppingToken)) break;
 
                 try
                 {
                     var reminderSet = r.Reminder;
-                    if (reminderSet == null)
-                        continue;
+                    if (reminderSet == null) continue;
 
                     var hasQuote = await reminderRepo.HasUploadedQuoteAsync(reminderSet.RfqID, reminderSet.SubcontractorID);
                     if (hasQuote)
                     {
-                        await reminderRepo.MarkAllSchedulesSentForSubAtTime(
+                        await reminderRepo.MarkScheduleSentForSubAtTime(
+                            reminderSet.RfqID,
                             reminderSet.SubcontractorID,
                             r.ReminderDateTime,
                             amsNow
@@ -120,8 +113,7 @@ namespace UnibouwAPI.Services
                     }
 
                     var sub = await subRepo.GetSubcontractorById(reminderSet.SubcontractorID);
-                    if (sub == null)
-                        continue;
+                    if (sub == null) continue;
 
                     await emailRepo.SendReminderEmailAsync(
                         reminderSet.SubcontractorID,
@@ -131,8 +123,8 @@ namespace UnibouwAPI.Services
                         reminderSet.ReminderEmailBody
                     );
 
-                    // ✅ Mark THIS schedule as sent
-                    await reminderRepo.MarkAllSchedulesSentForSubAtTime(
+                    await reminderRepo.MarkScheduleSentForSubAtTime(
+                        reminderSet.RfqID,
                         reminderSet.SubcontractorID,
                         r.ReminderDateTime,
                         amsNow
@@ -140,11 +132,7 @@ namespace UnibouwAPI.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(
-                        ex,
-                        "Failed sending reminder. ScheduleID={ScheduleId}",
-                        r.RfqReminderScheduleID
-                    );
+                    _logger.LogError(ex, "Failed sending reminder. ScheduleID={ScheduleId}", r.RfqReminderScheduleID);
                 }
             }
         }

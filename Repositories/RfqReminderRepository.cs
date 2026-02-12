@@ -176,7 +176,6 @@ namespace UnibouwAPI.Repositories
         rs.RfqReminderID,
         rs.ReminderDateTime,
         rs.SentAt,
-
         r.RfqReminderID AS SplitRfqReminderID,
         r.RfqID,
         r.SubcontractorID,
@@ -184,33 +183,41 @@ namespace UnibouwAPI.Repositories
         r.ReminderEmailBody,
         r.UpdatedBy,
         r.UpdatedAt,
-
+        r.ReminderType,
         ROW_NUMBER() OVER (
             PARTITION BY r.SubcontractorID, rs.ReminderDateTime
             ORDER BY r.DueDate ASC, r.UpdatedAt DESC
         ) AS rn
     FROM dbo.RfqReminderSchedule rs
-    INNER JOIN dbo.RfqReminder r
-        ON rs.RfqReminderID = r.RfqReminderID
+    INNER JOIN dbo.RfqReminder r ON rs.RfqReminderID = r.RfqReminderID
     WHERE rs.ReminderDateTime = @CurrentDateTime
       AND rs.SentAt IS NULL
-      AND EXISTS (SELECT 1 FROM dbo.RfqGlobalReminder WHERE IsEnable = 1)
+      AND (
+            r.ReminderType = 'custom'
+            OR EXISTS (SELECT 1 FROM dbo.RfqGlobalReminder WHERE IsEnable = 1)
+          )
 )
 SELECT
-    RfqReminderScheduleID,
-    RfqReminderID,
-    ReminderDateTime,
-    SentAt,
-    SplitRfqReminderID AS RfqReminderID,
-    RfqID,
-    SubcontractorID,
-    DueDate,
-    ReminderEmailBody,
-    UpdatedBy,
-    UpdatedAt
-FROM Pending
-WHERE rn = 1;";
-
+    rs.RfqReminderScheduleID,
+    rs.RfqReminderID,
+    rs.ReminderDateTime,
+    rs.SentAt,
+    r.RfqReminderID AS SplitRfqReminderID,
+    r.RfqID,
+    r.SubcontractorID,
+    r.DueDate,
+    r.ReminderEmailBody,
+    r.UpdatedBy,
+    r.UpdatedAt,
+    r.ReminderType
+FROM dbo.RfqReminderSchedule rs
+INNER JOIN dbo.RfqReminder r ON rs.RfqReminderID = r.RfqReminderID
+WHERE rs.ReminderDateTime = @CurrentDateTime
+  AND rs.SentAt IS NULL
+  AND (
+        r.ReminderType = 'custom'
+        OR EXISTS (SELECT 1 FROM dbo.RfqGlobalReminder WHERE IsEnable = 1)
+      );";
                 using var conn = new SqlConnection(_connectionString);
 
                 var result = await conn.QueryAsync<
@@ -238,7 +245,7 @@ WHERE rn = 1;";
             }
         }
 
-        public async Task MarkAllSchedulesSentForSubAtTime(Guid subcontractorId, DateTime reminderDateTime, DateTime sentAt)
+        public async Task MarkScheduleSentForSubAtTime(Guid rfqId, Guid subcontractorId, DateTime reminderDateTime, DateTime sentAt)
         {
             const string sql = @"
 UPDATE rs
@@ -247,13 +254,14 @@ FROM dbo.RfqReminderSchedule rs
 INNER JOIN dbo.RfqReminder r
     ON r.RfqReminderID = rs.RfqReminderID
 WHERE r.SubcontractorID = @SubcontractorID
+  AND r.RfqID = @RfqID
   AND rs.ReminderDateTime = @ReminderDateTime
   AND rs.SentAt IS NULL;";
-
             using var conn = new SqlConnection(_connectionString);
             await conn.ExecuteAsync(sql, new
             {
                 SubcontractorID = subcontractorId,
+                RfqID = rfqId,
                 ReminderDateTime = reminderDateTime,
                 SentAt = sentAt
             });
