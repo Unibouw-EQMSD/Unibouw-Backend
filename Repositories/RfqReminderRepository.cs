@@ -64,7 +64,8 @@ namespace UnibouwAPI.Repositories
                       DueDate,
                       ReminderEmailBody,
                       UpdatedBy,
-                      UpdatedAt
+                      UpdatedAt,
+ReminderType
                   )
                   VALUES
                   (
@@ -74,6 +75,7 @@ namespace UnibouwAPI.Repositories
                       @DueDate,
                       @ReminderEmailBody,
                       @UpdatedBy,
+ @ReminderType,
                       SYSDATETIME()
                   )",
                         new
@@ -83,6 +85,7 @@ namespace UnibouwAPI.Repositories
                             model.SubcontractorID,
                             model.DueDate,
                             model.ReminderEmailBody,
+                            ReminderType = model.ReminderType ?? "global",
                             UpdatedBy = updatedBy
                         },
                         tx
@@ -96,6 +99,7 @@ namespace UnibouwAPI.Repositories
                       DueDate = @DueDate,
                       ReminderEmailBody = @ReminderEmailBody,
                       UpdatedBy = @UpdatedBy,
+  ReminderType = @ReminderType,
                       UpdatedAt = SYSDATETIME()
                   WHERE RfqReminderID = @RfqReminderID",
                         new
@@ -103,7 +107,8 @@ namespace UnibouwAPI.Repositories
                             RfqReminderID = reminderId,
                             model.DueDate,
                             model.ReminderEmailBody,
-                            UpdatedBy = updatedBy
+                            UpdatedBy = updatedBy,
+                            ReminderType = model.ReminderType ?? "global"
                         },
                         tx
                     );
@@ -210,29 +215,27 @@ SELECT
     r.UpdatedBy,
     r.UpdatedAt,
     r.ReminderType
-FROM dbo.RfqReminderSchedule rs
-INNER JOIN dbo.RfqReminder r ON rs.RfqReminderID = r.RfqReminderID
-WHERE rs.ReminderDateTime = @CurrentDateTime
-  AND rs.SentAt IS NULL
-  AND (
-        r.ReminderType = 'custom'
-        OR EXISTS (SELECT 1 FROM dbo.RfqGlobalReminder WHERE IsEnable = 1)
-      );";
+FROM Pending
+INNER JOIN dbo.RfqReminderSchedule rs ON rs.RfqReminderScheduleID = Pending.RfqReminderScheduleID
+INNER JOIN dbo.RfqReminder r ON r.RfqReminderID = rs.RfqReminderID
+WHERE Pending.rn = 1;
+";
+
                 using var conn = new SqlConnection(_connectionString);
 
                 var result = await conn.QueryAsync<
-      RfqReminderSchedule,
-      RfqReminder,
-      RfqReminderSchedule>(
-      sql,
-      (schedule, reminder) =>
-      {
-          schedule.Reminder = reminder;
-          return schedule;
-      },
-      new { CurrentDateTime = currentDateTime },
-      splitOn: "RfqReminderID"
-  );
+                    RfqReminderSchedule,
+                    RfqReminder,
+                    RfqReminderSchedule>(
+                    sql,
+                    (schedule, reminder) =>
+                    {
+                        schedule.Reminder = reminder;
+                        return schedule;
+                    },
+                    new { CurrentDateTime = currentDateTime },
+                    splitOn: "RfqReminderID"
+                );
 
                 return result;
             }
@@ -295,7 +298,7 @@ SELECT TOP 1
     IsEnable
 FROM dbo.RfqGlobalReminder;";
 
-            // 2) Eligible RFQ + Subcontractor (Sent RFQ, subcontractor due date exists, not expired, no quote uploaded)
+            // 2) Eligible RFQ + Subcontractor (Sent RFQ, due date exists, not expired, no quote uploaded)
             const string eligibleSql = @"
 SELECT DISTINCT
     rsm.RfqID,
@@ -317,7 +320,13 @@ WHERE rfq.Status = 'Sent'
         AND d.IsDeleted = 0
   );";
 
-            // 3) Cleanup (remove old pending schedules so only the newly configured times fire)
+            // 3) Cleanup: Remove ALL unsent, overdue schedules (this prevents catch-up spamming)
+            const string deleteOverdueSchedulesSql = @"
+DELETE FROM dbo.RfqReminderSchedule
+WHERE SentAt IS NULL
+  AND ReminderDateTime < SYSDATETIME();";
+
+            // 4) Cleanup: Remove all pending schedules for this RFQ+Sub before inserting new ones
             const string getReminderIdSql = @"
 SELECT RfqReminderID
 FROM dbo.RfqReminder
@@ -339,7 +348,10 @@ WHERE rs.RfqReminderID = @RfqReminderID
             if (string.IsNullOrWhiteSpace(config.ReminderSequence) || string.IsNullOrWhiteSpace(config.ReminderTime))
                 return new AutoScheduleGenerateResult { TotalEligible = 0, TotalSchedulesCreatedOrReset = 0 };
 
-            // Parse offsets like "-1,-2,-3"
+            // 5) Delete all unsent, overdue schedules before generating new ones
+            await conn.ExecuteAsync(deleteOverdueSchedulesSql);
+
+            // Parse offsets (e.g., "-1,-2,-3")
             var offsets = config.ReminderSequence
                 .Split(',')
                 .Select(x => x?.Trim())
@@ -357,19 +369,23 @@ WHERE rs.RfqReminderID = @RfqReminderID
                 return new AutoScheduleGenerateResult { TotalEligible = 0, TotalSchedulesCreatedOrReset = 0 };
 
             var eligible = (await conn.QueryAsync<EligibleReminderRow>(eligibleSql)).ToList();
-
             var totalSchedules = 0;
 
-            // 4) Generate schedules for each eligible pair
+            // Use Amsterdam time for correct "today"
+            var timeZoneId = OperatingSystem.IsWindows() ? "W. Europe Standard Time" : "Europe/Amsterdam";
+            var amsNow = TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, timeZoneId);
+            var nowDate = amsNow.Date;
+
+            // 6) Generate schedules for each eligible pair
             foreach (var e in eligible)
             {
                 var createdDate = e.CreatedOn.Date;
                 var dueDate = e.DueDate.Date;
 
-                // due - offsets => reminder dates (must be >= createdDate AND < dueDate)
+                // Only schedule reminders for today or future (skip past)
                 var reminderDateTimes = offsets
                     .Select(off => dueDate.AddDays(off))
-                    .Where(d => d >= createdDate && d < dueDate)
+                    .Where(d => d >= createdDate && d < dueDate && d >= nowDate) // Only schedule future/today
                     .Select(d => d.Add(reminderTime))
                     .Distinct()
                     .OrderBy(d => d)
@@ -378,7 +394,7 @@ WHERE rs.RfqReminderID = @RfqReminderID
                 if (!reminderDateTimes.Any())
                     continue;
 
-                // ✅ Delete old pending schedules for this RFQ+Sub before inserting new ones
+                // Delete old pending schedules for this RFQ+Sub before inserting new ones
                 var existingReminderId = await conn.ExecuteScalarAsync<Guid?>(
                     getReminderIdSql,
                     new { RfqID = e.RfqID, SubcontractorID = e.SubcontractorID }
@@ -398,13 +414,11 @@ WHERE rs.RfqReminderID = @RfqReminderID
                     SubcontractorID = e.SubcontractorID,
                     DueDate = e.DueDate,
                     ReminderEmailBody = config.ReminderEmailBody ?? string.Empty,
-
-                    // kept for compatibility with your existing model (even though CreateOrUpdate uses reminderDateTimes)
                     ReminderDates = reminderDateTimes.Select(d => d.ToString("yyyy-MM-dd")).ToArray(),
                     ReminderTime = config.ReminderTime
                 };
 
-                // Reuse existing upsert logic (creates/updates RfqReminder and inserts schedules)
+                // Reuse existing upsert logic
                 await CreateOrUpdateRfqReminder(model, reminderDateTimes, updatedBy);
 
                 totalSchedules += reminderDateTimes.Count;

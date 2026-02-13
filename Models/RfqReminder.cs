@@ -15,5 +15,7 @@
         // Incoming from frontend only
         public string[]? ReminderDates { get; set; }
         public string? ReminderTime { get; set; }
+        public string? ReminderType { get; set; }
+
     }
 }
