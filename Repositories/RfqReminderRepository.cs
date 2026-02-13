@@ -57,37 +57,37 @@ namespace UnibouwAPI.Repositories
 
                     await connection.ExecuteAsync(
                         @"INSERT INTO dbo.RfqReminder
-                  (
-                      RfqReminderID,
-                      RfqID,
-                      SubcontractorID,
-                      DueDate,
-                      ReminderEmailBody,
-                      UpdatedBy,
-                      UpdatedAt,
-ReminderType
-                  )
-                  VALUES
-                  (
-                      @RfqReminderID,
-                      @RfqID,
-                      @SubcontractorID,
-                      @DueDate,
-                      @ReminderEmailBody,
-                      @UpdatedBy,
- @ReminderType,
-                      SYSDATETIME()
-                  )",
-                        new
-                        {
-                            RfqReminderID = reminderId,
-                            model.RfqID,
-                            model.SubcontractorID,
-                            model.DueDate,
-                            model.ReminderEmailBody,
-                            ReminderType = model.ReminderType ?? "global",
-                            UpdatedBy = updatedBy
-                        },
+(
+  RfqReminderID,
+  RfqID,
+  SubcontractorID,
+  DueDate,
+  ReminderEmailBody,
+  UpdatedBy,
+  UpdatedAt,
+  ReminderType
+)
+VALUES
+(
+  @RfqReminderID,
+  @RfqID,
+  @SubcontractorID,
+  @DueDate,
+  @ReminderEmailBody,
+  @UpdatedBy,
+  SYSDATETIME(),
+  @ReminderType
+)",
+                       new
+                       {
+                           RfqReminderID = reminderId,
+                           model.RfqID,
+                           model.SubcontractorID,
+                           model.DueDate,
+                           ReminderEmailBody = model.ReminderEmailBody,
+                           ReminderType = model.ReminderType ?? "global",
+                           UpdatedBy = updatedBy
+                       },
                         tx
                     );
                 }
