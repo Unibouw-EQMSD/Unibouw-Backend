@@ -446,7 +446,7 @@ WHERE rwim.RfqID = @RfqID";
             rfq.RfqID,
             rfq.RfqNumber,
             rfq.CreatedOn AS RfqCreatedDate,
-            rfq.DueDate,
+            rsm.DueDate,
             s.SubcontractorID,
             s.Name AS SubcontractorName,
             ISNULL(s.Rating,0) AS Rating,
@@ -562,6 +562,7 @@ SELECT
     rfq.RfqID,
     rfq.RfqNumber,
     rfq.CreatedOn AS RfqCreatedDate,
+  rsm.DueDate, 
     s.SubcontractorID,
     s.Name AS SubcontractorName,
     rs.RfqResponseStatusName AS StatusName,
@@ -620,7 +621,10 @@ ORDER BY wi.Name, s.Name;
                     notInterested = hasResponse && status == "Not Interested",
                     viewed = r.Viewed != null && r.Viewed == true,
                     createdOn = r.CreatedOn,
-                    date = finalDate.ToString("dd/MM/yyyy")
+                    date = finalDate.ToString("dd/MM/yyyy"),
+                    dueDate = r.DueDate != null
+    ? ((DateTime)r.DueDate).ToString("dd-MM-yyyy")
+    : "—",
                 };
             }).ToList();
         }
