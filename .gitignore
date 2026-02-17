@@ -122,3 +122,5 @@ _ReSharper*/
 *.dbtcache.v2
 obj/
 *.cache
+/Uploads/RFQ
+/.gitignore
