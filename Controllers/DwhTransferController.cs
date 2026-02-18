@@ -31,7 +31,7 @@ namespace UnibouwAPI.Controllers
             {
                 _logger.LogInformation("DWH Sync started at {Time}", amsterdamNow);
                 var result = await _transferService.SyncAllAsync();
-
+                await CompareSubcontractorIDs();
                 // ✅ Success logger
                 _logger.LogInformation(
                     "✅ DWH Sync Completed Successfully at {Time}.\n" +
