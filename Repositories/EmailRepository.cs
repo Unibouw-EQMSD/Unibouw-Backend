@@ -252,35 +252,151 @@ Project - Unibouw
         }
 
         // ================= REMINDER EMAIL =================
-        public async Task<bool> SendReminderEmailAsync(Guid subcontractorId, string recipientEmail, string subcontractorName, Guid rfqId, string emailBody)
+        public async Task<bool> SendReminderEmailAsync(
+     Guid subcontractorId,
+     string recipientEmail,
+     string subcontractorName,
+     Guid rfqId,
+     string emailBody)
         {
-            
-
-       
-
             if (string.IsNullOrWhiteSpace(recipientEmail))
                 throw new ArgumentException("Recipient email invalid");
 
+            string baseUrl = _configuration["WebSettings:BaseUrl"]?.TrimEnd('/');
+
+            // 🔹 Get reminder type
+            var reminderType = await _connection.QuerySingleOrDefaultAsync<string>(
+                @"SELECT ReminderType 
+          FROM dbo.RfqReminder
+          WHERE RfqID = @RfqID 
+            AND SubcontractorID = @SubcontractorID",
+                new { RfqID = rfqId, SubcontractorID = subcontractorId });
+
+            IEnumerable<dynamic> rfqs;
+
+            if (reminderType == "custom")
+            {
+                // 🔹 CUSTOM → only that RFQ
+                rfqs = await _connection.QueryAsync<dynamic>(
+                    @"SELECT 
+                r.RfqID,
+                r.RfqNumber,
+                r.ProjectID,
+                p.Name AS ProjectName,
+                rsm.DueDate
+              FROM dbo.RfqSubcontractorMapping rsm
+              INNER JOIN dbo.Rfq r ON r.RfqID = rsm.RfqID
+              INNER JOIN dbo.Projects p ON p.ProjectID = r.ProjectID
+              WHERE rsm.SubcontractorID = @SubId
+                AND r.RfqID = @RfqID",
+                    new { SubId = subcontractorId, RfqID = rfqId });
+            }
+            else
+            {
+                // 🔹 GLOBAL → all RFQs for subcontractor (not uploaded)
+                rfqs = await _connection.QueryAsync<dynamic>(
+@"SELECT 
+    r.RfqID,
+    r.RfqNumber,
+    r.ProjectID,
+    p.Name AS ProjectName,
+    rsm.DueDate
+FROM dbo.RfqSubcontractorMapping rsm
+INNER JOIN dbo.Rfq r ON r.RfqID = rsm.RfqID
+INNER JOIN dbo.Projects p ON p.ProjectID = r.ProjectID
+WHERE rsm.SubcontractorID = @SubId
+  AND rsm.DueDate > SYSDATETIME()
+  AND NOT EXISTS (
+        SELECT 1
+        FROM dbo.RfqResponseDocuments d
+        WHERE d.RfqID = rsm.RfqID
+          AND d.SubcontractorID = rsm.SubcontractorID
+          AND d.IsDeleted = 0
+    )
+  AND NOT EXISTS (
+        SELECT 1
+        FROM dbo.RfqReminder rr
+        WHERE rr.RfqID = rsm.RfqID
+          AND rr.SubcontractorID = rsm.SubcontractorID
+          AND rr.ReminderType = 'custom'
+    )",
+new { SubId = subcontractorId });
+            }
+
+            if (!rfqs.Any())
+                return false;
+
+            // 🔹 Get project assignee name (from first RFQ)
+            var firstRfq = rfqs.First();
+
             var personDetails = await _connection.QuerySingleOrDefaultAsync<dynamic>(
-                @"SELECT prj.*, p.Name AS PersonName, ppm.RoleID
-          FROM Rfq r
-          INNER JOIN Projects prj ON r.ProjectID = prj.ProjectID
-          LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
-          LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
+                @"SELECT p.Name AS PersonName
+          FROM dbo.Rfq r
+          INNER JOIN dbo.Projects prj ON r.ProjectID = prj.ProjectID
+          LEFT JOIN dbo.PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
+          LEFT JOIN dbo.Persons p ON ppm.PersonID = p.PersonID
           WHERE r.RfqID = @RfqID",
-                new { RfqID = rfqId }
-            );
+                new { RfqID = firstRfq.RfqID });
+
             string personName = personDetails?.PersonName ?? "Project Assignee";
+
+            // 🔹 Build RFQ list HTML
+            string rfqListHtml = string.Join("",
+                rfqs.Select(r =>
+                {
+                    string summaryUrl =
+                        $"{baseUrl}/project-summary" +
+                        $"?rfqId={r.RfqID}" +
+                        $"&subId={subcontractorId}";
+
+                    return $@"
+<li style='margin-bottom:20px;'>
+    <div style='margin-bottom:6px;'>
+        <strong>{r.ProjectName}</strong>
+    </div>
+
+    <div style='margin-bottom:4px;'>
+        RFQ No: {r.RfqNumber}
+    </div>
+
+    <div style='margin-bottom:8px;'>
+        Due Date: {((DateTime)r.DueDate):dd-MMM-yyyy}
+    </div>
+
+    <div>
+        <a href='{summaryUrl}'
+           style='display:inline-block;
+                  padding:8px 14px;
+                  background-color:#f97316;
+                  color:#ffffff;
+                  text-decoration:none;
+                  border-radius:4px;
+                  font-size:14px;'>
+            View Project Summary
+        </a>
+    </div>
+</li>";
+                }));
 
             string htmlBody = $@"
 <p>Dear {WebUtility.HtmlEncode(subcontractorName)},</p>
 <p>{emailBody}</p>
-<p>Regards,<br/>
+<p><strong>Your Pending RFQs:</strong></p>
+<ul>
+{rfqListHtml}
+</ul>
+<br/>
+<p>
+Regards,<br/>
 <strong>{personName}</strong><br/>
 Project - Unibouw
 </p>";
 
-            await SendGraphEmailAsync(recipientEmail, "Reminder: Upload Your Quote - Unibouw", htmlBody);
+            await SendGraphEmailAsync(
+                recipientEmail,
+                "Reminder: Upload Your Quote - Unibouw",
+                htmlBody);
+
             return true;
         }
         public async Task<bool> SendMailAsync(
