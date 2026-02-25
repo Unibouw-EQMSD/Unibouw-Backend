@@ -270,7 +270,44 @@ namespace UnibouwAPI.Controllers
             }
 
         }
-        [HttpPost("Reply")]
+
+
+        [HttpGet("DownloadAttachment")]
+        [Authorize]
+        public async Task<IActionResult> DownloadAttachment([FromQuery] Guid attachmentId)
+        {
+            try
+            {
+                if (attachmentId == Guid.Empty)
+                    return BadRequest("attachmentId is required.");
+
+                var fileResult = await _repository.DownloadConversationAttachmentAsync(attachmentId);
+
+                if (fileResult == null)
+                    return NotFound("Attachment not found.");
+
+                if (!System.IO.File.Exists(fileResult.FilePath))
+                    return NotFound("File not found on server.");
+
+                var bytes = await System.IO.File.ReadAllBytesAsync(fileResult.FilePath);
+
+                return File(bytes, "application/octet-stream", fileResult.FileName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to download attachment {AttachmentId}", attachmentId);
+                return StatusCode(500, new
+                {
+                    message = "Failed to download attachment.",
+                    error = ex.Message
+                });
+            }
+        }
+    
+
+
+
+    [HttpPost("Reply")]
         [Authorize]
         public async Task<IActionResult> Reply(
           [FromForm(Name = "subcontractorMessageID")] Guid SubcontractorMessageID,

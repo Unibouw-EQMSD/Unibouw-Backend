@@ -13,7 +13,7 @@ namespace UnibouwAPI.Repositories.Interfaces
         Task<List<ConversationMessageDto>> GetConversationAsync(Guid projectId, Guid rfqId, Guid subcontractorId);
 
         Task<RFQConversationMessageAttachment> AddAttachmentAsync(RFQConversationMessageAttachment attachment);
-
+        Task<ConversationAttachmentDownloadDto?> DownloadConversationAttachmentAsync(Guid attachmentId);
         Task<RFQConversationMessage> ReplyToConversationAsync(
     Guid SubcontractorMessageID,
     string messageText,
@@ -21,4 +21,6 @@ namespace UnibouwAPI.Repositories.Interfaces
     string pmEmail,
     List<IFormFile>? files = null);
     }
+
+    
 }

@@ -216,45 +216,110 @@ namespace UnibouwAPI.Repositories
         public async Task<List<ConversationMessageDto>> GetConversationAsync(Guid projectId, Guid rfqId, Guid subcontractorId)
         {
             var sql = @"
-                WITH CombinedMessages AS
-                (
-                    SELECT
-                        ConversationMessageID AS MessageID,
-                        SubcontractorMessageID,
-                        'PM' AS SenderType,
-                        MessageText,
-                        MessageDateTime,
-                        Subject,
-                        'Mail' AS ConversationType
-                    FROM RFQConversationMessage
-                    WHERE ProjectID = @projectId
-                      AND SubcontractorID = @subcontractorId
- 
-                    UNION ALL
- 
-                    SELECT
-                        LogConversationID AS MessageID,
-                        CAST(NULL AS UNIQUEIDENTIFIER) AS SubcontractorMessageID,
-                        'Subcontractor' AS SenderType,
-                        Message AS MessageText,
-                        MessageDateTime,
-                        Subject,
-                        ConversationType
-                    FROM RfqLogConversation
-                    WHERE ProjectID = @projectId
-                      AND SubcontractorID = @subcontractorId
-                )
-                SELECT *
-                FROM CombinedMessages
-                ORDER BY MessageDateTime ASC;
-                ";
+        WITH CombinedMessages AS
+        (
+            SELECT
+                ConversationMessageID AS MessageID,
+                SubcontractorMessageID,
+                'PM' AS SenderType,
+                MessageText,
+                MessageDateTime,
+                Subject,
+                'Mail' AS ConversationType
+            FROM RFQConversationMessage
+            WHERE ProjectID = @projectId
+              AND SubcontractorID = @subcontractorId
 
-            var result = await _connection.QueryAsync<ConversationMessageDto>(
-                sql,
-                new { projectId, subcontractorId }
-            );
+            UNION ALL
 
-            return result.ToList();
+            SELECT
+                LogConversationID AS MessageID,
+                CAST(NULL AS UNIQUEIDENTIFIER) AS SubcontractorMessageID,
+                'Subcontractor' AS SenderType,
+                Message AS MessageText,
+                MessageDateTime,
+                Subject,
+                ConversationType
+            FROM RfqLogConversation
+            WHERE ProjectID = @projectId
+              AND SubcontractorID = @subcontractorId
+        ),
+        MessageAttachments AS
+        (
+            SELECT
+                a.AttachmentID,
+                a.ConversationMessageID,
+                a.FileName,
+                a.FileExtension,
+                a.FileSize,
+                a.FilePath
+            FROM dbo.RfqConversationMessageAttachment a
+            WHERE a.IsActive = 1
+        )
+        SELECT
+            cm.MessageID,
+            cm.SubcontractorMessageID,
+            cm.SenderType,
+            cm.MessageText,
+            cm.MessageDateTime,
+            cm.Subject,
+            cm.ConversationType,
+
+            ma.AttachmentID,
+            ma.ConversationMessageID,
+            ma.FileName,
+            ma.FileExtension,
+            ma.FileSize,
+            ma.FilePath
+        FROM CombinedMessages cm
+        LEFT JOIN MessageAttachments ma
+            ON ma.ConversationMessageID = cm.MessageID
+        ORDER BY cm.MessageDateTime ASC;
+    ";
+
+            // This creates repeated rows for messages with multiple attachments.
+            // We will group them into one ConversationMessageDto per MessageID.
+            var rows = await _connection.QueryAsync(sql, new { projectId, subcontractorId });
+
+            var map = new Dictionary<Guid, ConversationMessageDto>();
+
+            foreach (var r in rows)
+            {
+                Guid messageId = r.MessageID;
+
+                if (!map.TryGetValue(messageId, out var msg))
+                {
+                    msg = new ConversationMessageDto
+                    {
+                        MessageID = r.MessageID,
+                        SubcontractorMessageID = r.SubcontractorMessageID,
+                        SenderType = r.SenderType,
+                        MessageText = r.MessageText,
+                        MessageDateTime = r.MessageDateTime,
+                        Subject = r.Subject,
+                        ConversationType = r.ConversationType,
+                        Attachments = new List<ConversationAttachmentDto>()
+                    };
+
+                    map[messageId] = msg;
+                }
+
+                // Add attachment if exists (PM messages only will match)
+                if (r.AttachmentID != null)
+                {
+                    msg.Attachments.Add(new ConversationAttachmentDto
+                    {
+                        AttachmentID = r.AttachmentID,
+                        ConversationMessageID = r.ConversationMessageID,
+                        FileName = r.FileName,
+                        FileExtension = r.FileExtension,
+                        FileSize = r.FileSize,
+                        FilePath = r.FilePath
+                    });
+                }
+            }
+
+            return map.Values.OrderBy(x => x.MessageDateTime).ToList();
         }
 
         public async Task<RFQConversationMessageAttachment> AddAttachmentAsync(RFQConversationMessageAttachment attachment)
@@ -293,6 +358,29 @@ namespace UnibouwAPI.Repositories
             await connection.ExecuteAsync(sql, attachment);
 
             return attachment;
+        }
+
+
+        public async Task<ConversationAttachmentDownloadDto?> DownloadConversationAttachmentAsync(Guid attachmentId)
+        {
+            const string sql = @"
+        SELECT TOP 1
+            FileName,
+            FilePath
+        FROM dbo.RfqConversationMessageAttachment
+        WHERE AttachmentID = @AttachmentID
+          AND IsActive = 1;
+    ";
+
+            using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var result = await connection.QuerySingleOrDefaultAsync<ConversationAttachmentDownloadDto>(
+                sql,
+                new { AttachmentID = attachmentId }
+            );
+
+            return result;
         }
         public async Task<RFQConversationMessage> ReplyToConversationAsync(
    Guid SubcontractorMessageID,
@@ -439,9 +527,17 @@ VALUES
 
             // 3) Commit BEFORE email (don’t hold transaction open during SMTP)
             transaction.Commit();
+            var attachments = (await connection.QueryAsync<RFQConversationMessageAttachment>(
+    @"SELECT AttachmentID, ConversationMessageID, FileName, FileExtension, FileSize, FilePath, UploadedBy, UploadedOn, IsActive
+      FROM RfqConversationMessageAttachment
+      WHERE ConversationMessageID = @Id AND IsActive = 1",
+    new { Id = reply.ConversationMessageID }
+)).ToList();
 
-    // 4) Fire-and-forget email send + status update
-    _ = Task.Run(async () =>
+            reply.Attachments = attachments; // Make sure your RFQConversationMessage model has an Attachments property
+       
+            // 4) Fire-and-forget email send + status update
+            _ = Task.Run(async () =>
     {
         try
         {

@@ -350,23 +350,23 @@ new { SubId = subcontractorId });
                         $"&subId={subcontractorId}";
 
                     return $@"
-<li style='margin-bottom:20px;'>
-    <div style='margin-bottom:6px;'>
+<li style='margin-bottom:28px;'>
+    <div style='margin-bottom:10px;'>
         <strong>{r.ProjectName}</strong>
     </div>
 
-    <div style='margin-bottom:4px;'>
+    <div style='margin-bottom:8px;'>
         RFQ No: {r.RfqNumber}
     </div>
 
-    <div style='margin-bottom:8px;'>
+    <div style='margin-bottom:14px;'>
         Due Date: {((DateTime)r.DueDate):dd-MMM-yyyy}
     </div>
 
-    <div>
+    <div style='margin-top:6px;'>
         <a href='{summaryUrl}'
            style='display:inline-block;
-                  padding:8px 14px;
+                  padding:10px 16px;
                   background-color:#f97316;
                   color:#ffffff;
                   text-decoration:none;
@@ -376,21 +376,26 @@ new { SubId = subcontractorId });
         </a>
     </div>
 </li>";
+
                 }));
 
             string htmlBody = $@"
-<p>Dear {WebUtility.HtmlEncode(subcontractorName)},</p>
-<p>{emailBody}</p>
-<p><strong>Your Pending RFQs:</strong></p>
-<ul>
+<p style='margin-bottom:18px;'>Dear {WebUtility.HtmlEncode(subcontractorName)},</p>
+
+<p style='margin-bottom:18px;'>{emailBody}</p>
+
+<p style='margin-bottom:12px;'><strong>Your Pending RFQs:</strong></p>
+
+<ul style='padding-left:18px; margin-bottom:20px;'>
 {rfqListHtml}
 </ul>
-<br/>
-<p>
-Regards,<br/>
+
+<p style='margin-top:30px;'>
+Regards,<br/><br/>
 <strong>{personName}</strong><br/>
 Project - Unibouw
 </p>";
+
 
             await SendGraphEmailAsync(
                 recipientEmail,
