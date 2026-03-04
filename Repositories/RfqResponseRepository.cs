@@ -357,34 +357,34 @@ WHERE rwim.RfqID = @RfqID";
             var documentId = Guid.NewGuid();
             // 3️⃣ Insert quote document
             await conn.ExecuteAsync(@"
-                INSERT INTO RfqResponseDocuments
-                (
-                    RfqResponseDocumentID,
-                    RfqID,
-                    SubcontractorID,
-                    FileName,
-                    FileData,
-                    UploadedOn,
-                    IsDeleted
-                )
-                VALUES
-                (
-                    @documentId,
-                    @rfqId,
-                    @subId,
-                    @fileName,
-                    @fileData,
-                    GETDATE(),
-                    0
-                );",
-                new
-                {
-                    documentId,
-                    rfqId,
-                    subId = subcontractorId,
-                    fileName = file.FileName,
-                    fileData = fileBytes
-                });
+    INSERT INTO RfqResponseDocuments
+    (
+        RfqResponseDocumentID,
+        RfqID,
+        SubcontractorID,
+        FileName,
+        FileData,
+        UploadedOn,
+        IsDeleted
+    )
+    VALUES
+    (
+        @documentId,
+        @rfqId,
+        @subId,
+        @fileName,
+        @fileData,
+        CAST(SYSDATETIMEOFFSET() AT TIME ZONE 'India Standard Time' AS datetime),
+        0
+    );",
+     new
+     {
+         documentId,
+         rfqId,
+         subId = subcontractorId,
+         fileName = file.FileName,
+         fileData = fileBytes
+     });
 
             // 4️⃣ 🔥 INCREMENT QuoteReceived FOR THIS RFQ
             await conn.ExecuteAsync(@"
@@ -421,58 +421,61 @@ WHERE rwim.RfqID = @RfqID";
         public async Task<object?> GetRfqResponsesByProjectAsync(Guid projectId)
         {
             using var conn = new SqlConnection(_connectionString);
+
             var sql = @"
-        WITH LatestResponse AS (
-            SELECT 
-                r.*,
-                ROW_NUMBER() OVER (
-                    PARTITION BY r.RfqID, r.SubcontractorID, r.WorkItemID
-                    ORDER BY ISNULL(r.ModifiedOn, r.CreatedOn) DESC
-                ) AS rn
-            FROM RfqSubcontractorResponse r
-        ),
-        DocumentFlag AS (
-            SELECT
-                RfqID,
-                SubcontractorID,
-                MAX(RfqResponseDocumentID) AS DocumentId
-            FROM RfqResponseDocuments
-            WHERE IsDeleted = 0
-            GROUP BY RfqID, SubcontractorID
-        )
+    WITH LatestResponse AS (
         SELECT 
-            wi.WorkItemID,
-            wi.Name AS WorkItemName,
-            rfq.RfqID,
-            rfq.RfqNumber,
-            rfq.CreatedOn AS RfqCreatedDate,
-            rsm.DueDate,
-            s.SubcontractorID,
-            s.Name AS SubcontractorName,
-            ISNULL(s.Rating,0) AS Rating,
-            rs.RfqResponseStatusName AS StatusName,
-            lr.CreatedOn AS ResponseCreatedOn,    -- 🔹 Use this for each response/row
-            lr.Viewed,
-            lr.TotalQuoteAmount,
-            df.DocumentId AS DocumentId,
-            CASE WHEN df.DocumentId IS NULL THEN 0 ELSE 1 END AS HasDocument
-        FROM Projects p
-        INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
-        INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
-        INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
-        INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = rfq.RfqID
-        INNER JOIN Subcontractors s ON s.SubcontractorID = rsm.SubcontractorID
-        LEFT JOIN LatestResponse lr
-            ON lr.RfqID = rfq.RfqID
-           AND lr.SubcontractorID = s.SubcontractorID
-           AND lr.WorkItemID = wi.WorkItemID
-           AND lr.rn = 1
-        LEFT JOIN RfqResponseStatus rs ON rs.RfqResponseStatusID = lr.RfqResponseStatusID
-        LEFT JOIN DocumentFlag df
-            ON df.RfqID = rfq.RfqID
-           AND df.SubcontractorID = s.SubcontractorID
-        WHERE p.ProjectID = @ProjectID
-        ORDER BY wi.Name, s.Name;
+            r.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY r.RfqID, r.SubcontractorID, r.WorkItemID
+                ORDER BY ISNULL(r.ModifiedOn, r.CreatedOn) DESC
+            ) AS rn
+        FROM RfqSubcontractorResponse r
+    ),
+    DocumentFlag AS (
+        SELECT
+            RfqID,
+            SubcontractorID,
+            MAX(RfqResponseDocumentID) AS DocumentId,
+            MAX(UploadedOn) AS UploadedOn
+        FROM RfqResponseDocuments
+        WHERE IsDeleted = 0
+        GROUP BY RfqID, SubcontractorID
+    )
+    SELECT 
+        wi.WorkItemID,
+        wi.Name AS WorkItemName,
+        rfq.RfqID,
+        rfq.RfqNumber,
+        rfq.CreatedOn AS RfqCreatedDate,
+        rsm.DueDate,
+        s.SubcontractorID,
+        s.Name AS SubcontractorName,
+        ISNULL(s.Rating,0) AS Rating,
+        rs.RfqResponseStatusName AS StatusName,
+        df.UploadedOn AS SubmissionTime,  -- 🔥 REAL submission time
+        lr.Viewed,
+        lr.TotalQuoteAmount,
+        df.DocumentId AS DocumentId,
+        CASE WHEN df.DocumentId IS NULL THEN 0 ELSE 1 END AS HasDocument
+    FROM Projects p
+    INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
+    INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
+    INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
+    INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = rfq.RfqID
+    INNER JOIN Subcontractors s ON s.SubcontractorID = rsm.SubcontractorID
+    LEFT JOIN LatestResponse lr
+        ON lr.RfqID = rfq.RfqID
+       AND lr.SubcontractorID = s.SubcontractorID
+       AND lr.WorkItemID = wi.WorkItemID
+       AND lr.rn = 1
+    LEFT JOIN RfqResponseStatus rs 
+        ON rs.RfqResponseStatusID = lr.RfqResponseStatusID
+    LEFT JOIN DocumentFlag df
+        ON df.RfqID = rfq.RfqID
+       AND df.SubcontractorID = s.SubcontractorID
+    WHERE p.ProjectID = @ProjectID
+    ORDER BY wi.Name, s.Name;
     ";
 
             var rows = (await conn.QueryAsync(sql, new { ProjectID = projectId })).ToList();
@@ -492,20 +495,24 @@ WHERE rwim.RfqID = @RfqID";
                     workItemName = g.Key.WorkItemName,
                     rfqId = g.Key.RfqID.ToString(),
                     rfqNumber = g.Key.RfqNumber,
+
                     subcontractors = g.Select(row =>
                     {
-                        DateTime? responseDate = row.ResponseCreatedOn as DateTime?;
+                        DateTime? submissionTime = row.SubmissionTime as DateTime?;
                         DateTime rfqCreatedDate = (DateTime)row.RfqCreatedDate;
                         decimal? quoteAmount = row.TotalQuoteAmount as decimal?;
                         bool viewed = row.Viewed != null && row.Viewed == true;
+
                         string status = row.StatusName != null
                             ? row.StatusName.ToString()
                             : "Not Responded";
+
                         bool hasResponse =
-                            responseDate.HasValue ||
+                            submissionTime.HasValue ||
                             row.HasDocument == 1 ||
                             quoteAmount.HasValue;
-                        DateTime finalDate = responseDate ?? rfqCreatedDate;
+
+                        DateTime finalDate = submissionTime ?? rfqCreatedDate;
 
                         return new
                         {
@@ -513,19 +520,29 @@ WHERE rwim.RfqID = @RfqID";
                             name = (string)row.SubcontractorName,
                             rating = (int)row.Rating,
                             documentId = row.DocumentId != null ? row.DocumentId.ToString() : null,
-                            createdOn = row.ResponseCreatedOn ?? rfqCreatedDate,  // <-- Ensures always a date
-                            date = finalDate.ToString("dd-MM-yyyy"),
+
+                            // ✅ EXACT SAME FORMAT AS SUMMARY PAGE
+                            submissionDateTime = finalDate.ToString("dd-MM-yyyy, HH:mm"),
+
+                            createdOn = finalDate,
+
                             rfqId = g.Key.RfqID.ToString(),
+
                             responded = hasResponse,
                             interested = hasResponse && status == "Interested",
                             maybeLater = hasResponse && status == "Maybe Later",
                             notInterested = hasResponse && status == "Not Interested",
                             viewed = viewed,
-                            quote = quoteAmount?.ToString() ?? "—",
+
+                            quote = quoteAmount?.ToString("0.00") ?? "—",
+
                             dueDate = row.DueDate != null
                                 ? ((DateTime)row.DueDate).ToString("dd-MM-yyyy")
                                 : "—",
-                            actions = new[] { "pdf", "chat" }
+
+                            actions = row.DocumentId != null
+                                ? new[] { "pdf", "chat" }
+                                : new[] { "chat" }
                         };
                     }).ToList()
                 })
@@ -533,10 +550,10 @@ WHERE rwim.RfqID = @RfqID";
 
             return result;
         }
-
         public async Task<object?> GetRfqResponsesByProjectSubcontractorAsync(Guid projectId)
         {
             using var conn = new SqlConnection(_connectionString);
+
             var sql = @"
 WITH LatestResponse AS (
     SELECT 
@@ -551,7 +568,8 @@ DocumentFlag AS (
     SELECT
         RfqID,
         SubcontractorID,
-        MAX(RfqResponseDocumentID) AS DocumentId
+        MAX(RfqResponseDocumentID) AS DocumentId,
+        MAX(UploadedOn) AS UploadedOn
     FROM RfqResponseDocuments
     WHERE IsDeleted = 0
     GROUP BY RfqID, SubcontractorID
@@ -562,11 +580,11 @@ SELECT
     rfq.RfqID,
     rfq.RfqNumber,
     rfq.CreatedOn AS RfqCreatedDate,
-  rsm.DueDate, 
+    rsm.DueDate, 
     s.SubcontractorID,
     s.Name AS SubcontractorName,
     rs.RfqResponseStatusName AS StatusName,
-    lr.CreatedOn AS ResponseDate,
+    df.UploadedOn AS SubmissionTime,   -- 🔥 REAL submission time
     lr.Viewed,
     df.DocumentId AS DocumentId
 FROM Projects p
@@ -580,7 +598,8 @@ LEFT JOIN LatestResponse lr
    AND lr.SubcontractorID = s.SubcontractorID
    AND lr.WorkItemID = wi.WorkItemID
    AND lr.rn = 1
-LEFT JOIN RfqResponseStatus rs ON rs.RfqResponseStatusID = lr.RfqResponseStatusID
+LEFT JOIN RfqResponseStatus rs 
+    ON rs.RfqResponseStatusID = lr.RfqResponseStatusID
 LEFT JOIN DocumentFlag df
     ON df.RfqID = rfq.RfqID
    AND df.SubcontractorID = s.SubcontractorID
@@ -593,15 +612,15 @@ ORDER BY wi.Name, s.Name;
 
             return rows.Select(r =>
             {
-                DateTime? responseDate = r.ResponseDate as DateTime?;
+                DateTime? submissionTime = r.SubmissionTime as DateTime?;
                 DateTime rfqCreatedDate = (DateTime)r.RfqCreatedDate;
 
                 string status = r.StatusName != null
                     ? r.StatusName.ToString()
                     : "Not Responded";
 
-                bool hasResponse = responseDate.HasValue;
-                DateTime finalDate = responseDate ?? rfqCreatedDate;
+                bool hasResponse = submissionTime.HasValue;
+                DateTime finalDate = submissionTime ?? rfqCreatedDate;
 
                 return new
                 {
@@ -612,7 +631,6 @@ ORDER BY wi.Name, s.Name;
                     subcontractorId = (Guid)r.SubcontractorID,
                     subcontractorName = (string)r.SubcontractorName,
 
-                    // ✅ added without changing structure
                     documentId = r.DocumentId != null ? r.DocumentId.ToString() : null,
 
                     responded = hasResponse,
@@ -620,11 +638,17 @@ ORDER BY wi.Name, s.Name;
                     maybeLater = hasResponse && status == "Maybe Later",
                     notInterested = hasResponse && status == "Not Interested",
                     viewed = r.Viewed != null && r.Viewed == true,
-                    createdOn = r.CreatedOn,
+
+                    // ✅ SAME FORMAT AS SUMMARY PAGE
+                    submissionDateTime = finalDate.ToString("dd-MM-yyyy, HH:mm"),
+
+                    createdOn = finalDate,
+
                     date = finalDate.ToString("dd/MM/yyyy"),
+
                     dueDate = r.DueDate != null
-    ? ((DateTime)r.DueDate).ToString("dd-MM-yyyy")
-    : "—",
+                        ? ((DateTime)r.DueDate).ToString("dd-MM-yyyy")
+                        : "—"
                 };
             }).ToList();
         }
