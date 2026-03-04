@@ -374,7 +374,7 @@ WHERE rwim.RfqID = @RfqID";
         @subId,
         @fileName,
         @fileData,
-        CAST(SYSDATETIMEOFFSET() AT TIME ZONE 'India Standard Time' AS datetime),
+       CAST(SYSDATETIMEOFFSET() AT TIME ZONE 'W. Europe Standard Time' AS datetime),
         0
     );",
      new
