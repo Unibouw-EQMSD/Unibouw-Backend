@@ -423,60 +423,60 @@ WHERE rwim.RfqID = @RfqID";
             using var conn = new SqlConnection(_connectionString);
 
             var sql = @"
-    WITH LatestResponse AS (
-        SELECT 
-            r.*,
-            ROW_NUMBER() OVER (
-                PARTITION BY r.RfqID, r.SubcontractorID, r.WorkItemID
-                ORDER BY ISNULL(r.ModifiedOn, r.CreatedOn) DESC
-            ) AS rn
-        FROM RfqSubcontractorResponse r
-    ),
-    DocumentFlag AS (
-        SELECT
-            RfqID,
-            SubcontractorID,
-            MAX(RfqResponseDocumentID) AS DocumentId,
-            MAX(UploadedOn) AS UploadedOn
-        FROM RfqResponseDocuments
-        WHERE IsDeleted = 0
-        GROUP BY RfqID, SubcontractorID
-    )
+WITH LatestResponse AS (
     SELECT 
-        wi.WorkItemID,
-        wi.Name AS WorkItemName,
-        rfq.RfqID,
-        rfq.RfqNumber,
-        rfq.CreatedOn AS RfqCreatedDate,
-        rsm.DueDate,
-        s.SubcontractorID,
-        s.Name AS SubcontractorName,
-        ISNULL(s.Rating,0) AS Rating,
-        rs.RfqResponseStatusName AS StatusName,
-        df.UploadedOn AS SubmissionTime,  -- 🔥 REAL submission time
-        lr.Viewed,
-        lr.TotalQuoteAmount,
-        df.DocumentId AS DocumentId,
-        CASE WHEN df.DocumentId IS NULL THEN 0 ELSE 1 END AS HasDocument
-    FROM Projects p
-    INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
-    INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
-    INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
-    INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = rfq.RfqID
-    INNER JOIN Subcontractors s ON s.SubcontractorID = rsm.SubcontractorID
-    LEFT JOIN LatestResponse lr
-        ON lr.RfqID = rfq.RfqID
-       AND lr.SubcontractorID = s.SubcontractorID
-       AND lr.WorkItemID = wi.WorkItemID
-       AND lr.rn = 1
-    LEFT JOIN RfqResponseStatus rs 
-        ON rs.RfqResponseStatusID = lr.RfqResponseStatusID
-    LEFT JOIN DocumentFlag df
-        ON df.RfqID = rfq.RfqID
-       AND df.SubcontractorID = s.SubcontractorID
-    WHERE p.ProjectID = @ProjectID
-    ORDER BY wi.Name, s.Name;
-    ";
+        r.*,
+        ROW_NUMBER() OVER (
+            PARTITION BY r.RfqID, r.SubcontractorID, r.WorkItemID
+            ORDER BY ISNULL(r.ModifiedOn, r.CreatedOn) DESC
+        ) AS rn
+    FROM RfqSubcontractorResponse r
+),
+DocumentFlag AS (
+    SELECT
+        RfqID,
+        SubcontractorID,
+        MAX(RfqResponseDocumentID) AS DocumentId,
+        MAX(UploadedOn) AS UploadedOn
+    FROM RfqResponseDocuments
+    WHERE IsDeleted = 0
+    GROUP BY RfqID, SubcontractorID
+)
+SELECT 
+    wi.WorkItemID,
+    wi.Name AS WorkItemName,
+    rfq.RfqID,
+    rfq.RfqNumber,
+    rfq.CreatedOn AS RfqCreatedDate,
+    rsm.DueDate,
+    s.SubcontractorID,
+    s.Name AS SubcontractorName,
+    ISNULL(s.Rating,0) AS Rating,
+    rs.RfqResponseStatusName AS StatusName,
+    df.UploadedOn AS SubmissionTime,
+    lr.Viewed,
+    lr.TotalQuoteAmount,
+    df.DocumentId AS DocumentId,
+    CASE WHEN df.DocumentId IS NULL THEN 0 ELSE 1 END AS HasDocument
+FROM Projects p
+INNER JOIN Rfq rfq ON rfq.ProjectID = p.ProjectID
+INNER JOIN RfqWorkItemMapping wim ON wim.RfqID = rfq.RfqID
+INNER JOIN WorkItems wi ON wi.WorkItemID = wim.WorkItemID
+INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = rfq.RfqID
+INNER JOIN Subcontractors s ON s.SubcontractorID = rsm.SubcontractorID
+LEFT JOIN LatestResponse lr
+    ON lr.RfqID = rfq.RfqID
+   AND lr.SubcontractorID = s.SubcontractorID
+   AND lr.WorkItemID = wi.WorkItemID
+   AND lr.rn = 1
+LEFT JOIN RfqResponseStatus rs 
+    ON rs.RfqResponseStatusID = lr.RfqResponseStatusID
+LEFT JOIN DocumentFlag df
+    ON df.RfqID = rfq.RfqID
+   AND df.SubcontractorID = s.SubcontractorID
+WHERE p.ProjectID = @ProjectID
+ORDER BY wi.Name, s.Name;
+";
 
             var rows = (await conn.QueryAsync(sql, new { ProjectID = projectId })).ToList();
             if (!rows.Any()) return new List<object>();
@@ -514,6 +514,12 @@ WHERE rwim.RfqID = @RfqID";
 
                         DateTime finalDate = submissionTime ?? rfqCreatedDate;
 
+                        var indiaZone = TimeZoneInfo.FindSystemTimeZoneById("India Standard Time");
+                        var amsterdamZone = TimeZoneInfo.FindSystemTimeZoneById("W. Europe Standard Time");
+
+                        DateTime istTime = DateTime.SpecifyKind(finalDate, DateTimeKind.Unspecified);
+                        DateTime amsterdamTime = TimeZoneInfo.ConvertTime(istTime, indiaZone, amsterdamZone);
+
                         return new
                         {
                             subcontractorId = (Guid)row.SubcontractorID,
@@ -521,10 +527,8 @@ WHERE rwim.RfqID = @RfqID";
                             rating = (int)row.Rating,
                             documentId = row.DocumentId != null ? row.DocumentId.ToString() : null,
 
-                            // ✅ EXACT SAME FORMAT AS SUMMARY PAGE
-                            submissionDateTime = finalDate.ToString("dd-MM-yyyy, HH:mm"),
-
-                            createdOn = finalDate,
+                            submissionDateTime = amsterdamTime.ToString("dd-MM-yyyy, HH:mm"),
+                            createdOn = amsterdamTime,
 
                             rfqId = g.Key.RfqID.ToString(),
 
@@ -584,7 +588,7 @@ SELECT
     s.SubcontractorID,
     s.Name AS SubcontractorName,
     rs.RfqResponseStatusName AS StatusName,
-    df.UploadedOn AS SubmissionTime,   -- 🔥 REAL submission time
+    df.UploadedOn AS SubmissionTime,
     lr.Viewed,
     df.DocumentId AS DocumentId
 FROM Projects p
@@ -622,6 +626,12 @@ ORDER BY wi.Name, s.Name;
                 bool hasResponse = submissionTime.HasValue;
                 DateTime finalDate = submissionTime ?? rfqCreatedDate;
 
+                var indiaZone = TimeZoneInfo.FindSystemTimeZoneById("India Standard Time");
+                var amsterdamZone = TimeZoneInfo.FindSystemTimeZoneById("W. Europe Standard Time");
+
+                DateTime istTime = DateTime.SpecifyKind(finalDate, DateTimeKind.Unspecified);
+                DateTime amsterdamTime = TimeZoneInfo.ConvertTime(istTime, indiaZone, amsterdamZone);
+
                 return new
                 {
                     workItemId = (Guid)r.WorkItemID,
@@ -639,12 +649,10 @@ ORDER BY wi.Name, s.Name;
                     notInterested = hasResponse && status == "Not Interested",
                     viewed = r.Viewed != null && r.Viewed == true,
 
-                    // ✅ SAME FORMAT AS SUMMARY PAGE
-                    submissionDateTime = finalDate.ToString("dd-MM-yyyy, HH:mm"),
+                    submissionDateTime = amsterdamTime.ToString("dd-MM-yyyy, HH:mm"),
+                    createdOn = amsterdamTime,
 
-                    createdOn = finalDate,
-
-                    date = finalDate.ToString("dd/MM/yyyy"),
+                    date = amsterdamTime.ToString("dd/MM/yyyy"),
 
                     dueDate = r.DueDate != null
                         ? ((DateTime)r.DueDate).ToString("dd-MM-yyyy")

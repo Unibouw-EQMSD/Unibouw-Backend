@@ -130,112 +130,238 @@ namespace UnibouwAPI.Repositories
             await graphClient.Users[senderUser].SendMail.PostAsync(sendMailBody);
         }
         // ================= RFQ EMAIL =================
+
+
+        string MaskId(Guid id)
+        {
+            return id.ToString().Substring(0, 8).ToUpper();
+        }
+
+
         public async Task<List<EmailRequest>> SendRfqEmailAsync(EmailRequest request)
         {
             var sentEmails = new List<EmailRequest>();
+
             if (request?.SubcontractorIDs == null || !request.SubcontractorIDs.Any())
                 return sentEmails;
 
-            string baseUrl = _configuration["WebSettings:BaseUrl"]?.TrimEnd('/');
+            string baseUrl = _configuration["WebSettings:BaseUrl"]?.TrimEnd('/') ?? "";
 
+            // Load RFQ + Project
             var rfq = await _connection.QuerySingleAsync<dynamic>(
-                @"SELECT RfqID, RfqNumber, ProjectID FROM Rfq WHERE RfqID = @id",
+                @"SELECT RfqID, RfqNumber, ProjectID
+          FROM Rfq
+          WHERE RfqID = @id",
                 new { id = request.RfqID });
 
-            string projectName = await _connection.QuerySingleAsync<string>(
-                @"SELECT Name FROM Projects WHERE ProjectID = @id",
-                new { id = rfq.ProjectID });
+            Guid rfqId = (Guid)rfq.RfqID;
+            Guid projectId = (Guid)rfq.ProjectID;
 
+            var project = await _connection.QuerySingleAsync<dynamic>(
+                @"SELECT Name, Number
+          FROM Projects
+          WHERE ProjectID = @id",
+                new { id = projectId });
+
+            string projectName = project.Name;
+            string projectCode = project.Number;
+
+            // Project manager / assignee name (for signature)
             var personDetails = await _connection.QuerySingleOrDefaultAsync<dynamic>(
                 @"SELECT prj.*, p.Name AS PersonName, ppm.RoleID
           FROM Projects prj
           LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
           LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
-          WHERE prj.ProjectID = @Id", new { id = rfq.ProjectID });
+          WHERE prj.ProjectID = @Id",
+                new { Id = projectId });
+
             string personName = personDetails?.PersonName ?? "Project Assignee";
 
+            // Work items
             var workItems = (await _connection.QueryAsync<dynamic>(
-                @"SELECT WorkItemID, Name FROM WorkItems WHERE WorkItemID IN @ids",
+                @"SELECT WorkItemID, Name
+          FROM WorkItems
+          WHERE WorkItemID IN @ids",
                 new { ids = request.WorkItems })).ToList();
 
+            // Subcontractors
             var subcontractors = (await _connection.QueryAsync<dynamic>(
                 @"SELECT SubcontractorID, Email, ISNULL(Name,'Subcontractor') Name
           FROM Subcontractors
           WHERE SubcontractorID IN @ids
-          AND Email IS NOT NULL",
+            AND Email IS NOT NULL",
                 new { ids = request.SubcontractorIDs })).ToList();
+
+            // Sender mailbox used by Graph
+            var senderUser = _configuration["GraphEmail:SenderUser"];
+
+            // Build Graph client once
+            var tenantId = _configuration["GraphEmail:TenantId"];
+            var clientId = _configuration["GraphEmail:ClientId"];
+            var clientSecret = _configuration["GraphEmail:ClientSecret"];
+            var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+            var graphClient = new GraphServiceClient(credential);
 
             foreach (var sub in subcontractors)
             {
-                // Already emailed check
+                Guid subcontractorId = (Guid)sub.SubcontractorID;
+                string toEmail = (string)sub.Email;
+                string subName = (string)sub.Name;
+
+                // Skip if already emailed
                 bool alreadyEmailed = await _connection.ExecuteScalarAsync<int>(
                     @"SELECT COUNT(1)
               FROM RfqSubcontractorMapping
               WHERE RfqID = @RfqID
                 AND SubcontractorID = @SubId
                 AND CreatedOn IS NOT NULL",
-                    new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID }
-                ) > 0;
-                if (alreadyEmailed) continue;
+                    new { RfqID = rfqId, SubId = subcontractorId }) > 0;
 
+                if (alreadyEmailed)
+                    continue;
+
+                // Due date
                 DateTime dueDate = await _connection.QuerySingleAsync<DateTime>(
-                    @"SELECT DueDate FROM RfqSubcontractorMapping
-              WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
-                    new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID });
+                    @"SELECT DueDate
+              FROM RfqSubcontractorMapping
+              WHERE RfqID = @RfqID
+                AND SubcontractorID = @SubId",
+                    new { RfqID = rfqId, SubId = subcontractorId });
 
+                // HTML fragments
                 string workItemListHtml = string.Join("",
                     workItems.Select(w => $"<li><strong>{w.Name}</strong></li>"));
+
                 string workItemIdsCsv = string.Join(",", workItems.Select(w => w.WorkItemID));
+
                 string summaryUrl =
                     $"{baseUrl}/project-summary" +
-                    $"?rfqId={rfq.RfqID}" +
-                    $"&subId={sub.SubcontractorID}" +
+                    $"?rfqId={rfqId}" +
+                    $"&subId={subcontractorId}" +
                     $"&workItemIds={workItemIdsCsv}";
-                string body = $@"
-<p>Dear {sub.Name},</p>
+
+                // ✅ Token in BODY (real comment, not HTML-encoded)
+                string token = $"<!-- UBW:project={projectId};sub={subcontractorId};rfq={rfqId} -->";
+
+                string body = token + $@"
+<p>Dear {WebUtility.HtmlEncode(subName)},</p>
 <p>{(string.IsNullOrWhiteSpace(request.Body) ? "You are invited to submit a quotation for the following details:" : request.Body)}</p>
 <ul>
-<li><strong>Project:</strong> {projectName}</li>
-<li><strong>RFQ No:</strong> {rfq.RfqNumber}</li>
-<li><strong>Due Date:</strong> {dueDate:dd-MMM-yyyy}</li>
+  <li><strong>Project:</strong> {WebUtility.HtmlEncode(projectCode)} - {WebUtility.HtmlEncode(projectName)}</li>
+  <li><strong>RFQ No:</strong> {WebUtility.HtmlEncode((string)rfq.RfqNumber)}</li>
+  <li><strong>Due Date:</strong> {dueDate:dd-MMM-yyyy}</li>
 </ul>
 <p><strong>Work Items:</strong></p>
 <ul>{workItemListHtml}</ul>
 <br/>
 <p>
-<a href='{summaryUrl}'
-style='padding:12px 20px;background:#f97316;color:#fff;text-decoration:none;border-radius:5px;'>
-View Project Summary
-</a>
+  <a href='{summaryUrl}'
+     style='padding:12px 20px;background:#f97316;color:#fff;text-decoration:none;border-radius:5px;'>
+     View Project Summary
+  </a>
 </p>
 <br/>
 <p>
 Regards,<br/>
-<strong>{personName}</strong><br/>
+<strong>{WebUtility.HtmlEncode(personName)}</strong><br/>
 Project - Unibouw
 </p>";
 
-                // Send email via Graph
-                await SendGraphEmailAsync(sub.Email, $"RFQ – {projectName}", body);
+                // ✅ Subject token with FULL GUIDs so poller ParseToken(subject) works
+                var subject = $"RFQ – {projectCode} - {projectName} [UBW:P={projectId};S={subcontractorId};R={rfqId}]";
+
+                // Send mail (Graph)
+                var message = new Microsoft.Graph.Models.Message
+                {
+                    Subject = subject,
+                    Body = new ItemBody
+                    {
+                        ContentType = BodyType.Html,
+                        Content = body
+                    },
+                    ToRecipients = new List<Recipient>
+            {
+                new Recipient { EmailAddress = new EmailAddress { Address = toEmail } }
+            }
+                };
+
+                var sendMailBody = new Microsoft.Graph.Users.Item.SendMail.SendMailPostRequestBody
+                {
+                    Message = message,
+                    SaveToSentItems = true
+                };
+
+                await graphClient.Users[senderUser].SendMail.PostAsync(sendMailBody);
+
+                // Capture thread anchor (best-effort)
+                try
+                {
+                    var sent = await graphClient.Users[senderUser].MailFolders["SentItems"].Messages.GetAsync(r =>
+                    {
+                        r.QueryParameters.Top = 10;
+                        r.QueryParameters.Orderby = new[] { "sentDateTime desc" };
+                        r.QueryParameters.Select = new[] { "id", "conversationId", "internetMessageId", "bodyPreview", "sentDateTime" };
+                    });
+
+                    var tokenNeedle = $"UBW:project={projectId};sub={subcontractorId}";
+                    var sentMsg = sent?.Value?.FirstOrDefault(m =>
+                        (m.BodyPreview ?? "").Contains(tokenNeedle, StringComparison.OrdinalIgnoreCase));
+
+                    await _connection.ExecuteAsync(@"
+INSERT INTO dbo.OutboundRfqEmailAnchor
+(AnchorId, ProjectId, SubcontractorId, RfqId, PmMailbox, ConversationId, InternetMessageId, GraphMessageId, SentUtc, Subject, IsActive)
+VALUES
+(@AnchorId, @ProjectId, @SubId, @RfqId, @PmMailbox, @ConversationId, @InternetMessageId, @GraphMessageId, SYSUTCDATETIME(), @Subject, 1);",
+                        new
+                        {
+                            AnchorId = Guid.NewGuid(),
+                            ProjectId = projectId,
+                            SubId = subcontractorId,
+                            RfqId = rfqId,
+                            PmMailbox = senderUser,
+                            ConversationId = sentMsg?.ConversationId,
+                            InternetMessageId = sentMsg?.InternetMessageId,
+                            GraphMessageId = sentMsg?.Id,
+                            Subject = subject
+                        });
+                }
+                catch
+                {
+                    // Fallback: anchor without conversationId (audit-only)
+                    await _connection.ExecuteAsync(@"
+INSERT INTO dbo.OutboundRfqEmailAnchor
+(AnchorId, ProjectId, SubcontractorId, RfqId, PmMailbox, ConversationId, InternetMessageId, GraphMessageId, SentUtc, Subject, IsActive)
+VALUES
+(@AnchorId, @ProjectId, @SubId, @RfqId, @PmMailbox, NULL, NULL, NULL, SYSUTCDATETIME(), @Subject, 1);",
+                        new
+                        {
+                            AnchorId = Guid.NewGuid(),
+                            ProjectId = projectId,
+                            SubId = subcontractorId,
+                            RfqId = rfqId,
+                            PmMailbox = senderUser,
+                            Subject = subject
+                        });
+                }
 
                 // Mark as emailed (ONCE)
                 await _connection.ExecuteAsync(
                     @"UPDATE RfqSubcontractorMapping
               SET CreatedOn = GETDATE()
               WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
-                    new { RfqID = rfq.RfqID, SubId = sub.SubcontractorID }
-                );
+                    new { RfqID = rfqId, SubId = subcontractorId });
 
                 sentEmails.Add(new EmailRequest
                 {
-                    RfqID = rfq.RfqID,
-                    SubcontractorIDs = new List<Guid> { sub.SubcontractorID },
-                    ToEmail = sub.Email,
-                    Subject = request.Subject,
+                    RfqID = rfqId,
+                    SubcontractorIDs = new List<Guid> { subcontractorId },
+                    ToEmail = toEmail,
+                    Subject = subject,
                     WorkItems = request.WorkItems,
                     Body = body
                 });
             }
+
             return sentEmails;
         }
         private bool IsValidEmail(string email)
@@ -279,11 +405,12 @@ Project - Unibouw
                 // 🔹 CUSTOM → only that RFQ
                 rfqs = await _connection.QueryAsync<dynamic>(
                     @"SELECT 
-                r.RfqID,
-                r.RfqNumber,
-                r.ProjectID,
-                p.Name AS ProjectName,
-                rsm.DueDate
+    r.RfqID,
+    r.RfqNumber,
+    r.ProjectID,
+    p.Name AS ProjectName,
+    p.Number AS ProjectNumber,
+    rsm.DueDate
               FROM dbo.RfqSubcontractorMapping rsm
               INNER JOIN dbo.Rfq r ON r.RfqID = rsm.RfqID
               INNER JOIN dbo.Projects p ON p.ProjectID = r.ProjectID
@@ -300,6 +427,7 @@ Project - Unibouw
     r.RfqNumber,
     r.ProjectID,
     p.Name AS ProjectName,
+    p.Number AS ProjectNumber,
     rsm.DueDate
 FROM dbo.RfqSubcontractorMapping rsm
 INNER JOIN dbo.Rfq r ON r.RfqID = rsm.RfqID
@@ -352,8 +480,7 @@ new { SubId = subcontractorId });
                     return $@"
 <li style='margin-bottom:28px;'>
     <div style='margin-bottom:10px;'>
-        <strong>{r.ProjectName}</strong>
-    </div>
+<strong>{r.ProjectNumber} - {r.ProjectName}</strong>    </div>
 
     <div style='margin-bottom:8px;'>
         RFQ No: {r.RfqNumber}
@@ -452,6 +579,32 @@ Project - Unibouw
 
             await SendGraphEmailAsyncWithAttachments(toEmail, subject, htmlBody, attachments);
             return true;
+        }
+
+
+        private GraphServiceClient CreateGraphClient()
+        {
+            var tenantId = _configuration["GraphEmail:TenantId"];
+            var clientId = _configuration["GraphEmail:ClientId"];
+            var clientSecret = _configuration["GraphEmail:ClientSecret"];
+            var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+            return new GraphServiceClient(credential);
+        }
+
+        private async Task<(string? GraphId, string? ConversationId, string? InternetMessageId)> FindSentByTokenAsync(
+            GraphServiceClient graphClient, string senderUser, string tokenNeedle)
+        {
+            var sent = await graphClient.Users[senderUser].MailFolders["SentItems"].Messages.GetAsync(r =>
+            {
+                r.QueryParameters.Top = 10;
+                r.QueryParameters.Orderby = new[] { "sentDateTime desc" };
+                r.QueryParameters.Select = new[] { "id", "conversationId", "internetMessageId", "bodyPreview" };
+            });
+
+            var msg = sent?.Value?.FirstOrDefault(m =>
+                (m.BodyPreview ?? "").Contains(tokenNeedle, StringComparison.OrdinalIgnoreCase));
+
+            return (msg?.Id, msg?.ConversationId, msg?.InternetMessageId);
         }
 
     }
