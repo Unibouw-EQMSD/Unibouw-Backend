@@ -8,6 +8,8 @@
         public string Subject { get; set; } = "RFQ Invitation - Unibouw";
         public List<Guid> WorkItems { get; set; } = new();
         public string Body { get; set; } // Editable email content
+        public string? Language { get; set; } // "en" or "nl"
+
 
     }
 }

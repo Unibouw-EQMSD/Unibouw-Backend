@@ -17,17 +17,18 @@ namespace UnibouwAPI.Services
 
         public async Task<(
             (List<long?> Inserted, List<long?> Updated, List<long?> Skipped) Categories,(List<long?> Inserted, List<long?> Updated, List<long?> Skipped) WorkItems,
-            (List<long?> Inserted, List<long?> Updated, List<long?> Skipped) Customers,(List<long?> Inserted, List<long?> Updated, List<long?> Skipped) Projects
-        )> SyncAllAsync()
+            (List<long?> Inserted, List<long?> Updated, List<long?> Skipped) Customers,(List<long?> Inserted, List<long?> Updated, List<long?> Skipped) Projects,
+                (List<Guid> Inserted, List<Guid> Updated, List<Guid> Skipped) Subcontractors
+    )> SyncAllAsync()
         {
+            await SyncPersonsAsync(); // <-- Add this line, always sync Persons first!
             var categories = await SyncWorkItemCategoryTypesAsync();
             var workItems = await SyncWorkItemsAsync();
             var customers = await SyncCustomersAsync();
             var projects = await SyncProjectsAsync();
-
-            return (categories, workItems, customers, projects);
+            var subcontractors = await SyncSubcontractorsAsync();
+            return (categories, workItems, customers, projects, subcontractors);
         }
-
         public async Task<(List<long?> Inserted, List<long?> Updated, List<long?> Skipped)> TransferDataAsync1()
         {
             // Step 1: Read all categories from source
@@ -453,6 +454,219 @@ namespace UnibouwAPI.Services
                 }
             }
 
+            return (inserted, updated, skipped);
+        }
+
+
+        public async Task<(List<Guid> Inserted, List<Guid> Updated, List<Guid> Skipped)> SyncSubcontractorsAsync()
+        {
+            IEnumerable<Subcontractor> sourceData;
+            using (var sourceConn = new SqlConnection(_dwhConnection))
+            {
+                await sourceConn.OpenAsync();
+                const string selectSql = @"
+            SELECT
+                SubcontractorID, Name, Rating, Email, Location, Country, OfficeAddress, BillingAddress,
+                RegisteredDate, IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted, PersonID
+            FROM dbo.Subcontractors
+            WHERE SubcontractorID IS NOT NULL;";
+                sourceData = await sourceConn.QueryAsync<Subcontractor>(selectSql);
+            }
+
+            var inserted = new List<Guid>();
+            var updated = new List<Guid>();
+            var skipped = new List<Guid>();
+
+            using (var targetConn = new SqlConnection(_unibouwConnection))
+            {
+                await targetConn.OpenAsync();
+
+                // Get all valid PersonIDs in Unibouw
+                var validPersonIds = (await targetConn.QueryAsync<long>("SELECT PersonID FROM dbo.Persons")).ToHashSet();
+
+                // Set PersonID = null if missing (force insert)
+                foreach (var sub in sourceData)
+                {
+                    if (sub.PersonID.HasValue && !validPersonIds.Contains(sub.PersonID.Value))
+                        sub.PersonID = null;
+                }
+
+                const string mergeSql = @"
+MERGE dbo.Subcontractors AS target
+USING (
+    SELECT
+        @SubcontractorID AS SubcontractorID,
+        @Name AS Name,
+        @Rating AS Rating,
+        @Email AS Email,
+        @Location AS Location,
+        @Country AS Country,
+        @OfficeAddress AS OfficeAddress,
+        @BillingAddress AS BillingAddress,
+        @RegisteredDate AS RegisteredDate,
+        @IsActive AS IsActive,
+        @CreatedOn AS CreatedOn,
+        @CreatedBy AS CreatedBy,
+        @ModifiedOn AS ModifiedOn,
+        @ModifiedBy AS ModifiedBy,
+        @DeletedOn AS DeletedOn,
+        @DeletedBy AS DeletedBy,
+        @IsDeleted AS IsDeleted,
+        @PersonID AS PersonID
+) AS source
+ON target.SubcontractorID = source.SubcontractorID
+WHEN MATCHED AND (
+    ISNULL(target.Name,'') <> ISNULL(source.Name,'')
+    OR ISNULL(target.Email,'') <> ISNULL(source.Email,'')
+    OR ISNULL(target.PersonID,0) <> ISNULL(source.PersonID,0)
+)
+THEN UPDATE SET
+    Name = source.Name,
+    Rating = source.Rating,
+    Email = source.Email,
+    Location = source.Location,
+    Country = source.Country,
+    OfficeAddress = source.OfficeAddress,
+    BillingAddress = source.BillingAddress,
+    RegisteredDate = source.RegisteredDate,
+    IsActive = source.IsActive,
+    ModifiedOn = source.ModifiedOn,
+    ModifiedBy = source.ModifiedBy,
+    DeletedOn = source.DeletedOn,
+    DeletedBy = source.DeletedBy,
+    IsDeleted = source.IsDeleted,
+    PersonID = source.PersonID
+WHEN NOT MATCHED BY TARGET THEN
+    INSERT (
+        SubcontractorID, Name, Rating, Email, Location, Country, OfficeAddress, BillingAddress, RegisteredDate,
+        IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted, RemindersSent, PersonID
+    )
+    VALUES (
+        source.SubcontractorID, source.Name, source.Rating, source.Email, source.Location, source.Country,
+        source.OfficeAddress, source.BillingAddress, source.RegisteredDate, source.IsActive, source.CreatedOn,
+        source.CreatedBy, source.ModifiedOn, source.ModifiedBy, source.DeletedOn, source.DeletedBy, source.IsDeleted,
+        0, -- RemindersSent
+        source.PersonID
+    )
+OUTPUT $action, source.SubcontractorID;
+";
+
+                foreach (var sub in sourceData)
+                {
+                    var result = await targetConn.QueryAsync<(string Action, Guid SubcontractorID)>(mergeSql, sub);
+                    if (!result.Any())
+                    {
+                        skipped.Add(sub.SubcontractorID);
+                        continue;
+                    }
+                    foreach (var r in result)
+                    {
+                        if (r.Action == "INSERT") inserted.Add(r.SubcontractorID);
+                        else if (r.Action == "UPDATE") updated.Add(r.SubcontractorID);
+                    }
+                }
+            }
+            return (inserted, updated, skipped);
+        }
+        public async Task<(List<long> Inserted, List<long> Updated, List<long> Skipped)> SyncPersonsAsync()
+        {
+            IEnumerable<Person> sourceData;
+            using (var sourceConn = new SqlConnection(_dwhConnection))
+            {
+                await sourceConn.OpenAsync();
+                const string selectSql = @"
+            SELECT
+                PersonID,
+                Name,
+                Email,
+                PhoneNumber1,
+                PhoneNumber2,
+                CreatedOn,
+                CreatedBy,
+                ModifiedOn,
+                ModifiedBy,
+                DeletedOn,
+                DeletedBy,
+                IsDeleted
+            FROM dbo.Persons
+            WHERE PersonID IS NOT NULL;";
+                sourceData = await sourceConn.QueryAsync<Person>(selectSql);
+            }
+
+            var inserted = new List<long>();
+            var updated = new List<long>();
+            var skipped = new List<long>();
+
+            using (var targetConn = new SqlConnection(_unibouwConnection))
+            {
+                await targetConn.OpenAsync();
+
+                // Enable explicit PersonID insert
+                await targetConn.ExecuteAsync("SET IDENTITY_INSERT dbo.Persons ON");
+
+                const string mergeSql = @"
+MERGE dbo.Persons AS target
+USING (
+    SELECT
+        @PersonID AS PersonID,
+        @Name AS Name,
+        @Email AS Email,
+        @PhoneNumber1 AS PhoneNumber1,
+        @PhoneNumber2 AS PhoneNumber2,
+        @CreatedOn AS CreatedOn,
+        @CreatedBy AS CreatedBy,
+        @ModifiedOn AS ModifiedOn,
+        @ModifiedBy AS ModifiedBy,
+        @DeletedOn AS DeletedOn,
+        @DeletedBy AS DeletedBy,
+        @IsDeleted AS IsDeleted
+) AS source
+ON target.PersonID = source.PersonID
+WHEN MATCHED AND (
+    ISNULL(target.Name,'') <> ISNULL(source.Name,'')
+    OR ISNULL(target.Email,'') <> ISNULL(source.Email,'')
+    OR ISNULL(target.PhoneNumber1,'') <> ISNULL(source.PhoneNumber1,'')
+    OR ISNULL(target.PhoneNumber2,'') <> ISNULL(source.PhoneNumber2,'')
+    OR ISNULL(target.IsDeleted, 0) <> ISNULL(source.IsDeleted, 0)
+)
+THEN UPDATE SET
+    Name = source.Name,
+    Email = source.Email,
+    PhoneNumber1 = source.PhoneNumber1,
+    PhoneNumber2 = source.PhoneNumber2,
+    ModifiedOn = source.ModifiedOn,
+    ModifiedBy = source.ModifiedBy,
+    DeletedOn = source.DeletedOn,
+    DeletedBy = source.DeletedBy,
+    IsDeleted = source.IsDeleted
+WHEN NOT MATCHED BY TARGET THEN
+    INSERT (
+        PersonID, Name, Email, PhoneNumber1, PhoneNumber2, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted
+    )
+    VALUES (
+        source.PersonID, source.Name, source.Email, source.PhoneNumber1, source.PhoneNumber2, source.CreatedOn, source.CreatedBy, source.ModifiedOn, source.ModifiedBy, source.DeletedOn, source.DeletedBy, source.IsDeleted
+    )
+OUTPUT $action, source.PersonID;";
+
+                foreach (var person in sourceData)
+                {
+                    var result = await targetConn.QueryAsync<(string Action, long PersonID)>(mergeSql, person);
+                    if (!result.Any())
+                    {
+                        if (person.PersonID.HasValue)
+                            skipped.Add(person.PersonID.Value);
+                        continue;
+                    }
+                    foreach (var r in result)
+                    {
+                        if (r.Action == "INSERT") inserted.Add(r.PersonID);
+                        else if (r.Action == "UPDATE") updated.Add(r.PersonID);
+                    }
+                }
+
+                // Disable explicit PersonID insert
+                await targetConn.ExecuteAsync("SET IDENTITY_INSERT dbo.Persons OFF");
+            }
             return (inserted, updated, skipped);
         }
 

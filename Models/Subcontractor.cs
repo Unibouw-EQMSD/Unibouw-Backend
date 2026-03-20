@@ -12,7 +12,7 @@ public partial class Subcontractor
     public string? OfficeAddress { get; set; }
     public string? BillingAddress { get; set; }
     public DateTime? RegisteredDate { get; set; }
-    public Guid? PersonID { get; set; }
+    public long? PersonID { get; set; }
     public bool? IsActive { get; set; } = true;
     public DateTime? CreatedOn { get; set; }
     public string? CreatedBy { get; set; }

@@ -2,7 +2,7 @@
 {
     public class Person
     {
-        public Guid PersonID { get; set; }
+        public long? PersonID { get; set; }
         public string? Name { get; set; }
         public string? Email { get; set; }
         public string? PhoneNumber1 { get; set; }

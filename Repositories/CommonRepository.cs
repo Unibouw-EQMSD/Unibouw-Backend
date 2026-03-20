@@ -50,21 +50,21 @@ namespace UnibouwAPI.Repositories
                 new { Id = id });
         }
 
-        public async Task<int> CreatePerson(Person person)
+        public async Task<long> CreatePerson(Person person)
         {
             var sql = @"
         INSERT INTO Persons 
-        (PersonID, ERP_ID, Name, Mail, PhoneNumber1, PhoneNumber2, Address, State, City, Country, PostalCode,
+        (ERP_ID, Name, Mail, PhoneNumber1, PhoneNumber2, Address, State, City, Country, PostalCode,
          CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
         VALUES 
-        (@PersonID, @ERP_ID, @Name, @Mail, @PhoneNumber1, @PhoneNumber2, @Address, @State, @City, @Country, @PostalCode,
-         @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted)";
+        (@ERP_ID, @Name, @Mail, @PhoneNumber1, @PhoneNumber2, @Address, @State, @City, @Country, @PostalCode,
+         @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
+        SELECT CAST(SCOPE_IDENTITY() AS bigint);";
 
-            person.PersonID = Guid.NewGuid();
             person.CreatedOn = amsterdamNow;
             person.IsDeleted = false;
 
-            return await _connection.ExecuteAsync(sql, person);
+            return await _connection.ExecuteScalarAsync<long>(sql, person);
         }
 
 

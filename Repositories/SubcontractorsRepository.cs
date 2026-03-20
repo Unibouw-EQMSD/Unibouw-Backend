@@ -131,45 +131,37 @@ namespace UnibouwAPI.Repositories
                 {
                     try
                     {
-                        //  STEP 1: CHECK DUPLICATE EMAIL or NAME
-                        // Email check
+                        // STEP 1: CHECK DUPLICATE EMAIL or NAME
                         string duplicateEmailQuery = @"
-                                SELECT COUNT(1) 
-                                FROM Subcontractors 
-                                WHERE LOWER(Email) = LOWER(@Email)
-                                  AND IsDeleted = 0;
-                            ";
-
+                    SELECT COUNT(1) 
+                    FROM Subcontractors 
+                    WHERE LOWER(Email) = LOWER(@Email)
+                      AND IsDeleted = 0;";
                         int existingEmailCount = await connection.ExecuteScalarAsync<int>(
                             duplicateEmailQuery,
                             new { subcontractor.Email },
                             transaction
                         );
-
                         if (existingEmailCount > 0)
                             throw new InvalidOperationException("A subcontractor with this email already exists.");
 
-                        // Name check
                         string duplicateNameQuery = @"
-                                SELECT COUNT(1) 
-                                FROM Subcontractors 
-                                WHERE LOWER(Name) = LOWER(@Name)
-                                  AND IsDeleted = 0;
-                            ";
-
+                    SELECT COUNT(1) 
+                    FROM Subcontractors 
+                    WHERE LOWER(Name) = LOWER(@Name)
+                      AND IsDeleted = 0;";
                         int existingNameCount = await connection.ExecuteScalarAsync<int>(
                             duplicateNameQuery,
                             new { subcontractor.Name },
                             transaction
                         );
-
                         if (existingNameCount > 0)
                             throw new InvalidOperationException("A subcontractor with this name already exists.");
 
-                        //  STEP 2: INSERT INTO PERSONS TABLE
+                        // STEP 2: INSERT INTO PERSONS TABLE (PersonID as bigint IDENTITY)
                         var person = new Person
                         {
-                            PersonID = Guid.NewGuid(),
+                            // Do NOT set PersonID if it is identity (auto-generated)
                             Name = subcontractor.ContactName,
                             Email = subcontractor.ContactEmail,
                             PhoneNumber1 = subcontractor.ContactPhone,
@@ -179,60 +171,58 @@ namespace UnibouwAPI.Repositories
                         };
 
                         string insertPersonQuery = @"
-                                INSERT INTO Persons
-                                (PersonID, Name, Email, PhoneNumber1, PhoneNumber2, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
-                                VALUES
-                                (@PersonID, @Name, @Email, @PhoneNumber1, @PhoneNumber2, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
-                            ";
+                    INSERT INTO Persons
+                    (Name, Email, PhoneNumber1, PhoneNumber2, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted)
+                    VALUES
+                    (@Name, @Email, @PhoneNumber1, @PhoneNumber2, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted);
+                    SELECT CAST(SCOPE_IDENTITY() AS bigint);";
 
-                        await connection.ExecuteAsync(insertPersonQuery, person, transaction);
+                        long newPersonId = await connection.ExecuteScalarAsync<long>(
+                            insertPersonQuery, person, transaction);
 
                         // Store generated PersonID in subcontractor
-                        subcontractor.PersonID = person.PersonID;
+                        subcontractor.PersonID = newPersonId;
 
-                        //  STEP 3: INSERT INTO SUBCONTRACTORS TABLE
+                        // STEP 3: INSERT INTO SUBCONTRACTORS TABLE
                         subcontractor.SubcontractorID = Guid.NewGuid();
                         subcontractor.CreatedOn = amsterdamNow;
                         subcontractor.IsActive ??= true;
                         subcontractor.IsDeleted = false;
 
                         string insertSubcontractorQuery = @"
-                                INSERT INTO Subcontractors 
-                                (SubcontractorID, Name, Rating, Email, Location, Country, OfficeAddress, BillingAddress, RegisteredDate, PersonID, 
-                                 IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted, RemindersSent)
-                                VALUES 
-                                (@SubcontractorID, @Name, @Rating, @Email, @Location, @Country, @OfficeAddress, @BillingAddress, @RegisteredDate, @PersonID, 
-                                 @IsActive, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted, @RemindersSent);
-                            ";
+                    INSERT INTO Subcontractors 
+                    (SubcontractorID, Name, Rating, Email, Location, Country, OfficeAddress, BillingAddress, RegisteredDate, PersonID, 
+                     IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted, RemindersSent)
+                    VALUES 
+                    (@SubcontractorID, @Name, @Rating, @Email, @Location, @Country, @OfficeAddress, @BillingAddress, @RegisteredDate, @PersonID, 
+                     @IsActive, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted, @RemindersSent);";
 
                         await connection.ExecuteAsync(insertSubcontractorQuery, subcontractor, transaction);
 
-                        //  STEP 4: INSERT INTO SubcontractorWorkItemsMapping table 
+                        // STEP 4: INSERT INTO SubcontractorWorkItemsMapping table 
                         if (subcontractor.WorkItemIDs != null && subcontractor.WorkItemIDs.Any())
                         {
                             string insertMappingQuery = @"
-                                INSERT INTO SubcontractorWorkItemsMapping 
-                                (SubcontractorID, WorkItemID, CreatedOn, CreatedBy)
-                                VALUES (@SubcontractorID, @WorkItemID, @CreatedOn, @CreatedBy);
-                            ";
-
+                        INSERT INTO SubcontractorWorkItemsMapping 
+                        (SubcontractorID, WorkItemID, CreatedOn, CreatedBy)
+                        VALUES (@SubcontractorID, @WorkItemID, @CreatedOn, @CreatedBy);";
                             foreach (var workItemId in subcontractor.WorkItemIDs)
                             {
                                 await connection.ExecuteAsync(
-                                        insertMappingQuery,
-                                        new
-                                        {
-                                            SubcontractorID = subcontractor.SubcontractorID,
-                                            WorkItemID = workItemId,
-                                            CreatedOn = amsterdamNow,
-                                            CreatedBy = subcontractor.CreatedBy
-                                        },
-                                        transaction
-                                    );
+                                    insertMappingQuery,
+                                    new
+                                    {
+                                        SubcontractorID = subcontractor.SubcontractorID,
+                                        WorkItemID = workItemId,
+                                        CreatedOn = amsterdamNow,
+                                        CreatedBy = subcontractor.CreatedBy
+                                    },
+                                    transaction
+                                );
                             }
                         }
 
-                        //  STEP 5: COMMIT
+                        // STEP 5: COMMIT
                         transaction.Commit();
                         return true;
                     }

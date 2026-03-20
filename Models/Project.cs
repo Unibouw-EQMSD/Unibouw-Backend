@@ -22,7 +22,7 @@
 
         // Navigation
         public string? CustomerName { get; set; }
-        public Guid? PersonId { get; set; }
+        public long? PersonId { get; set; }
         public string? PersonName { get; set; }
         public string? PersonEmail { get; set; }
         public string? PersonRole { get; set; }

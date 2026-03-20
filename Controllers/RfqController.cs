@@ -122,7 +122,7 @@ namespace UnibouwAPI.Controllers
 
         [HttpPost("create-simple")]
         [Authorize]
-        public async Task<IActionResult> CreateRfqSimple([FromBody] Rfq rfq, [FromQuery] List<Guid> subcontractorIds, [FromQuery] List<Guid> workItems, [FromQuery] bool sendEmail = true)
+        public async Task<IActionResult> CreateRfqSimple([FromBody] Rfq rfq, [FromQuery] List<Guid> subcontractorIds, [FromQuery] List<Guid> workItems, [FromQuery] bool sendEmail = true, [FromQuery] string? language = "en")
         {
             try
             {
@@ -185,7 +185,8 @@ namespace UnibouwAPI.Controllers
                         SubcontractorIDs = subcontractorIds,
                         WorkItems = workItems ?? new List<Guid>(),
                         Subject = "RFQ Invitation - Unibouw",
-                        Body = rfq.CustomNote
+                        Body = rfq.CustomNote,
+                        Language = language
                     };
 
                     var sentEmails = await _emailRepository.SendRfqEmailAsync(emailRequest);
@@ -256,17 +257,20 @@ namespace UnibouwAPI.Controllers
 
         [HttpPost("update")]
         [Authorize]
-        public async Task<IActionResult> UpdateRfqPost([FromQuery] Guid rfqId, [FromBody] Rfq rfq, [FromQuery] List<Guid> subcontractorIds, [FromQuery] List<Guid> workItems, [FromQuery] bool sendEmail = false)
+        public async Task<IActionResult> UpdateRfqPost(
+     [FromQuery] Guid rfqId,
+     [FromBody] Rfq rfq,
+     [FromQuery] List<Guid> subcontractorIds,
+     [FromQuery] List<Guid> workItems,
+     [FromQuery] bool sendEmail = false)
         {
             try
             {
                 if (rfq == null || rfqId == Guid.Empty)
                     return BadRequest(new { message = "RFQ data and ID are required." });
-
                 rfq.RfqID = rfqId;
                 rfq.RfqSent = sendEmail ? 1 : rfq.RfqSent;
                 rfq.Status = sendEmail ? "Sent" : rfq.Status;
-
                 // ✅ 1️⃣ Update MAIN RFQ (DO NOT touch DueDate here)
                 var rfqUpdated = await _repository.UpdateRfqMainAsync(rfq);
                 if (!rfqUpdated)
@@ -283,7 +287,6 @@ namespace UnibouwAPI.Controllers
                     {
                         if (!sub.DueDate.HasValue)
                             continue;
-
                         await _repository.UpdateSubcontractorDueDateAsync(
                             rfqId,
                             sub.SubcontractorID,
@@ -291,21 +294,35 @@ namespace UnibouwAPI.Controllers
                         );
                     }
                 }
-
-                // ✅ 4️⃣ Send email
+                // ✅ 4️⃣ Send email and LOG CONVERSATION
                 if (sendEmail)
                 {
                     rfq.SentDate = DateTime.UtcNow;
-                    await _emailRepository.SendRfqEmailAsync(new EmailRequest
+                    var sentEmails = await _emailRepository.SendRfqEmailAsync(new EmailRequest
                     {
                         RfqID = rfqId,
                         SubcontractorIDs = subcontractorIds ?? new(),
                         WorkItems = workItems ?? new(),
                         Subject = "RFQ Invitation - Unibouw",
-                        Body = ""
+                        Body = rfq.CustomNote // or your full body
                     });
-                }
 
+                    // Conversation logging for each subcontractor
+                    foreach (var email in sentEmails)
+                    {
+                        await _conversationRepo.AddRFQConversationMessageAsync(
+                            new RFQConversationMessage
+                            {
+                                ProjectID = rfq.ProjectID!.Value,
+                                SubcontractorID = email.SubcontractorIDs.First(),
+                                SenderType = "PM",
+                                MessageText = HtmlToPlainText(email.Body),
+                                MessageDateTime = amsterdamNow,
+                                CreatedBy = User.Identity?.Name ?? "System"
+                            }
+                        );
+                    }
+                }
                 return Ok(new
                 {
                     message = sendEmail
@@ -315,9 +332,7 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                // Log exception here if you have logging (ILogger)
-                 _logger.LogError(ex, "Error updating RFQ {RfqId}", rfqId);
-
+                _logger.LogError(ex, "Error updating RFQ {RfqId}", rfqId);
                 return StatusCode(500, new
                 {
                     message = "An error occurred while updating the RFQ.",

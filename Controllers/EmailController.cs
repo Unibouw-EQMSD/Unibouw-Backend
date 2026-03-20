@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using System.Net;
+using UnibouwAPI.Helpers;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories;
 using UnibouwAPI.Repositories.Interfaces;
@@ -12,12 +13,14 @@ namespace UnibouwAPI.Controllers
     {
         private readonly IEmail _emailRepository;
         private readonly ISubcontractors _subcontractorRepository;
+        private readonly IRfqReminder _repository;
         private readonly ILogger<EmailController> _logger;
 
-        public EmailController(IEmail emailRepository, ISubcontractors subcontractorRepository, ILogger<EmailController> logger)
+        public EmailController(IEmail emailRepository, ISubcontractors subcontractorRepository,IRfqReminder rfqReminderRepo, ILogger<EmailController> logger)
         {
             _emailRepository = emailRepository;
             _subcontractorRepository = subcontractorRepository;
+            _repository = rfqReminderRepo;
             _logger = logger;
         }
 
@@ -78,7 +81,13 @@ namespace UnibouwAPI.Controllers
                     req.RfqID,
                     req.EmailBody
                 );
-
+                DateTime reminderDateTime = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow); // Use the same DateTime logic as your scheduler
+                await _repository.MarkScheduleSentForSubAtTime(
+                    req.RfqID,
+                    req.SubcontractorId,
+                    reminderDateTime,
+                    reminderDateTime
+                );
                 return Ok(new { success = result });
             }
             catch(Exception ex)
