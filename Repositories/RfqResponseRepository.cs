@@ -445,6 +445,7 @@ DocumentFlag AS (
 SELECT 
     wi.WorkItemID,
     wi.Name AS WorkItemName,
+wi.Number AS WorkItemNumber,
     rfq.RfqID,
     rfq.RfqNumber,
     rfq.CreatedOn AS RfqCreatedDate,
@@ -486,6 +487,7 @@ ORDER BY wi.Name, s.Name;
                 {
                     WorkItemID = (Guid)r.WorkItemID,
                     WorkItemName = (string)r.WorkItemName,
+                    workItemNumber = (string)r.WorkItemNumber,
                     RfqID = (Guid)r.RfqID,
                     RfqNumber = (string)r.RfqNumber
                 })
@@ -493,6 +495,7 @@ ORDER BY wi.Name, s.Name;
                 {
                     workItemId = g.Key.WorkItemID,
                     workItemName = g.Key.WorkItemName,
+                    workItemNumber = g.Key.workItemNumber,
                     rfqId = g.Key.RfqID.ToString(),
                     rfqNumber = g.Key.RfqNumber,
 
@@ -581,6 +584,7 @@ DocumentFlag AS (
 SELECT 
     wi.WorkItemID,
     wi.Name AS WorkItemName,
+wi.Number AS WorkItemNumber,
     rfq.RfqID,
     rfq.RfqNumber,
     rfq.CreatedOn AS RfqCreatedDate,
@@ -636,6 +640,7 @@ ORDER BY wi.Name, s.Name;
                 {
                     workItemId = (Guid)r.WorkItemID,
                     workItemName = (string)r.WorkItemName,
+                    workItemNumber = (string)r.WorkItemNumber,
                     rfqId = ((Guid)r.RfqID).ToString(),
                     rfqNumber = (string)r.RfqNumber,
                     subcontractorId = (Guid)r.SubcontractorID,
