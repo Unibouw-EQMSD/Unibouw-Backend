@@ -9,12 +9,15 @@ namespace UnibouwAPI.Repositories
     {
         private readonly string _cs;
         private readonly IConfiguration _config;
+        private readonly string _connectionString;
 
         public RfqEmailIngestionRepository(IConfiguration config)
         {
             _config = config;
             _cs = config.GetConnectionString("UnibouwDbConnection")
                   ?? throw new InvalidOperationException("Connection string not configured.");
+            _connectionString = config.GetConnectionString("UnibouwDbConnection")
+                ?? throw new InvalidOperationException("Connection string not configured.");
         }
 
         public async Task<List<string>> GetAllPersonMailboxesAsync()
@@ -27,35 +30,44 @@ namespace UnibouwAPI.Repositories
             return new List<string> { sender.Trim() };
         }
 
-        public async Task<DateTime> GetOrCreateCursorUtcAsync(string pmMailbox)
+        public async Task<(DateTime cursorUtc, HashSet<string> processedIdsAtCursor)> GetOrCreateCursorUtcAsync(string pmMailbox)
         {
             const string sel = @"
-SELECT LastReceivedUtcProcessed
-FROM dbo.MailboxPollCursor
-WHERE PmMailbox = @PmMailbox;";
+    SELECT LastReceivedUtcProcessed, LastProcessedMessageIdsAtCursor
+    FROM dbo.MailboxPollCursor
+    WHERE PmMailbox = @PmMailbox;";
             using var conn = new SqlConnection(_cs);
-            var existing = await conn.QuerySingleOrDefaultAsync<DateTime?>(sel, new { PmMailbox = pmMailbox });
+            var row = await conn.QuerySingleOrDefaultAsync(sel, new { PmMailbox = pmMailbox });
 
-            if (existing.HasValue) return existing.Value;
+            if (row != null)
+            {
+                DateTime cursor = (DateTime)row.LastReceivedUtcProcessed;
+                var ids = (row.LastProcessedMessageIdsAtCursor as string ?? "")
+                            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                            .Select(x => x.Trim())
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                return (cursor, ids);
+            }
 
             var start = DateTime.UtcNow.AddDays(-7);
             const string ins = @"
-INSERT INTO dbo.MailboxPollCursor(PmMailbox, LastReceivedUtcProcessed)
-VALUES(@PmMailbox, @StartUtc);";
+    INSERT INTO dbo.MailboxPollCursor(PmMailbox, LastReceivedUtcProcessed, LastProcessedMessageIdsAtCursor)
+    VALUES(@PmMailbox, @StartUtc, N'')";
             await conn.ExecuteAsync(ins, new { PmMailbox = pmMailbox, StartUtc = start });
-            return start;
+            return (start, new HashSet<string>());
         }
 
-        public async Task UpdateCursorUtcAsync(string pmMailbox, DateTime utc)
+        public async Task UpdateCursorUtcAsync(string pmMailbox, DateTime utc, string processedIdsCsv)
         {
             const string sql = @"
-UPDATE dbo.MailboxPollCursor
-SET LastReceivedUtcProcessed = @Utc,
-    LastRunUtc = SYSUTCDATETIME(),
-    LastError = NULL
-WHERE PmMailbox = @PmMailbox;";
+    UPDATE dbo.MailboxPollCursor
+    SET LastReceivedUtcProcessed = @Utc,
+        LastProcessedMessageIdsAtCursor = @ProcessedIdsCsv,
+        LastRunUtc = SYSUTCDATETIME(),
+        LastError = NULL
+    WHERE PmMailbox = @PmMailbox;";
             using var conn = new SqlConnection(_cs);
-            await conn.ExecuteAsync(sql, new { PmMailbox = pmMailbox, Utc = utc });
+            await conn.ExecuteAsync(sql, new { PmMailbox = pmMailbox, Utc = utc, ProcessedIdsCsv = processedIdsCsv ?? "" });
         }
 
         public async Task UpdateCursorRunAsync(string pmMailbox, string? error)
@@ -95,27 +107,26 @@ VALUES
             });
         }
 
-        public async Task<bool> AnchorExistsAsync(Guid projectId, Guid subcontractorId, string pmMailbox, string conversationId)
+        public async Task<bool> AnchorExistsAsync(Guid projectId, Guid subcontractorId, Guid rfqId, string pmMailbox, string conversationId)
         {
             const string sql = @"
-SELECT TOP 1 1
-FROM dbo.OutboundRfqEmailAnchor
-WHERE IsActive = 1
-  AND ProjectId = @ProjectId
-  AND SubcontractorId = @SubId
-  AND PmMailbox = @PmMailbox
-  AND (ConversationId = @ConversationId OR ConversationId IS NULL);";
-
+    SELECT TOP 1 1
+    FROM dbo.OutboundRfqEmailAnchor
+    WHERE IsActive = 1
+      AND ProjectId = @ProjectId
+      AND SubcontractorId = @SubId
+      AND RfqId = @RfqId
+      AND PmMailbox = @PmMailbox
+      AND (ConversationId = @ConversationId OR ConversationId IS NULL);";
             using var conn = new SqlConnection(_cs);
-
             var x = await conn.ExecuteScalarAsync<int?>(sql, new
             {
                 ProjectId = projectId,
                 SubId = subcontractorId,
+                RfqId = rfqId,
                 PmMailbox = pmMailbox,
                 ConversationId = conversationId
             });
-
             return x.HasValue;
         }
 
@@ -255,6 +266,23 @@ VALUES
                 CreatedOnAms = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow),
                 Subject = subject ?? ""
             });
+        }
+        private readonly SqlConnection _connection;
+
+        public async Task<dynamic> GetOfficialProjectDetailsAsync(Guid projectId, Guid rfqId, Guid subId)
+        {
+            return await _connection.QuerySingleAsync<dynamic>(
+                @"SELECT 
+            p.Number AS ProjectCode,
+            p.Name AS ProjectName,
+            r.RfqNumber,
+            rsm.DueDate
+        FROM Projects p
+        INNER JOIN Rfq r ON r.ProjectID = p.ProjectID
+        INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = r.RfqID
+        WHERE p.ProjectID = @ProjectID AND r.RfqID = @RfqID AND rsm.SubcontractorID = @SubID",
+                new { ProjectID = projectId, RfqID = rfqId, SubID = subId }
+            );
         }
 
         public async Task InsertInboundToLogConversationAsync(

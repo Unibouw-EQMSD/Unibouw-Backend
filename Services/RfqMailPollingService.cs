@@ -1,6 +1,9 @@
 ﻿using Azure.Identity;
+using Dapper;
+using Microsoft.Data.SqlClient;
 using Microsoft.Graph;
 using Microsoft.Graph.Models;
+using System.Data;
 using System.Text.RegularExpressions;
 using UnibouwAPI.Repositories.Interfaces;
 using UnibouwAPI.Services.Interfaces;
@@ -13,12 +16,17 @@ namespace UnibouwAPI.Services
         private readonly IRfqEmailIngestionRepository _repo;
         private readonly ILogger<RfqMailPollingService> _logger;
 
+        private readonly string _connectionString;
+
         public RfqMailPollingService(
             IConfiguration config,
             IRfqEmailIngestionRepository repo,
             ILogger<RfqMailPollingService> logger)
         {
             _config = config;
+            _connectionString = config.GetConnectionString("UnibouwDbConnection")
+               ?? throw new InvalidOperationException("Connection string not configured.");
+
             _repo = repo;
             _logger = logger;
         }
@@ -72,20 +80,15 @@ namespace UnibouwAPI.Services
 
         private async Task PollMailboxAsync(GraphServiceClient graph, string pmMailbox, int batchSize, CancellationToken ct)
         {
-            var cursorUtc = await _repo.GetOrCreateCursorUtcAsync(pmMailbox);
+            var (cursorUtc, processedIdsAtCursor) = await _repo.GetOrCreateCursorUtcAsync(pmMailbox);
 
             var inboxMsgs = await GetFolderMessagesSinceAsync(graph, pmMailbox, "Inbox", cursorUtc, batchSize, ct);
             var sentMsgs = await GetFolderMessagesSinceAsync(graph, pmMailbox, "SentItems", cursorUtc, batchSize, ct);
-
-            Console.WriteLine($"[PollMailboxAsync] pm={pmMailbox} cursorUtc={cursorUtc:o}");
-            Console.WriteLine($"[PollMailboxAsync] inboxMsgs={inboxMsgs.Count} sentMsgs={sentMsgs.Count}");
 
             var all = inboxMsgs.Select(m => (Folder: "Inbox", Msg: m))
                 .Concat(sentMsgs.Select(m => (Folder: "SentItems", Msg: m)))
                 .OrderBy(x => x.Msg.ReceivedDateTime!.Value.UtcDateTime)
                 .ToList();
-
-            Console.WriteLine($"[PollMailboxAsync] all={all.Count}");
 
             if (all.Count == 0)
             {
@@ -93,112 +96,97 @@ namespace UnibouwAPI.Services
                 return;
             }
 
-            // ✅ In-run de-dupe (prevents Inbox+SentItems copies inserting twice)
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var maxUtc = cursorUtc;
+            var newProcessedIdsAtCursor = new HashSet<string>();
 
             foreach (var item in all)
             {
                 if (ct.IsCancellationRequested) break;
-
                 var msg = item.Msg;
                 var folder = item.Folder;
 
-                Console.WriteLine(
-                    $"[Mail] folder={folder} id={msg.Id} recv={msg.ReceivedDateTime?.UtcDateTime:o} " +
-                    $"subj={(msg.Subject ?? "").Trim()} from={(msg.From?.EmailAddress?.Address ?? "").Trim()} " +
-                    $"internetId={(msg.InternetMessageId ?? "").Trim()} convId={(msg.ConversationId ?? "").Trim()}");
-
                 if (string.IsNullOrWhiteSpace(msg.Id) || !msg.ReceivedDateTime.HasValue)
-                {
-                    Console.WriteLine("[Mail] Skip: missing id or receivedDateTime");
                     continue;
-                }
 
                 var receivedUtc = msg.ReceivedDateTime.Value.UtcDateTime;
-                if (receivedUtc > maxUtc) maxUtc = receivedUtc;
 
-                // ✅ DB de-dupe (already processed in previous runs)
+                // NEW LOGIC: Allow same-timestamp messages if not already processed at this timestamp
+                bool shouldProcess =
+                    (receivedUtc > cursorUtc) ||
+                    (receivedUtc == cursorUtc && !processedIdsAtCursor.Contains(msg.Id));
+
+                if (!shouldProcess)
+                    continue;
+
                 if (await _repo.IsAlreadyIngestedAsync(msg.Id, folder))
-                {
-                    Console.WriteLine("[Mail] Skip: already ingested (DB)");
                     continue;
-                }
 
-                // ✅ In-run de-dupe key
-                var internetId = (msg.InternetMessageId ?? "").Trim();
-                var key = !string.IsNullOrWhiteSpace(internetId)
-                    ? internetId
-                    : $"{(msg.Subject ?? "").Trim()}|{receivedUtc:O}|{(msg.From?.EmailAddress?.Address ?? "").Trim()}";
-
-                // If we already processed same email in this cycle, skip (but still mark processed)
+                // In-run de-dupe (optional, for double mailbox scan protection)
+                var key = msg.Id;
                 if (!seen.Add(key))
-                {
-                    Console.WriteLine($"[Mail] Skip: duplicate in-run key={key}");
-                    await _repo.MarkIngestedAsync(pmMailbox, msg.Id, folder, receivedUtc);
                     continue;
-                }
 
                 try
                 {
                     if (folder == "Inbox")
-                    {
-                        Console.WriteLine("[Mail] Calling TryIngestInboxAsync...");
                         await TryIngestInboxAsync(graph, pmMailbox, msg, ct);
-                    }
                     else
-                    {
-                        Console.WriteLine("[Mail] Calling TryIngestSentAsync...");
                         await TryIngestSentAsync(graph, pmMailbox, msg, ct);
-                    }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Mail] ERROR: {ex.Message}");
-                    _logger.LogError(ex, "Ingest failed for mailbox={Mailbox}, folder={Folder}, msgId={MsgId}", pmMailbox, folder, msg.Id);
+                    // log error
                 }
                 finally
                 {
-                    // ✅ Always mark processed (for now; later change to mark only on success)
                     await _repo.MarkIngestedAsync(pmMailbox, msg.Id, folder, receivedUtc);
+                }
+
+                // Update cursor logic:
+                if (receivedUtc > maxUtc)
+                {
+                    maxUtc = receivedUtc;
+                    newProcessedIdsAtCursor.Clear();
+                    newProcessedIdsAtCursor.Add(msg.Id);
+                }
+                else if (receivedUtc == maxUtc)
+                {
+                    newProcessedIdsAtCursor.Add(msg.Id);
                 }
             }
 
-            await _repo.UpdateCursorUtcAsync(pmMailbox, maxUtc);
+            // Save new cursor and IDs at cursor
+            await _repo.UpdateCursorUtcAsync(pmMailbox, maxUtc, string.Join(",", newProcessedIdsAtCursor));
         }
+
+
+
         private async Task TryIngestSentAsync(GraphServiceClient graph, string pmMailbox, Message msg, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(msg.ConversationId))
                 return;
 
-            // Token parse (subject first, then preview, then full body)
-            var (projectId, subId, found) = ParseToken(msg.Subject);
-
-            if (!found)
-                (projectId, subId, found) = ParseToken(msg.BodyPreview);
-
+            // Parse token as usual (projectId, subId, rfqId, found)...
+            var (projectId, subId, rfqId, found) = ParseToken(msg.Subject);
+            if (!found) (projectId, subId, rfqId, found) = ParseToken(msg.BodyPreview);
             if (!found)
             {
                 var full = await graph.Users[pmMailbox].Messages[msg.Id].GetAsync(r =>
                 {
                     r.QueryParameters.Select = new[] { "id", "subject", "bodyPreview", "body", "receivedDateTime", "sentDateTime", "conversationId" };
                 }, ct);
-
-                (projectId, subId, found) = ParseToken(full?.Subject);
-
-                if (!found) (projectId, subId, found) = ParseToken(full?.BodyPreview);
-                if (!found) (projectId, subId, found) = ParseToken(full?.Body?.Content);
+                (projectId, subId, rfqId, found) = ParseToken(full?.Subject);
+                if (!found) (projectId, subId, rfqId, found) = ParseToken(full?.BodyPreview);
+                if (!found) (projectId, subId, rfqId, found) = ParseToken(full?.Body?.Content);
             }
-
-            if (!found || !projectId.HasValue || !subId.HasValue)
+            if (!found || !projectId.HasValue || !subId.HasValue || !rfqId.HasValue)
                 return;
 
-            // Anchor check (your repo allows ConversationId IS NULL)
-            var anchorOk = await _repo.AnchorExistsAsync(projectId.Value, subId.Value, pmMailbox, msg.ConversationId);
+            var anchorOk = await _repo.AnchorExistsAsync(projectId.Value, subId.Value, rfqId.Value, pmMailbox, msg.ConversationId);
             if (!anchorOk)
                 return;
 
-            // Skip original RFQ invitation mail in SentItems (QMS already logs it)
             var subj = (msg.Subject ?? "").Trim();
             if (subj.StartsWith("RFQ –", StringComparison.OrdinalIgnoreCase) &&
                 !subj.StartsWith("RE:", StringComparison.OrdinalIgnoreCase) &&
@@ -211,33 +199,77 @@ namespace UnibouwAPI.Services
             if (fromEmail.Equals(pmMailbox, StringComparison.OrdinalIgnoreCase))
                 return;
 
-            // Prefer SentDateTime for SentItems; fallback to ReceivedDateTime
+            // Use full body content, or fallback to BodyPreview
+            var rawText = msg.Body?.Content ?? msg.BodyPreview ?? "";
+            // Convert <br> tags to newlines before stripping HTML
+            rawText = rawText.Replace("<br>", "\n", StringComparison.OrdinalIgnoreCase)
+                             .Replace("<br/>", "\n", StringComparison.OrdinalIgnoreCase)
+                             .Replace("<br />", "\n", StringComparison.OrdinalIgnoreCase);
+            var plainText = StripHtml(rawText);
+            var replyText = ExtractTopReply(plainText);
+
+            // Fetch official details from DB
+            using var conn = new SqlConnection(_connectionString);
+            var details = await conn.QuerySingleAsync<dynamic>(
+                @"SELECT 
+            p.Number AS ProjectCode,
+            p.Name AS ProjectName,
+            r.RfqNumber,
+            rsm.DueDate
+        FROM Projects p
+        INNER JOIN Rfq r ON r.ProjectID = p.ProjectID
+        INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = r.RfqID
+        WHERE p.ProjectID = @ProjectID AND r.RfqID = @RfqID AND rsm.SubcontractorID = @SubID",
+                new { ProjectID = projectId.Value, RfqID = rfqId.Value, SubID = subId.Value }
+            );
+            string projectLine = $"Project: {details.ProjectCode} - {details.ProjectName}";
+            string rfqLine = $"RFQ No: {details.RfqNumber}";
+            string dueLine = $"Due Date: {((DateTime)details.DueDate):dd-MMM-yyyy}";
+            string officialDetails = $"{projectLine}\n{rfqLine}\n{dueLine}";
+
+            // Combine reply and official details
+            string messageToLog = $"{replyText}\n\n---\n{officialDetails}";
+
             var sentUtc = (msg.SentDateTime ?? msg.ReceivedDateTime)!.Value.UtcDateTime;
             var sentAms = ToAmsterdamTime(sentUtc);
-            // Save only the top reply (prevents repeated quoted RFQ content)
-            var messageText = ExtractTopReply(msg.BodyPreview);
 
             await _repo.InsertPmSentToConversationAsync(
                 projectId.Value,
                 subId.Value,
                 msg.Subject ?? "",
-                messageText,
+                messageToLog,
                 sentAms,
                 pmMailbox
             );
         }
+        private string StripHtml(string html)
+        {
+            if (string.IsNullOrWhiteSpace(html)) return "";
+            html = html.Replace("<br>", "\n", StringComparison.OrdinalIgnoreCase)
+                       .Replace("<br/>", "\n", StringComparison.OrdinalIgnoreCase)
+                       .Replace("<br />", "\n", StringComparison.OrdinalIgnoreCase);
+            html = Regex.Replace(html, @"<\s*p\s*>", "\n\n", RegexOptions.IgnoreCase);
+            return Regex.Replace(html, "<.*?>", string.Empty).Trim();
+        }
 
-        private static string ExtractTopReply(string? text)
+        private string ExtractTopReply(string? text)
         {
             if (string.IsNullOrWhiteSpace(text)) return "";
-
             var t = text.Trim();
-
-            // Common Outlook separators where quoted content starts
-            var idx = t.IndexOf("\r\nFrom:", StringComparison.OrdinalIgnoreCase);
-            if (idx < 0) idx = t.IndexOf("\nFrom:", StringComparison.OrdinalIgnoreCase);
-            if (idx < 0) idx = t.IndexOf("-----Original Message-----", StringComparison.OrdinalIgnoreCase);
-
+            string[] separators = new[]
+            {
+        "\r\nOn ", "\nOn ",
+        "-----Original Message-----",
+        "\r\nFrom:", "\nFrom:",
+        "<div class=3D'gmail_quote'>",
+        "From: "
+    };
+            int idx = -1;
+            foreach (var sep in separators)
+            {
+                idx = t.IndexOf(sep, StringComparison.OrdinalIgnoreCase);
+                if (idx >= 0) break;
+            }
             return idx > 0 ? t.Substring(0, idx).Trim() : t;
         }
         private async Task TryIngestInboxAsync(GraphServiceClient graph, string pmMailbox, Message msg, CancellationToken ct)
@@ -248,8 +280,8 @@ namespace UnibouwAPI.Services
                 return;
             }
 
-            var (projectId, subId, found) = ParseToken(msg.Subject);
-            if (!found) (projectId, subId, found) = ParseToken(msg.BodyPreview);
+            var (projectId, subId, rfqId, found) = ParseToken(msg.Subject);
+            if (!found) (projectId, subId, rfqId, found) = ParseToken(msg.BodyPreview);
 
             if (!found)
             {
@@ -263,9 +295,9 @@ namespace UnibouwAPI.Services
         };
                 }, ct);
 
-                (projectId, subId, found) = ParseToken(full?.Subject);
-                if (!found) (projectId, subId, found) = ParseToken(full?.BodyPreview);
-                if (!found) (projectId, subId, found) = ParseToken(full?.Body?.Content);
+                (projectId, subId, rfqId, found) = ParseToken(full?.Subject);
+                if (!found) (projectId, subId, rfqId, found) = ParseToken(full?.BodyPreview);
+                if (!found) (projectId, subId, rfqId, found) = ParseToken(full?.Body?.Content);
 
                 Console.WriteLine($"[Inbox] Token after full fetch found={found}");
             }
@@ -276,8 +308,7 @@ namespace UnibouwAPI.Services
                 return;
             }
 
-            var anchorOk = await _repo.AnchorExistsAsync(projectId.Value, subId.Value, pmMailbox, msg.ConversationId);
-
+            var anchorOk = await _repo.AnchorExistsAsync(projectId.Value, subId.Value, rfqId.Value, pmMailbox, msg.ConversationId);
             if (!anchorOk)
             {
                 Console.WriteLine($"[Inbox] Skip: Anchor not found. pm={pmMailbox}, conv={msg.ConversationId}, p={projectId}, s={subId}");
@@ -328,29 +359,29 @@ namespace UnibouwAPI.Services
             }, ct);
 
             var list = (resp?.Value ?? new List<Message>())
-                .Where(m => m.ReceivedDateTime.HasValue && m.ReceivedDateTime.Value.UtcDateTime > sinceUtc)
+                .Where(m => m.ReceivedDateTime.HasValue && m.ReceivedDateTime.Value.UtcDateTime >= sinceUtc)
                 .ToList();
 
             list.Reverse(); // process oldest-first
             return list;
         }
-        private static (Guid? ProjectId, Guid? SubId, bool Found) ParseToken(string? text)
+        private static (Guid? ProjectId, Guid? SubId, Guid? RfqId, bool Found) ParseToken(string? text)
         {
             if (string.IsNullOrWhiteSpace(text))
-                return (null, null, false);
+                return (null, null, null, false);
 
             // Subject token: UBW:P=...;S=...;R=...
             var m1 = Regex.Match(
                 text,
                 @"UBW:P=(?<p>[0-9a-fA-F-]{36});S=(?<s>[0-9a-fA-F-]{36});R=(?<r>[0-9a-fA-F-]{36})",
                 RegexOptions.IgnoreCase);
-
-            if (m1.Success &&
-                Guid.TryParse(m1.Groups["p"].Value, out var p1) &&
-                Guid.TryParse(m1.Groups["s"].Value, out var s1) &&
-                p1 != Guid.Empty && s1 != Guid.Empty)
+            if (m1.Success
+                && Guid.TryParse(m1.Groups["p"].Value, out var p1)
+                && Guid.TryParse(m1.Groups["s"].Value, out var s1)
+                && Guid.TryParse(m1.Groups["r"].Value, out var r1)
+                && p1 != Guid.Empty && s1 != Guid.Empty && r1 != Guid.Empty)
             {
-                return (p1, s1, true);
+                return (p1, s1, r1, true);
             }
 
             // Body token: UBW:project=...;sub=...;rfq=...
@@ -358,16 +389,15 @@ namespace UnibouwAPI.Services
                 text,
                 @"UBW:project=(?<p>[0-9a-fA-F-]{36});sub=(?<s>[0-9a-fA-F-]{36});rfq=(?<r>[0-9a-fA-F-]{36})",
                 RegexOptions.IgnoreCase);
-
-            if (m2.Success &&
-                Guid.TryParse(m2.Groups["p"].Value, out var p2) &&
-                Guid.TryParse(m2.Groups["s"].Value, out var s2) &&
-                p2 != Guid.Empty && s2 != Guid.Empty)
+            if (m2.Success
+                && Guid.TryParse(m2.Groups["p"].Value, out var p2)
+                && Guid.TryParse(m2.Groups["s"].Value, out var s2)
+                && Guid.TryParse(m2.Groups["r"].Value, out var r2)
+                && p2 != Guid.Empty && s2 != Guid.Empty && r2 != Guid.Empty)
             {
-                return (p2, s2, true);
+                return (p2, s2, r2, true);
             }
-
-            return (null, null, false);
+            return (null, null, null, false);
         }
     }
 }

@@ -221,7 +221,7 @@ namespace UnibouwAPI.Repositories
             SELECT
                 ConversationMessageID AS MessageID,
                 SubcontractorMessageID,
-                'PM' AS SenderType,
+                SenderType,
                 MessageText,
                 MessageDateTime,
                 Subject,

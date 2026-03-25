@@ -49,19 +49,16 @@ public class InboundMailService : IInboundMailService
         var clientId = _config["GraphEmail:ClientId"];
         var clientSecret = _config["GraphEmail:ClientSecret"];
         var senderUser = _config["GraphEmail:SenderUser"]; // nitish mailbox
-
         var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
         var graphClient = new GraphServiceClient(credential);
 
-        // 2) Read message
         var msg = await graphClient.Users[senderUser].Messages[messageId].GetAsync(request =>
         {
             request.QueryParameters.Select = new[]
             {
-                "id","subject","body","from","receivedDateTime"
-            };
+            "id","subject","body","from","receivedDateTime"
+        };
         });
-
         if (msg == null) return;
 
         var bodyHtml = msg.Body?.Content ?? "";
@@ -69,14 +66,12 @@ public class InboundMailService : IInboundMailService
         var received = msg.ReceivedDateTime?.DateTime ?? DateTime.UtcNow;
         var fromEmail = msg.From?.EmailAddress?.Address ?? "";
 
-        // 3) Extract tracking token: TRACK:UBW|{projectId}|{subId}
-        var tracking = ExtractTracking(bodyHtml);
+        // Only extract from SUBJECT!
+        var tracking = ExtractTrackingFromSubject(subject);
         if (tracking == null) return;
-
         var (projectId, subcontractorId, rfqId) = tracking.Value;
-        // 4) Insert into RFQConversationMessage as Subcontractor message
-        var conversationMessageId = Guid.NewGuid();
 
+        var conversationMessageId = Guid.NewGuid();
         using var con = new SqlConnection(_connectionString);
         await con.OpenAsync();
 
@@ -91,7 +86,6 @@ VALUES
   @ConversationMessageID, @ProjectID, @SubcontractorID, @SenderType,
   @MessageText, @MessageDateTime, @Status, @CreatedBy, @CreatedOn, @Subject, @Tag
 );";
-
         await con.ExecuteAsync(insertMsgSql, new
         {
             ConversationMessageID = conversationMessageId,
@@ -107,13 +101,11 @@ VALUES
             Tag = "Inbound Email Reply"
         });
 
-        // 5) Attachments (optional)
+        // Attachments (optional, unchanged)
         var atts = await graphClient.Users[senderUser].Messages[messageId].Attachments.GetAsync();
         if (atts?.Value == null || atts.Value.Count == 0) return;
-
         var uploadsFolder = Path.Combine("Uploads", "RFQ");
         Directory.CreateDirectory(uploadsFolder);
-
         foreach (var a in atts.Value)
         {
             if (a is FileAttachment fa && fa.ContentBytes != null)
@@ -121,9 +113,7 @@ VALUES
                 var originalFileName = fa.Name ?? "attachment";
                 var storedFileName = $"{Guid.NewGuid()}_{originalFileName}";
                 var filePath = Path.Combine(uploadsFolder, storedFileName);
-
                 await File.WriteAllBytesAsync(filePath, fa.ContentBytes);
-
                 const string insertAttSql = @"
 INSERT INTO dbo.RfqConversationMessageAttachment
 (
@@ -135,7 +125,6 @@ VALUES
   @AttachmentID, @ConversationMessageID, @FileName, @FileExtension, @FileSize,
   @FilePath, 1, NULL, @UploadedOn
 );";
-
                 await con.ExecuteAsync(insertAttSql, new
                 {
                     AttachmentID = Guid.NewGuid(),
@@ -149,18 +138,16 @@ VALUES
             }
         }
     }
-
-    private (Guid projectId, Guid subcontractorId, Guid rfqId)? ExtractTracking(string html)
+    private (Guid projectId, Guid subcontractorId, Guid rfqId)? ExtractTrackingFromSubject(string? subject)
     {
-        var m = Regex.Match(html ?? "",
-            @"UBW:project=(?<p>[0-9a-fA-F-]{36});sub=(?<s>[0-9a-fA-F-]{36});rfq=(?<r>[0-9a-fA-F-]{36})",
-            RegexOptions.IgnoreCase);
-
+        if (string.IsNullOrWhiteSpace(subject)) return null;
+        var m = Regex.Match(subject, @"UBW:P=(?<p>[0-9a-fA-F-]{36});S=(?<s>[0-9a-fA-F-]{36});R=(?<r>[0-9a-fA-F-]{36})", RegexOptions.IgnoreCase);
         if (!m.Success) return null;
-
-        return (Guid.Parse(m.Groups["p"].Value),
-                Guid.Parse(m.Groups["s"].Value),
-                Guid.Parse(m.Groups["r"].Value));
+        return (
+            Guid.Parse(m.Groups["p"].Value),
+            Guid.Parse(m.Groups["s"].Value),
+            Guid.Parse(m.Groups["r"].Value)
+        );
     }
     private string StripHtml(string html)
     {

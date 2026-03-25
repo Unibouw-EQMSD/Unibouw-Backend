@@ -512,7 +512,7 @@ VALUES
                 string workItemIdsCsv = ""; // (if you want to fetch related workitems, you can query them here)
                 string summaryUrl = $"{baseUrl}/project-summary?rfqId={rfqGuid}&subId={subcontractorId}";
 
-                string body = token + $@"
+                string body = $@"
 <p>Dear {WebUtility.HtmlEncode(subcontractorName)},</p>
 <p>{emailBody}</p>
 <ul>
@@ -538,6 +538,30 @@ Project - Unibouw
                     subject,
                     body
                 );
+
+                try
+                {
+                    var senderUser = _configuration["GraphEmail:SenderUser"];
+
+                    // Insert the anchor (even if ConversationId is not available, store as NULL)
+                    await _connection.ExecuteAsync(@"
+        INSERT INTO dbo.OutboundRfqEmailAnchor
+        (AnchorId, ProjectId, SubcontractorId, RfqId, PmMailbox, ConversationId, InternetMessageId, GraphMessageId, SentUtc, Subject, IsActive)
+        VALUES (@AnchorId, @ProjectId, @SubId, @RfqId, @PmMailbox, NULL, NULL, NULL, SYSUTCDATETIME(), @Subject, 1);",
+                        new
+                        {
+                            AnchorId = Guid.NewGuid(),
+                            ProjectId = projectId,
+                            SubId = subcontractorId,
+                            RfqId = rfqGuid,
+                            PmMailbox = senderUser,
+                            Subject = subject
+                        });
+                }
+                catch (Exception ex)
+                {
+                    // Optionally log or handle duplicate anchor insert (ignore if anchor already exists)
+                }
             }
 
             return true;
