@@ -89,11 +89,11 @@ namespace UnibouwAPI.Repositories
             await graphClient.Users[senderUser].SendMail.PostAsync(sendMailBody);
         }
 
-        private async Task SendGraphEmailAsyncWithAttachments(
-      string toEmail,
-      string subject,
-      string htmlBody,
-      List<Microsoft.Graph.Models.Attachment>? attachments = null)
+        private async Task<(string GraphMessageId, string? ConversationId, string? InternetMessageId)> SendGraphEmailAsyncWithAttachments(
+     string toEmail,
+     string subject,
+     string htmlBody,
+     List<Microsoft.Graph.Models.Attachment>? attachments = null)
         {
             var tenantId = _configuration["GraphEmail:TenantId"];
             var clientId = _configuration["GraphEmail:ClientId"];
@@ -118,16 +118,17 @@ namespace UnibouwAPI.Repositories
                 EmailAddress = new Microsoft.Graph.Models.EmailAddress { Address = toEmail }
             }
         },
-                Attachments = attachments ?? new List<Microsoft.Graph.Models.Attachment>() // ✅ LIST
+                Attachments = attachments ?? new List<Microsoft.Graph.Models.Attachment>()
             };
 
-            var sendMailBody = new Microsoft.Graph.Users.Item.SendMail.SendMailPostRequestBody
-            {
-                Message = message,
-                SaveToSentItems = true
-            };
+            // ✅ Draft -> Send (returns message id)
+            var draft = await graphClient.Users[senderUser].Messages.PostAsync(message);
+            if (draft?.Id == null)
+                throw new Exception("Unable to create Graph draft message (id missing).");
 
-            await graphClient.Users[senderUser].SendMail.PostAsync(sendMailBody);
+            await graphClient.Users[senderUser].Messages[draft.Id].Send.PostAsync();
+
+            return (draft.Id, draft.ConversationId, draft.InternetMessageId);
         }
         // ================= RFQ EMAIL =================
 
@@ -141,15 +142,12 @@ namespace UnibouwAPI.Repositories
         public async Task<List<EmailRequest>> SendRfqEmailAsync(EmailRequest request)
         {
             var sentEmails = new List<EmailRequest>();
-
             if (request?.SubcontractorIDs == null || !request.SubcontractorIDs.Any())
                 return sentEmails;
 
             string baseUrl = _configuration["WebSettings:BaseUrl"]?.TrimEnd('/') ?? "";
 
-            // Language (default English). Does not change structure; only swaps labels/text.
             var lang = (request.Language ?? "en").ToLowerInvariant();
-
             string T(string key) => (lang, key) switch
             {
                 ("nl", "Dear") => "Geachte",
@@ -161,8 +159,6 @@ namespace UnibouwAPI.Repositories
                 ("nl", "ViewSummary") => "Projectoverzicht bekijken",
                 ("nl", "Regards") => "Met vriendelijke groet",
                 ("nl", "Signature") => "Project - Unibouw",
-
-                // default: English
                 (_, "Dear") => "Dear",
                 (_, "IntroFallback") => "You are invited to submit a quotation for the following details:",
                 (_, "Project") => "Project",
@@ -174,7 +170,6 @@ namespace UnibouwAPI.Repositories
                 (_, "Signature") => "Project - Unibouw",
             };
 
-            // Load RFQ + Project
             var rfq = await _connection.QuerySingleAsync<dynamic>(
                 @"SELECT RfqID, RfqNumber, ProjectID
           FROM Rfq
@@ -193,7 +188,6 @@ namespace UnibouwAPI.Repositories
             string projectName = project.Name;
             string projectCode = project.Number;
 
-            // Project manager / assignee name (for signature)
             var personDetails = await _connection.QuerySingleOrDefaultAsync<dynamic>(
                 @"SELECT prj.*, p.Name AS PersonName, ppm.RoleID
           FROM Projects prj
@@ -204,14 +198,12 @@ namespace UnibouwAPI.Repositories
 
             string personName = personDetails?.PersonName ?? "Project Assignee";
 
-            // Work items
             var workItems = (await _connection.QueryAsync<dynamic>(
                 @"SELECT WorkItemID, Name
           FROM WorkItems
           WHERE WorkItemID IN @ids",
                 new { ids = request.WorkItems })).ToList();
 
-            // Subcontractors
             var subcontractors = (await _connection.QueryAsync<dynamic>(
                 @"SELECT SubcontractorID, Email, ISNULL(Name,'Subcontractor') Name
           FROM Subcontractors
@@ -219,10 +211,7 @@ namespace UnibouwAPI.Repositories
             AND Email IS NOT NULL",
                 new { ids = request.SubcontractorIDs })).ToList();
 
-            // Sender mailbox used by Graph
             var senderUser = _configuration["GraphEmail:SenderUser"];
-
-            // Build Graph client once
             var tenantId = _configuration["GraphEmail:TenantId"];
             var clientId = _configuration["GraphEmail:ClientId"];
             var clientSecret = _configuration["GraphEmail:ClientSecret"];
@@ -235,7 +224,6 @@ namespace UnibouwAPI.Repositories
                 string toEmail = (string)sub.Email;
                 string subName = (string)sub.Name;
 
-                // Skip if already emailed
                 bool alreadyEmailed = await _connection.ExecuteScalarAsync<int>(
                     @"SELECT COUNT(1)
               FROM RfqSubcontractorMapping
@@ -247,7 +235,6 @@ namespace UnibouwAPI.Repositories
                 if (alreadyEmailed)
                     continue;
 
-                // Due date
                 DateTime dueDate = await _connection.QuerySingleAsync<DateTime>(
                     @"SELECT DueDate
               FROM RfqSubcontractorMapping
@@ -255,7 +242,6 @@ namespace UnibouwAPI.Repositories
                 AND SubcontractorID = @SubId",
                     new { RfqID = rfqId, SubId = subcontractorId });
 
-                // HTML fragments
                 string workItemListHtml = string.Join("",
                     workItems.Select(w => $"<li><strong>{WebUtility.HtmlEncode((string)w.Name)}</strong></li>"));
 
@@ -267,10 +253,7 @@ namespace UnibouwAPI.Repositories
                     $"&subId={subcontractorId}" +
                     $"&workItemIds={workItemIdsCsv}";
 
-                // ✅ Token in BODY (real comment, not HTML-encoded)
                 string token = $"<!-- UBW:project={projectId};sub={subcontractorId};rfq={rfqId} -->";
-
-                // Keep structure: only swap translated labels and default intro text
                 var intro = string.IsNullOrWhiteSpace(request.Body) ? T("IntroFallback") : request.Body;
 
                 string body = token + $@"
@@ -297,22 +280,22 @@ namespace UnibouwAPI.Repositories
 {T("Signature")}
 </p>";
 
-                // ✅ Subject token with FULL GUIDs so poller ParseToken(subject) works
-                var subject =
-                    $"RFQ – {projectCode} - {projectName} [UBW:P={projectId};S={subcontractorId};R={rfqId}]";
+                var subject = $"RFQ – {projectCode} - {projectName} [UBW:P={projectId};S={subcontractorId};R={rfqId}]";
 
-                // Send mail (Graph)
                 var message = new Microsoft.Graph.Models.Message
                 {
                     Subject = subject,
-                    Body = new ItemBody
+                    Body = new Microsoft.Graph.Models.ItemBody
                     {
-                        ContentType = BodyType.Html,
+                        ContentType = Microsoft.Graph.Models.BodyType.Html,
                         Content = body
                     },
-                    ToRecipients = new List<Recipient>
+                    ToRecipients = new List<Microsoft.Graph.Models.Recipient>
             {
-                new Recipient { EmailAddress = new EmailAddress { Address = toEmail } }
+                new Microsoft.Graph.Models.Recipient
+                {
+                    EmailAddress = new Microsoft.Graph.Models.EmailAddress { Address = toEmail }
+                }
             }
                 };
 
@@ -322,60 +305,10 @@ namespace UnibouwAPI.Repositories
                     SaveToSentItems = true
                 };
 
+                // ✅ This works in your tenant
                 await graphClient.Users[senderUser].SendMail.PostAsync(sendMailBody);
 
-                // Capture thread anchor (best-effort)
-                try
-                {
-                    var sent = await graphClient.Users[senderUser].MailFolders["SentItems"].Messages.GetAsync(r =>
-                    {
-                        r.QueryParameters.Top = 10;
-                        r.QueryParameters.Orderby = new[] { "sentDateTime desc" };
-                        r.QueryParameters.Select = new[] { "id", "conversationId", "internetMessageId", "bodyPreview", "sentDateTime" };
-                    });
-
-                    var tokenNeedle = $"UBW:project={projectId};sub={subcontractorId}";
-                    var sentMsg = sent?.Value?.FirstOrDefault(m =>
-                        (m.BodyPreview ?? "").Contains(tokenNeedle, StringComparison.OrdinalIgnoreCase));
-
-                    await _connection.ExecuteAsync(@"
-INSERT INTO dbo.OutboundRfqEmailAnchor
-(AnchorId, ProjectId, SubcontractorId, RfqId, PmMailbox, ConversationId, InternetMessageId, GraphMessageId, SentUtc, Subject, IsActive)
-VALUES
-(@AnchorId, @ProjectId, @SubId, @RfqId, @PmMailbox, @ConversationId, @InternetMessageId, @GraphMessageId, SYSUTCDATETIME(), @Subject, 1);",
-                        new
-                        {
-                            AnchorId = Guid.NewGuid(),
-                            ProjectId = projectId,
-                            SubId = subcontractorId,
-                            RfqId = rfqId,
-                            PmMailbox = senderUser,
-                            ConversationId = sentMsg?.ConversationId,
-                            InternetMessageId = sentMsg?.InternetMessageId,
-                            GraphMessageId = sentMsg?.Id,
-                            Subject = subject
-                        });
-                }
-                catch
-                {
-                    // Fallback: anchor without conversationId (audit-only)
-                    await _connection.ExecuteAsync(@"
-INSERT INTO dbo.OutboundRfqEmailAnchor
-(AnchorId, ProjectId, SubcontractorId, RfqId, PmMailbox, ConversationId, InternetMessageId, GraphMessageId, SentUtc, Subject, IsActive)
-VALUES
-(@AnchorId, @ProjectId, @SubId, @RfqId, @PmMailbox, NULL, NULL, NULL, SYSUTCDATETIME(), @Subject, 1);",
-                        new
-                        {
-                            AnchorId = Guid.NewGuid(),
-                            ProjectId = projectId,
-                            SubId = subcontractorId,
-                            RfqId = rfqId,
-                            PmMailbox = senderUser,
-                            Subject = subject
-                        });
-                }
-
-                // Mark as emailed (ONCE)
+                // ✅ Mark as emailed
                 await _connection.ExecuteAsync(
                     @"UPDATE RfqSubcontractorMapping
               SET CreatedOn = GETDATE()
@@ -395,6 +328,31 @@ VALUES
             }
 
             return sentEmails;
+        }
+        public async Task ReplyRfqThreadAsync(Guid rfqId, Guid subcontractorId, string htmlComment)
+        {
+            var graphClient = CreateGraphClient();
+
+            const string sql = @"
+SELECT TOP 1 PmMailbox, GraphMessageId
+FROM dbo.OutboundRfqEmailAnchor
+WHERE RfqId = @RfqId AND SubcontractorId = @SubId AND IsActive = 1
+ORDER BY SentUtc DESC;";
+
+            var anchor = await _connection.QuerySingleOrDefaultAsync<dynamic>(sql, new { RfqId = rfqId, SubId = subcontractorId });
+
+            if (anchor == null || anchor.GraphMessageId == null)
+                throw new Exception("Notification could not be sent because the original email thread reference is missing.");
+
+            string pmMailbox = (string)anchor.PmMailbox;
+            string messageId = (string)anchor.GraphMessageId;
+
+            await graphClient.Users[pmMailbox].Messages[messageId].Reply.PostAsync(
+                new Microsoft.Graph.Users.Item.Messages.Item.Reply.ReplyPostRequestBody
+                {
+                    Comment = htmlComment
+                }
+            );
         }
         private bool IsValidEmail(string email)
         {
@@ -566,6 +524,43 @@ Project - Unibouw
 
             return true;
         }
+
+        public async Task SendSimpleEmailAsync(string toEmail, string subject, string htmlBody)
+        {
+            var senderUser = _configuration["GraphEmail:SenderUser"];
+            var tenantId = _configuration["GraphEmail:TenantId"];
+            var clientId = _configuration["GraphEmail:ClientId"];
+            var clientSecret = _configuration["GraphEmail:ClientSecret"];
+
+            var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+            var graphClient = new GraphServiceClient(credential);
+
+            var message = new Microsoft.Graph.Models.Message
+            {
+                Subject = subject,
+                Body = new Microsoft.Graph.Models.ItemBody
+                {
+                    ContentType = Microsoft.Graph.Models.BodyType.Html,
+                    Content = htmlBody
+                },
+                ToRecipients = new List<Microsoft.Graph.Models.Recipient>
+        {
+            new Microsoft.Graph.Models.Recipient
+            {
+                EmailAddress = new Microsoft.Graph.Models.EmailAddress { Address = toEmail }
+            }
+        }
+            };
+
+            var sendMailBody = new Microsoft.Graph.Users.Item.SendMail.SendMailPostRequestBody
+            {
+                Message = message,
+                SaveToSentItems = true
+            };
+
+            await graphClient.Users[senderUser].SendMail.PostAsync(sendMailBody);
+        }
+
         public async Task<bool> SendMailAsync(
             string toEmail,
             string subject,
@@ -617,6 +612,87 @@ Project - Unibouw
         }
 
 
+
+        private async Task<(string GraphId, string? ConversationId, string? InternetMessageId)> CreateDraftSendAndReturnIdsAsync(
+     GraphServiceClient graphClient,
+     string senderUser,
+     string toEmail,
+     string subject,
+     string htmlBody)
+        {
+            var draft = await graphClient.Users[senderUser].Messages.PostAsync(
+                new Microsoft.Graph.Models.Message
+                {
+                    Subject = subject,
+                    Body = new Microsoft.Graph.Models.ItemBody
+                    {
+                        ContentType = Microsoft.Graph.Models.BodyType.Html,
+                        Content = htmlBody
+                    },
+                    ToRecipients = new List<Microsoft.Graph.Models.Recipient>
+                    {
+                new Microsoft.Graph.Models.Recipient
+                {
+                    EmailAddress = new Microsoft.Graph.Models.EmailAddress { Address = toEmail }
+                }
+                    }
+                });
+
+            if (draft?.Id == null)
+                throw new Exception("Unable to create Graph draft message (id missing).");
+
+            await graphClient.Users[senderUser].Messages[draft.Id].Send.PostAsync();
+
+            return (draft.Id, draft.ConversationId, draft.InternetMessageId);
+        }
+
+        private async Task SaveOutboundAnchorAsync(
+            Guid projectId,
+            Guid subcontractorId,
+            Guid rfqId,
+            string pmMailbox,
+            string subject,
+            string? conversationId,
+            string? internetMessageId,
+            string graphMessageId)
+        {
+            const string sql = @"
+IF EXISTS (
+    SELECT 1 FROM dbo.OutboundRfqEmailAnchor
+    WHERE RfqId = @RfqId AND SubcontractorId = @SubId AND IsActive = 1
+)
+BEGIN
+    UPDATE dbo.OutboundRfqEmailAnchor
+    SET PmMailbox = @PmMailbox,
+        ConversationId = @ConversationId,
+        InternetMessageId = @InternetMessageId,
+        GraphMessageId = @GraphMessageId,
+        Subject = @Subject,
+        SentUtc = SYSUTCDATETIME()
+    WHERE RfqId = @RfqId AND SubcontractorId = @SubId AND IsActive = 1;
+END
+ELSE
+BEGIN
+    INSERT INTO dbo.OutboundRfqEmailAnchor
+    (AnchorId, ProjectId, SubcontractorId, RfqId, PmMailbox, ConversationId, InternetMessageId, GraphMessageId, SentUtc, Subject, IsActive)
+    VALUES
+    (@AnchorId, @ProjectId, @SubId, @RfqId, @PmMailbox, @ConversationId, @InternetMessageId, @GraphMessageId, SYSUTCDATETIME(), @Subject, 1);
+END;";
+
+            await _connection.ExecuteAsync(sql, new
+            {
+                AnchorId = Guid.NewGuid(),
+                ProjectId = projectId,
+                SubId = subcontractorId,
+                RfqId = rfqId,
+                PmMailbox = pmMailbox,
+                ConversationId = conversationId,
+                InternetMessageId = internetMessageId,
+                GraphMessageId = graphMessageId,
+                Subject = subject
+            });
+        }
+
         private GraphServiceClient CreateGraphClient()
         {
             var tenantId = _configuration["GraphEmail:TenantId"];
@@ -626,6 +702,7 @@ Project - Unibouw
             return new GraphServiceClient(credential);
         }
 
+       
         private async Task<(string? GraphId, string? ConversationId, string? InternetMessageId)> FindSentByTokenAsync(
             GraphServiceClient graphClient, string senderUser, string tokenNeedle)
         {

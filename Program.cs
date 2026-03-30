@@ -47,6 +47,10 @@ builder.Services.AddScoped<IInboundMailService, InboundMailService>();
 builder.Services.AddScoped<IRfqEmailIngestionRepository, RfqEmailIngestionRepository>();
 builder.Services.AddScoped<IRfqMailPollingService, RfqMailPollingService>();
 builder.Services.AddHostedService<RfqMailPollingWorker>();
+builder.Services.AddScoped<IProjectDocuments, ProjectDocumentsRepository>();
+builder.Services.AddScoped<RfqDocumentNotificationRepository>();
+builder.Services.AddScoped<UnibouwAPI.Services.RfqDocumentNotifier>();
+builder.Services.AddScoped<RfqDocUpdateNotifier>();
 // Configure Azure AD authentication with custom Unauthorized/Forbidden responses
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"))

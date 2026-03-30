@@ -6,6 +6,8 @@ using System.Net;
 using System.Text.RegularExpressions;
 using UnibouwAPI.Helpers;
 using UnibouwAPI.Repositories;
+using UnibouwAPI.Services;
+using Microsoft.Data.SqlClient;
 
 
 namespace UnibouwAPI.Controllers
@@ -18,15 +20,20 @@ namespace UnibouwAPI.Controllers
         private readonly IEmail _emailRepository;
         private readonly IRFQConversationMessage _conversationRepo;
         private readonly ILogger<RfqController> _logger;
+        private readonly RfqDocumentNotificationRepository _repo;
+
         DateTime amsterdamNow = DateTimeConvert.ToAmsterdamTime(DateTime.UtcNow);
 
 
-        public RfqController(IRfq repository,IEmail emailRepository, IRFQConversationMessage conversationRepo, ILogger<RfqController> logger)
+        public RfqController(IRfq repository,IEmail emailRepository, IRFQConversationMessage conversationRepo, ILogger<RfqController> logger, RfqDocumentNotificationRepository repo)
         {
+
             _repository = repository;
             _emailRepository = emailRepository;
             _conversationRepo = conversationRepo;
             _logger = logger;
+            _repo = repo;
+
         }
 
         [HttpGet]
@@ -262,25 +269,28 @@ namespace UnibouwAPI.Controllers
      [FromBody] Rfq rfq,
      [FromQuery] List<Guid> subcontractorIds,
      [FromQuery] List<Guid> workItems,
-     [FromQuery] bool sendEmail = false)
+     [FromServices] IProjectDocuments docs,
+     [FromServices] RfqDocumentNotifier notifier,
+     [FromQuery] bool sendEmail = false,
+     [FromQuery] string? language = "en"
+ )
         {
             try
             {
                 if (rfq == null || rfqId == Guid.Empty)
                     return BadRequest(new { message = "RFQ data and ID are required." });
+
                 rfq.RfqID = rfqId;
                 rfq.RfqSent = sendEmail ? 1 : rfq.RfqSent;
                 rfq.Status = sendEmail ? "Sent" : rfq.Status;
-                // ✅ 1️⃣ Update MAIN RFQ (DO NOT touch DueDate here)
+
                 var rfqUpdated = await _repository.UpdateRfqMainAsync(rfq);
                 if (!rfqUpdated)
                     return NotFound(new { message = $"RFQ with ID {rfqId} not found." });
 
-                // ✅ 2️⃣ Update WorkItems
                 if (workItems?.Any() == true)
                     await _repository.UpdateRfqWorkItemsAsync(rfqId, workItems);
 
-                // ✅ 3️⃣ Update ONLY per-subcontractor due dates
                 if (rfq.SubcontractorDueDates?.Any() == true)
                 {
                     foreach (var sub in rfq.SubcontractorDueDates)
@@ -294,20 +304,35 @@ namespace UnibouwAPI.Controllers
                         );
                     }
                 }
-                // ✅ 4️⃣ Send email and LOG CONVERSATION
+
+                // Get user email for logs/notifications
+                var userEmail =
+                    User.FindFirst("preferred_username")?.Value ??
+                    User.FindFirst("upn")?.Value ??
+                    User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ??
+                    User.Identity?.Name ??
+                    "System";
+
+                // Get project name
+                string projectName = rfq.ProjectName ?? "";
+
+                // Get work item names if needed (optional, set your own logic)
+                string workItemName = ""; // Or build from workItems
+
                 if (sendEmail)
                 {
                     rfq.SentDate = DateTime.UtcNow;
+
                     var sentEmails = await _emailRepository.SendRfqEmailAsync(new EmailRequest
                     {
                         RfqID = rfqId,
                         SubcontractorIDs = subcontractorIds ?? new(),
                         WorkItems = workItems ?? new(),
                         Subject = "RFQ Invitation - Unibouw",
-                        Body = rfq.CustomNote // or your full body
+                        Body = rfq.CustomNote,
+                        Language = language
                     });
 
-                    // Conversation logging for each subcontractor
                     foreach (var email in sentEmails)
                     {
                         await _conversationRepo.AddRFQConversationMessageAsync(
@@ -318,11 +343,26 @@ namespace UnibouwAPI.Controllers
                                 SenderType = "PM",
                                 MessageText = HtmlToPlainText(email.Body),
                                 MessageDateTime = amsterdamNow,
-                                CreatedBy = User.Identity?.Name ?? "System"
+                                CreatedBy = userEmail
                             }
                         );
                     }
+
+                    // ---- Notify subs about new docs (spreadsheet logic) ----
+                    var linkedDocs = await docs.GetRfqDocumentsAsync(rfqId);
+
+                    await notifier.NotifyForEditRfqDocs(
+                        rfq.ProjectID!.Value,
+                        rfqId,
+                        linkedDocs,
+                        projectName,
+                        rfq.RfqNumber ?? "",
+                        workItemName,
+                        userEmail,
+                        language
+                    );
                 }
+
                 return Ok(new
                 {
                     message = sendEmail
@@ -518,6 +558,106 @@ namespace UnibouwAPI.Controllers
                 });
             }
 
+        }
+
+        [HttpGet("{rfqId:guid}/documents")]
+        [Authorize]
+        public async Task<IActionResult> GetRfqDocuments(Guid rfqId, [FromServices] IProjectDocuments docs)
+        {
+            var items = await docs.GetRfqDocumentsAsync(rfqId);
+            return Ok(new { data = items });
+        }
+
+        public class LinkDocsRequest
+        {
+            public List<Guid> ProjectDocumentIds { get; set; } = new();
+        }
+
+        [HttpPost("{rfqId:guid}/documents/link")]
+        [Authorize]
+        public async Task<IActionResult> LinkExistingDocs(Guid rfqId, [FromBody] LinkDocsRequest req, [FromServices] IProjectDocuments docs)
+        {
+            var user = User?.Identity?.Name ?? "System";
+            await docs.LinkExistingDocsAsync(rfqId, req.ProjectDocumentIds, user);
+            return Ok(new { message = "Documents linked to RFQ successfully." });
+        }
+
+        [HttpPost("{rfqId:guid}/documents/upload")]
+        [Authorize]
+        [RequestSizeLimit(50_000_000)]
+        public async Task<IActionResult> UploadDocsToRfq(
+     Guid rfqId,
+     [FromQuery] Guid projectId,
+     [FromForm] List<IFormFile> files,
+     [FromServices] IProjectDocuments docs,
+     [FromServices] RfqDocumentNotifier notifier,
+     [FromServices] IRfq rfqRepo)
+        {
+            if (projectId == Guid.Empty)
+                return BadRequest(new { message = "Project must be selected before adding documents." });
+
+            if (files == null || files.Count == 0)
+                return BadRequest(new { message = "No files uploaded." });
+
+            var userEmail =
+                User.FindFirst("preferred_username")?.Value ??
+                User.FindFirst("upn")?.Value ??
+                User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ??
+                User.Identity?.Name ??
+                "System";
+
+            var results = new List<object>();
+            var newlyCreatedDocs = new List<(Guid DocId, string DocName)>();
+
+            foreach (var file in files)
+            {
+                using var ms = new MemoryStream();
+                await file.CopyToAsync(ms);
+                var bytes = ms.ToArray();
+
+                var res = await docs.UploadAndLinkAsync(
+                    projectId,
+                    rfqId,
+                    file.FileName,
+                    file.ContentType ?? "application/octet-stream",
+                    bytes,
+                    userEmail
+                );
+
+                results.Add(new
+                {
+                    projectDocumentID = res.Document.ProjectDocumentID,
+                    fileName = res.Document.FileName,
+                    isNewForProject = res.IsNewForProject
+                });
+
+                if (res.IsNewForProject)
+                    newlyCreatedDocs.Add((res.Document.ProjectDocumentID, res.Document.FileName));
+            }
+
+            var rfq = await rfqRepo.GetRfqById(rfqId);
+            var projectName = rfq?.ProjectName ?? "N/A";
+            var rfqNumber = rfq?.RfqNumber ?? rfqId.ToString();
+            var workItemName = (rfq?.WorkItems != null && rfq.WorkItems.Any())
+                ? string.Join(", ", rfq.WorkItems.Select(w => w.Name))
+                : "-";
+
+            foreach (var d in newlyCreatedDocs)
+            {
+                await notifier.NotifyAsync(
+                    projectId: projectId,
+                    currentRfqId: rfqId,
+                    projectDocumentId: d.DocId,
+                    projectName: projectName,
+                    rfqNumber: rfqNumber,
+                    workItemName: workItemName,
+                    docName: d.DocName,
+                    userEmail: userEmail,
+                    language: "en"
+                );
+            }
+
+            return Ok(new { message = "Documents uploaded successfully.", data = results });
         }
 
     }

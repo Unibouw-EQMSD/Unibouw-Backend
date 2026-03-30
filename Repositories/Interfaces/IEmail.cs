@@ -6,7 +6,8 @@ namespace UnibouwAPI.Repositories.Interfaces
     {
         //Task<bool> SendRfqEmailAsync(EmailRequest request);
         Task<List<EmailRequest>> SendRfqEmailAsync(EmailRequest request);
-
+        Task SendSimpleEmailAsync(string toEmail, string subject, string htmlBody);
+        Task ReplyRfqThreadAsync(Guid rfqId, Guid subcontractorId, string htmlComment);
         Task<bool> SendReminderEmailAsync(
       Guid subcontractorId,
       string recipientEmail,
