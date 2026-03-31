@@ -15,6 +15,9 @@ namespace UnibouwAPI.Controllers
             _docs = docs;
         }
 
+
+
+
         [HttpGet]
         [Authorize]
         public async Task<IActionResult> GetProjectDocs(Guid projectId)
@@ -31,6 +34,18 @@ namespace UnibouwAPI.Controllers
             var deletedBy = User?.Identity?.Name ?? "System";
             await _docs.DeleteProjectDocumentAsync(projectDocumentId, deletedBy);
             return Ok(new { message = "Project document deleted successfully." });
+        }
+
+        [HttpGet("{projectDocumentId:guid}/download")]
+        [Authorize]
+        public async Task<IActionResult> DownloadProjectDoc(Guid projectDocumentId, [FromServices] IProjectDocuments docs)
+        {
+            var result = await docs.DownloadProjectDocumentAsync(projectDocumentId);
+            if (result == null)
+                return NotFound();
+
+            var (fileBytes, fileName, contentType) = result.Value;
+            return File(fileBytes, contentType ?? "application/octet-stream", fileName ?? "document.pdf");
         }
     }
 }

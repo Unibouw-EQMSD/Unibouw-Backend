@@ -11,6 +11,6 @@ namespace UnibouwAPI.Repositories.Interfaces
         Task LinkExistingDocsAsync(Guid rfqId, IEnumerable<Guid> projectDocumentIds, string linkedBy);
 
         Task DeleteProjectDocumentAsync(Guid projectDocumentId, string deletedBy); // Admin only; silent unlink
-        Task<byte[]?> DownloadProjectDocumentAsync(Guid projectDocumentId); // optional
+        Task<(byte[] FileBytes, string FileName, string ContentType)?> DownloadProjectDocumentAsync(Guid projectDocumentId); // optional
     }
 }

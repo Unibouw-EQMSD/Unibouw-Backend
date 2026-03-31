@@ -140,6 +140,8 @@ END";
             tx.Commit();
         }
 
+
+
         public async Task DeleteProjectDocumentAsync(Guid projectDocumentId, string deletedBy)
         {
             if (projectDocumentId == Guid.Empty) throw new ArgumentException("ProjectDocumentID is required");
@@ -163,16 +165,20 @@ DELETE FROM RfqDocumentLink WHERE ProjectDocumentID = @ProjectDocumentID;";
             tx.Commit();
         }
 
-        public async Task<byte[]?> DownloadProjectDocumentAsync(Guid projectDocumentId)
+        public async Task<(byte[] FileBytes, string FileName, string ContentType)?> DownloadProjectDocumentAsync(Guid projectDocumentId)
         {
             const string sql = @"
-SELECT StoragePath
+SELECT FileName, ContentType, StoragePath
 FROM ProjectDocument
 WHERE ProjectDocumentID = @ProjectDocumentID AND IsDeleted = 0;";
             using var con = Connection;
-            var path = await con.ExecuteScalarAsync<string?>(sql, new { ProjectDocumentID = projectDocumentId });
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
-            return await File.ReadAllBytesAsync(path);
+            var doc = await con.QueryFirstOrDefaultAsync<(string FileName, string ContentType, string StoragePath)>(
+                sql, new { ProjectDocumentID = projectDocumentId });
+            if (doc == default || string.IsNullOrWhiteSpace(doc.StoragePath) || !File.Exists(doc.StoragePath))
+                return null;
+
+            var fileBytes = await File.ReadAllBytesAsync(doc.StoragePath);
+            return (fileBytes, doc.FileName ?? "document.pdf", doc.ContentType ?? "application/octet-stream");
         }
     }
 }
