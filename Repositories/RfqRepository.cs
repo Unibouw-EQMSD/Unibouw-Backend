@@ -24,6 +24,17 @@ namespace UnibouwAPI.Repositories
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
+
+
+        public async Task<string?> GetProjectSharePointUrlAsync(Guid projectId)
+        {
+            const string sql = @"
+SELECT SharepointURL
+FROM dbo.Projects
+WHERE ProjectID = @ProjectID AND IsDeleted = 0;";
+            return await _connection.QueryFirstOrDefaultAsync<string?>(sql, new { ProjectID = projectId });
+        }
+
         public async Task<IEnumerable<Rfq>> GetAllRfq()
         {
             var query = @"
@@ -563,6 +574,8 @@ VALUES (@RfqID, @SubId, @DueDate);";
 
             return rows > 0;
         }
+
+
         public async Task<IEnumerable<dynamic>> GetRfqSubcontractorDueDatesAsync(Guid rfqId)
         {
             const string query = @"

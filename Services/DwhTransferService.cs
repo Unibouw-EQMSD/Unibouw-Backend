@@ -8,11 +8,15 @@ namespace UnibouwAPI.Services
     {
         private readonly string _dwhConnection;
         private readonly string _unibouwConnection;
+        private readonly ISharePointQuoteStorage _sp;
 
-        public DwhTransferService(IConfiguration config)
+
+        public DwhTransferService(IConfiguration config, ISharePointQuoteStorage sp)
         {
             _dwhConnection = config.GetConnectionString("DWHDb");
             _unibouwConnection = config.GetConnectionString("UnibouwDbConnection");
+            _sp = sp;
+
         }
 
         public async Task<(
@@ -799,8 +803,7 @@ OUTPUT $action, source.PersonID;";
 
                 foreach (var project in projects)
                 {
-                    var result = await targetConn
-                        .QueryAsync<(string Action, int? ERP_ID)>(mergeSql, project);
+                    var result = await targetConn.QueryAsync<(string Action, int? ERP_ID)>(mergeSql, project);
 
                     if (!result.Any())
                     {
@@ -812,6 +815,19 @@ OUTPUT $action, source.PersonID;";
                         {
                             if (r.Action == "INSERT") inserted.Add(r.ERP_ID);
                             else if (r.Action == "UPDATE") updated.Add(r.ERP_ID);
+                        }
+                    }
+
+                    // ✅ Ensure SharePoint folder after sync when link exists
+                    if (!string.IsNullOrWhiteSpace(project.SharepointURL))
+                    {
+                        var projectFolderName = $"{project.Number}_{project.Name}";
+                        try
+                        {
+                            await _sp.EnsureProjectFolderAsync(project.SharepointURL, projectFolderName);
+                        }
+                        catch (Exception ex)
+                        {
                         }
                     }
                 }

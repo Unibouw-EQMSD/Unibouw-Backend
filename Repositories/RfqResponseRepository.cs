@@ -3,6 +3,7 @@ using Microsoft.Data.SqlClient;
 using System.Data;
 using UnibouwAPI.Models;
 using UnibouwAPI.Repositories.Interfaces;
+using UnibouwAPI.Services;
 
 namespace UnibouwAPI.Repositories
 {
@@ -10,10 +11,13 @@ namespace UnibouwAPI.Repositories
     {
         private readonly IConfiguration _configuration;
         private readonly string _connectionString;
+        private readonly ISharePointQuoteStorage _sp;
 
-        public RfqResponseRepository(IConfiguration configuration)
+        public RfqResponseRepository(IConfiguration configuration, ISharePointQuoteStorage sp)
         {
             _configuration = configuration;
+            _sp = sp;
+
             _connectionString = _configuration.GetConnectionString("UnibouwDbConnection");
             if (string.IsNullOrEmpty(_connectionString))
                 throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
@@ -322,102 +326,148 @@ WHERE rwim.RfqID = @RfqID";
         }
 
         public async Task<bool> UploadQuoteAsync(
-            Guid rfqId,
-            Guid subcontractorId,
-            Guid workItemId,
-            IFormFile file,
-            decimal totalAmount,
-            string comment)
+     Guid rfqId,
+     Guid subcontractorId,
+     Guid workItemId,
+     IFormFile file,
+     decimal totalAmount,
+     string comment)
         {
-            using var conn = new SqlConnection(_connectionString);
+            Console.WriteLine(">>> RfqResponseRepository.UploadQuoteAsync HIT");
+
+            await using var conn = new SqlConnection(_connectionString);
             await conn.OpenAsync();
 
-            // 1️⃣ Validate RFQ ↔ Subcontractor mapping
+            // 1) Validate mapping
             var mappingExists = await conn.ExecuteScalarAsync<int>(@"
-        SELECT COUNT(1)
-        FROM RfqSubcontractorMapping
-        WHERE RfqID = @rfqId
-          AND SubcontractorID = @subId;",
-                new
-                {
-                    rfqId,
-                    subId = subcontractorId
-                });
+SELECT COUNT(1)
+FROM RfqSubcontractorMapping
+WHERE RfqID = @RfqID AND SubcontractorID = @SubID;",
+                new { RfqID = rfqId, SubID = subcontractorId });
 
             if (mappingExists == 0)
                 throw new Exception("Subcontractor is not mapped to this RFQ.");
 
-            // 2️⃣ Read file into byte array
+            // 2) Read file bytes
             byte[] fileBytes;
-            using (var ms = new MemoryStream())
+            await using (var ms = new MemoryStream())
             {
                 await file.CopyToAsync(ms);
                 fileBytes = ms.ToArray();
             }
+
             var documentId = Guid.NewGuid();
-            // 3️⃣ Insert quote document
-            await conn.ExecuteAsync(@"
-    INSERT INTO RfqResponseDocuments
-    (
-        RfqResponseDocumentID,
-        RfqID,
-        SubcontractorID,
-        FileName,
-        FileData,
-        UploadedOn,
-        IsDeleted
-    )
-    VALUES
-    (
-        @documentId,
-        @rfqId,
-        @subId,
-        @fileName,
-        @fileData,
-        CAST(SYSDATETIMEOFFSET() AT TIME ZONE 'India Standard Time' AS datetime),
-        0
-    );",
-     new
-     {
-         documentId,
-         rfqId,
-         subId = subcontractorId,
-         fileName = file.FileName,
-         fileData = fileBytes
-     });
 
-            // 4️⃣ 🔥 INCREMENT QuoteReceived FOR THIS RFQ
+            // 3) DB save (ALL submissions preserved)
             await conn.ExecuteAsync(@"
-        UPDATE Rfq
-        SET QuoteReceived = ISNULL(QuoteReceived, 0) + 1
-        WHERE RfqID = @rfqId
-          AND IsDeleted = 0;",
-                new { rfqId });
-
-            // 5️⃣ Update subcontractor response (ONLY this work item)
-            await conn.ExecuteAsync(@"
-        UPDATE RfqSubcontractorResponse
-        SET
-            TotalQuoteAmount = @amount,
-            FileComment = @fileComment,
-            ModifiedOn = GETDATE(),
-            SubmissionCount = ISNULL(SubmissionCount, 0) + 1
-        WHERE RfqID = @rfqId
-          AND SubcontractorID = @subId
-          AND WorkItemID = @workItemId;",
+INSERT INTO RfqResponseDocuments
+(
+    RfqResponseDocumentID,
+    RfqID,
+    SubcontractorID,
+    FileName,
+    FileData,
+    UploadedOn,
+    IsDeleted
+)
+VALUES
+(
+    @DocumentId,
+    @RfqID,
+    @SubID,
+    @FileName,
+    @FileData,
+    CAST(SYSDATETIMEOFFSET() AT TIME ZONE 'India Standard Time' AS datetime),
+    0
+);",
                 new
                 {
-                    amount = totalAmount,
-                    fileComment = comment,
-                    rfqId,
-                    subId = subcontractorId,
-                    workItemId
+                    DocumentId = documentId,
+                    RfqID = rfqId,
+                    SubID = subcontractorId,
+                    FileName = file.FileName,
+                    FileData = fileBytes
                 });
 
-            return true;
+            // 4) Increment quote received
+            await conn.ExecuteAsync(@"
+UPDATE Rfq
+SET QuoteReceived = ISNULL(QuoteReceived, 0) + 1
+WHERE RfqID = @RfqID AND IsDeleted = 0;",
+                new { RfqID = rfqId });
+
+            // 5) Update latest view data
+            await conn.ExecuteAsync(@"
+UPDATE RfqSubcontractorResponse
+SET
+    TotalQuoteAmount = @Amount,
+    FileComment      = @FileComment,
+    ModifiedOn       = GETDATE(),
+    SubmissionCount  = ISNULL(SubmissionCount, 0) + 1
+WHERE RfqID = @RfqID
+  AND SubcontractorID = @SubID
+  AND WorkItemID = @WorkItemID;",
+                new
+                {
+                    Amount = totalAmount,
+                    FileComment = comment,
+                    RfqID = rfqId,
+                    SubID = subcontractorId,
+                    WorkItemID = workItemId
+                });
+
+            var ctx = await conn.QuerySingleAsync<dynamic>(@"
+SELECT 
+    p.SharepointURL,
+    p.Number AS ProjectCode,
+    p.Name   AS ProjectName,
+    r.RfqNumber,
+    wi.Name  AS WorkItemName,
+    s.Name   AS SubcontractorName
+FROM dbo.Rfq r
+INNER JOIN dbo.Projects p ON p.ProjectID = r.ProjectID
+INNER JOIN dbo.WorkItems wi ON wi.WorkItemID = @WorkItemID
+INNER JOIN dbo.Subcontractors s ON s.SubcontractorID = @SubcontractorID
+WHERE r.RfqID = @RfqID;",
+      new
+      {
+          RfqID = rfqId,
+          WorkItemID = workItemId,
+          SubcontractorID = subcontractorId
+      });
+
+            string spUrl = (string?)ctx.SharepointURL ?? "";
+            if (string.IsNullOrWhiteSpace(spUrl))
+                throw new Exception("SharePoint link is not configured in DWH.");
+
+            string projectFolderName = $"{ctx.ProjectCode}_{ctx.ProjectName}";
+            string rfqNumber = (string)ctx.RfqNumber;
+            string workItemName = (string)ctx.WorkItemName;
+            string subcontractorName = (string)ctx.SubcontractorName;
+
+            try
+            {
+                await _sp.EnsureProjectFolderAsync(spUrl, projectFolderName);
+
+                await _sp.UploadQuoteAsync(
+                    sharePointUrl: spUrl,
+                    projectFolderName: projectFolderName,
+                    rfqNumber: rfqNumber,
+                    workItemName: workItemName,
+                    subcontractorName: subcontractorName,
+                    fileName: file.FileName,
+                    fileBytes: fileBytes,
+                    submittedOnUtc: DateTime.UtcNow
+                );
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(">>> SHAREPOINT FAILED: " + ex.ToString());
+                throw;
+            }
         }
-
-
         public async Task<object?> GetRfqResponsesByProjectAsync(Guid projectId)
         {
             using var conn = new SqlConnection(_connectionString);

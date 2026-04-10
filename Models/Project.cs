@@ -6,6 +6,8 @@
         public long? ERP_ID { get; set; }
         public string? Company { get; set; }
         public string? Number { get; set; }
+        public string? ProjectCode { get; set; }
+        public string? ProjectName { get; set; }
         public string? Name { get; set; }
         public long? CustomerID { get; set; }
         public DateTime? StartDate { get; set; }

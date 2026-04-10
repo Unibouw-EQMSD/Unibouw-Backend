@@ -9,7 +9,7 @@ namespace UnibouwAPI.Repositories.Interfaces
         Task<Rfq?> GetRfqById(Guid id);
         Task<IEnumerable<WorkItem>> GetRfqWorkItemsAsync(Guid rfqId);
         Task<IEnumerable<Rfq>> GetRfqByProjectId(Guid projectId);
-
+        Task<string?> GetProjectSharePointUrlAsync(Guid projectId);
         Task<(string WorkItemNames, int SubCount)> GetWorkItemInfoByRfqId(Guid rfqId);
 
         Task<bool> UpdateRfqDueDate(Guid rfqId, DateTime dueDate, string modifiedBy);
