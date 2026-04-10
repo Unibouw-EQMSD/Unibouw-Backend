@@ -146,7 +146,6 @@ namespace UnibouwAPI.Repositories
                 return sentEmails;
 
             string baseUrl = _configuration["WebSettings:BaseUrl"]?.TrimEnd('/') ?? "";
-
             var lang = (request.Language ?? "en").ToLowerInvariant();
             string T(string key) => (lang, key) switch
             {
@@ -171,20 +170,14 @@ namespace UnibouwAPI.Repositories
             };
 
             var rfq = await _connection.QuerySingleAsync<dynamic>(
-                @"SELECT RfqID, RfqNumber, ProjectID
-          FROM Rfq
-          WHERE RfqID = @id",
+                @"SELECT RfqID, RfqNumber, ProjectID FROM Rfq WHERE RfqID = @id",
                 new { id = request.RfqID });
-
             Guid rfqId = (Guid)rfq.RfqID;
             Guid projectId = (Guid)rfq.ProjectID;
 
             var project = await _connection.QuerySingleAsync<dynamic>(
-                @"SELECT Name, Number
-          FROM Projects
-          WHERE ProjectID = @id",
+                @"SELECT Name, Number FROM Projects WHERE ProjectID = @id",
                 new { id = projectId });
-
             string projectName = project.Name;
             string projectCode = project.Number;
 
@@ -195,20 +188,16 @@ namespace UnibouwAPI.Repositories
           LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
           WHERE prj.ProjectID = @Id",
                 new { Id = projectId });
-
             string personName = personDetails?.PersonName ?? "Project Assignee";
 
             var workItems = (await _connection.QueryAsync<dynamic>(
-                @"SELECT WorkItemID, Name
-          FROM WorkItems
-          WHERE WorkItemID IN @ids",
+                @"SELECT WorkItemID, Name FROM WorkItems WHERE WorkItemID IN @ids",
                 new { ids = request.WorkItems })).ToList();
 
             var subcontractors = (await _connection.QueryAsync<dynamic>(
                 @"SELECT SubcontractorID, Email, ISNULL(Name,'Subcontractor') Name
           FROM Subcontractors
-          WHERE SubcontractorID IN @ids
-            AND Email IS NOT NULL",
+          WHERE SubcontractorID IN @ids AND Email IS NOT NULL",
                 new { ids = request.SubcontractorIDs })).ToList();
 
             var senderUser = _configuration["GraphEmail:SenderUser"];
@@ -231,28 +220,21 @@ namespace UnibouwAPI.Repositories
                 AND SubcontractorID = @SubId
                 AND CreatedOn IS NOT NULL",
                     new { RfqID = rfqId, SubId = subcontractorId }) > 0;
-
                 if (alreadyEmailed)
                     continue;
 
                 DateTime dueDate = await _connection.QuerySingleAsync<DateTime>(
-                    @"SELECT DueDate
-              FROM RfqSubcontractorMapping
-              WHERE RfqID = @RfqID
-                AND SubcontractorID = @SubId",
+                    @"SELECT DueDate FROM RfqSubcontractorMapping WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
                     new { RfqID = rfqId, SubId = subcontractorId });
 
                 string workItemListHtml = string.Join("",
                     workItems.Select(w => $"<li><strong>{WebUtility.HtmlEncode((string)w.Name)}</strong></li>"));
-
                 string workItemIdsCsv = string.Join(",", workItems.Select(w => w.WorkItemID));
-
                 string summaryUrl =
                     $"{baseUrl}/project-summary" +
                     $"?rfqId={rfqId}" +
                     $"&subId={subcontractorId}" +
                     $"&workItemIds={workItemIdsCsv}";
-
                 string token = $"<!-- UBW:project={projectId};sub={subcontractorId};rfq={rfqId} -->";
                 var intro = string.IsNullOrWhiteSpace(request.Body) ? T("IntroFallback") : request.Body;
 
@@ -282,6 +264,7 @@ namespace UnibouwAPI.Repositories
 
                 var subject = $"RFQ – {projectCode} - {projectName} [UBW:P={projectId};S={subcontractorId};R={rfqId}]";
 
+                // === Send the email using SendMail API as usual ===
                 var message = new Microsoft.Graph.Models.Message
                 {
                     Subject = subject,
@@ -298,17 +281,45 @@ namespace UnibouwAPI.Repositories
                 }
             }
                 };
-
                 var sendMailBody = new Microsoft.Graph.Users.Item.SendMail.SendMailPostRequestBody
                 {
                     Message = message,
                     SaveToSentItems = true
                 };
-
-                // ✅ This works in your tenant
                 await graphClient.Users[senderUser].SendMail.PostAsync(sendMailBody);
 
-                // ✅ Mark as emailed
+                // === Wait a moment and then fetch the sent message for tracking (optional: adjust delay as needed) ===
+                await Task.Delay(1500);
+
+                var sent = await graphClient.Users[senderUser].MailFolders["SentItems"].Messages.GetAsync(r =>
+                {
+                    r.QueryParameters.Top = 10;
+                    r.QueryParameters.Orderby = new[] { "sentDateTime desc" };
+                    r.QueryParameters.Select = new[] { "id", "conversationId", "internetMessageId", "subject", "toRecipients" };
+                });
+
+                var sentMsg = sent?.Value?.FirstOrDefault(m =>
+                    m.Subject == subject &&
+                    m.ToRecipients.Any(rec => rec.EmailAddress.Address.Equals(toEmail, StringComparison.OrdinalIgnoreCase)));
+
+                if (sentMsg != null)
+                {
+                    await SaveOutboundAnchorAsync(
+                        projectId,
+                        subcontractorId,
+                        rfqId,
+                        senderUser,
+                        subject,
+                        sentMsg.ConversationId,
+                        sentMsg.InternetMessageId,
+                        sentMsg.Id
+                    );
+                }
+                else
+                {
+                    // Optionally log if not found
+                }
+
                 await _connection.ExecuteAsync(
                     @"UPDATE RfqSubcontractorMapping
               SET CreatedOn = GETDATE()
@@ -326,9 +337,10 @@ namespace UnibouwAPI.Repositories
                     Language = request.Language
                 });
             }
-
             return sentEmails;
         }
+
+
         public async Task ReplyRfqThreadAsync(Guid rfqId, Guid subcontractorId, string htmlComment)
         {
             var graphClient = CreateGraphClient();

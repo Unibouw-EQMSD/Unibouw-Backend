@@ -81,10 +81,8 @@ namespace UnibouwAPI.Services
         private async Task PollMailboxAsync(GraphServiceClient graph, string pmMailbox, int batchSize, CancellationToken ct)
         {
             var (cursorUtc, processedIdsAtCursor) = await _repo.GetOrCreateCursorUtcAsync(pmMailbox);
-
             var inboxMsgs = await GetFolderMessagesSinceAsync(graph, pmMailbox, "Inbox", cursorUtc, batchSize, ct);
             var sentMsgs = await GetFolderMessagesSinceAsync(graph, pmMailbox, "SentItems", cursorUtc, batchSize, ct);
-
             var all = inboxMsgs.Select(m => (Folder: "Inbox", Msg: m))
                 .Concat(sentMsgs.Select(m => (Folder: "SentItems", Msg: m)))
                 .OrderBy(x => x.Msg.ReceivedDateTime!.Value.UtcDateTime)
@@ -92,7 +90,7 @@ namespace UnibouwAPI.Services
 
             if (all.Count == 0)
             {
-                Console.WriteLine("[PollMailboxAsync] No messages after cursor filter");
+                _logger.LogWarning("[PollMailboxAsync] No messages after cursor filter for mailbox: {Mailbox}", pmMailbox);
                 return;
             }
 
@@ -107,25 +105,41 @@ namespace UnibouwAPI.Services
                 var folder = item.Folder;
 
                 if (string.IsNullOrWhiteSpace(msg.Id) || !msg.ReceivedDateTime.HasValue)
+                {
+                    _logger.LogWarning("Skipping message with missing Id or ReceivedDateTime. Folder={Folder}", folder);
                     continue;
+                }
 
                 var receivedUtc = msg.ReceivedDateTime.Value.UtcDateTime;
-
-                // NEW LOGIC: Allow same-timestamp messages if not already processed at this timestamp
                 bool shouldProcess =
                     (receivedUtc > cursorUtc) ||
                     (receivedUtc == cursorUtc && !processedIdsAtCursor.Contains(msg.Id));
-
                 if (!shouldProcess)
+                {
+                    _logger.LogWarning("Skipping message (already processed timestamp): {Subject}, Id={Id}, Folder={Folder}", msg.Subject, msg.Id, folder);
                     continue;
+                }
 
-                if (await _repo.IsAlreadyIngestedAsync(msg.Id, folder))
+                bool alreadyIngested = await _repo.IsAlreadyIngestedAsync(msg.Id, folder);
+                if (alreadyIngested)
+                {
+                    _logger.LogWarning("Skipping message (already ingested): {Subject}, Id={Id}, Folder={Folder}", msg.Subject, msg.Id, folder);
                     continue;
+                }
 
-                // In-run de-dupe (optional, for double mailbox scan protection)
                 var key = msg.Id;
                 if (!seen.Add(key))
+                {
+                    _logger.LogWarning("Skipping message (duplicate in-run): {Subject}, Id={Id}, Folder={Folder}", msg.Subject, msg.Id, folder);
                     continue;
+                }
+
+                // Token extraction for diagnostics
+                var (projectId, subId, rfqId, found) = ParseToken(msg.Subject);
+                if (!found) (projectId, subId, rfqId, found) = ParseToken(msg.BodyPreview);
+
+                _logger.LogWarning("Processing message: {Subject}, Id={Id}, Folder={Folder}", msg.Subject, msg.Id, folder);
+                _logger.LogWarning("Token extraction: project={ProjectId}, sub={SubId}, rfq={RfqId}, found={Found}", projectId, subId, rfqId, found);
 
                 try
                 {
@@ -136,7 +150,7 @@ namespace UnibouwAPI.Services
                 }
                 catch (Exception ex)
                 {
-                    // log error
+                    _logger.LogError(ex, "Error ingesting message: {Subject}, Id={Id}, Folder={Folder}", msg.Subject, msg.Id, folder);
                 }
                 finally
                 {
@@ -159,7 +173,6 @@ namespace UnibouwAPI.Services
             // Save new cursor and IDs at cursor
             await _repo.UpdateCursorUtcAsync(pmMailbox, maxUtc, string.Join(",", newProcessedIdsAtCursor));
         }
-
 
 
         private async Task TryIngestSentAsync(GraphServiceClient graph, string pmMailbox, Message msg, CancellationToken ct)
