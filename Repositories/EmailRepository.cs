@@ -20,12 +20,14 @@ namespace UnibouwAPI.Repositories
         private readonly IConfiguration _configuration;
         private readonly string _connectionString;
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly ILogger<EmailRepository> _logger;
 
-        public EmailRepository(IConfiguration configuration, IHttpContextAccessor httpContextAccessor)
+
+        public EmailRepository(IConfiguration configuration, IHttpContextAccessor httpContextAccessor, ILogger<EmailRepository> logger)
         {
             _configuration = configuration;
             _httpContextAccessor = httpContextAccessor;
-
+            _logger = logger;
             _connectionString = _configuration.GetConnectionString("UnibouwDbConnection")
                 ?? throw new InvalidOperationException("Connection string not configured.");
         }
@@ -574,38 +576,49 @@ Project - Unibouw
         }
 
         public async Task<bool> SendMailAsync(
-            string toEmail,
-            string subject,
-            string body,
-            string name,
-            Guid? projectId,
-            List<string>? attachmentFilePaths = null)
+        string toEmail,
+        string subject,
+        string body,
+        string name,
+        Guid? projectId,
+        List<string>? attachmentFilePaths = null)
         {
-            var personDetails = await _connection.QuerySingleOrDefaultAsync<dynamic>(
-                @"SELECT prj.*, p.Name AS PersonName, ppm.RoleID
-          FROM Projects prj
-          LEFT JOIN PersonProjectMapping ppm ON prj.ProjectID = ppm.ProjectID
-          LEFT JOIN Persons p ON ppm.PersonID = p.PersonID
-          WHERE prj.ProjectID = @Id", new { id = projectId.Value });
-            string personName = personDetails?.PersonName ?? "Project Assignee";
+            // Read config from the correct section
+            var tenantId = _configuration["GraphEmail:TenantId"];
+            var clientId = _configuration["GraphEmail:ClientId"];
+            var clientSecret = _configuration["GraphEmail:ClientSecret"];
+            var senderUser = _configuration["GraphEmail:SenderUser"];
 
-            string formattedBody = body
+            // Log configs
+            _logger.LogInformation(
+                "Graph config used: tenantId={TenantId} clientId={ClientId} senderUser={SenderUser} toEmail={ToEmail}",
+                tenantId, clientId, senderUser, toEmail);
+
+            // Validate configs
+            if (string.IsNullOrWhiteSpace(tenantId) ||
+                string.IsNullOrWhiteSpace(clientId) ||
+                string.IsNullOrWhiteSpace(clientSecret) ||
+                string.IsNullOrWhiteSpace(senderUser))
+            {
+                _logger.LogError("Missing Graph configuration values. Check appsettings.json.");
+                throw new InvalidOperationException("Missing Graph Email configuration.");
+            }
+
+            // Prepare HTML body
+            string formattedBody = (body ?? string.Empty)
                 .Replace("\r\n", "<br/>")
                 .Replace("\n", "<br/>");
-
             string htmlBody = $@"
-<p>Dear {WebUtility.HtmlEncode(name)},</p>
+<p>Dear {System.Net.WebUtility.HtmlEncode(name)},</p>
 <p>{formattedBody}</p>
 <p>Regards,<br/>
-<strong>{personName}</strong><br/>
-Project - Unibouw
+<strong>Project - Unibouw</strong>
 </p>";
 
-            // Attachment support (Graph API)
-            List<Microsoft.Graph.Models.Attachment>? attachments = null;
-            if (attachmentFilePaths?.Any() == true)
+            // Prepare attachments as a list of Attachment objects
+            var attachments = new List<Microsoft.Graph.Models.Attachment>();
+            if (attachmentFilePaths != null && attachmentFilePaths.Any())
             {
-                attachments = new List<Microsoft.Graph.Models.Attachment>();
                 foreach (var path in attachmentFilePaths.Where(File.Exists))
                 {
                     var bytes = await File.ReadAllBytesAsync(path);
@@ -619,8 +632,42 @@ Project - Unibouw
                 }
             }
 
-            await SendGraphEmailAsyncWithAttachments(toEmail, subject, htmlBody, attachments);
-            return true;
+            // Send mail using Microsoft Graph
+            try
+            {
+                var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+                var graphClient = new GraphServiceClient(credential);
+
+                var message = new Message
+                {
+                    Subject = subject,
+                    Body = new ItemBody
+                    {
+                        ContentType = BodyType.Html,
+                        Content = htmlBody
+                    },
+                    ToRecipients = new List<Recipient>
+                {
+                    new Recipient { EmailAddress = new EmailAddress { Address = toEmail } }
+                },
+                    Attachments = attachments // <-- Always a list, even if empty!
+                };
+
+                var sendMailBody = new Microsoft.Graph.Users.Item.SendMail.SendMailPostRequestBody
+                {
+                    Message = message,
+                    SaveToSentItems = true
+                };
+
+                await graphClient.Users[senderUser].SendMail.PostAsync(sendMailBody);
+                _logger.LogInformation("Mail sent successfully to {toEmail}", toEmail);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send mail via Graph API");
+                throw; // Or return false, depending on your error handling
+            }
         }
 
 

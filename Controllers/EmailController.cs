@@ -100,6 +100,7 @@ namespace UnibouwAPI.Controllers
             }
         }
 
+
         [HttpPost("send-mail")]
         public async Task<IActionResult> SendMail([FromBody] SendMailRequest req)
         {
@@ -135,12 +136,12 @@ namespace UnibouwAPI.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex,"Unexpected error occurred while sending the email.");
+                _logger.LogError(ex, "Exception thrown when sending Graph mail.");
                 return StatusCode(500, new
                 {
                     success = false,
-                    message = "An unexpected error occurred while sending the email",
-                    error = ex.Message // remove in prod if needed
+                    message = "Graph error",
+                    error = ex.ToString()
                 });
             }
         }

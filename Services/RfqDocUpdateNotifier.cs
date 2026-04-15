@@ -50,25 +50,22 @@ public class RfqDocUpdateNotifier
     public async Task NotifyForNewProjectDocAsync(Guid projectId, Guid newProjectDocumentId, string docName)
     {
         using var con = Con;
-        // 1) RFQs already sent in same project missing the doc
+
+        // 1) All RFQs in this project with status 'Sent'
         const string rfqSql = @"
 SELECT r.RfqID
 FROM dbo.Rfq r
 WHERE r.ProjectID = @ProjectID
   AND r.IsDeleted = 0
-  AND r.Status = 'Sent'
-  AND NOT EXISTS (
-      SELECT 1 FROM dbo.RfqDocumentsMapping m
-      WHERE m.RfqID = r.RfqID AND m.ProjectDocumentID = @DocId
-  );";
-        var rfqIds = (await con.QueryAsync<Guid>(rfqSql, new { ProjectID = projectId, DocId = newProjectDocumentId })).ToList();
+  AND r.Status = 'Sent'";
+        var rfqIds = (await con.QueryAsync<Guid>(rfqSql, new { ProjectID = projectId })).ToList();
         if (!rfqIds.Any()) return;
 
         foreach (var rfqId in rfqIds)
         {
             var (projectName, rfqNumber, workItemName) = await GetRfqDetailsAsync(rfqId);
 
-            // 2) eligible subcontractors
+            // 2) Eligible subcontractors
             const string subsSql = @"
 SELECT SubcontractorID
 FROM dbo.RfqSubcontractorResponse
@@ -78,7 +75,7 @@ WHERE RfqID = @RfqID
 
             foreach (var subId in subs)
             {
-                // 3) idempotency check
+                // 3) Idempotency check
                 const string alreadySql = @"
 SELECT COUNT(1)
 FROM dbo.RfqDocumentNotificationLog
@@ -86,7 +83,7 @@ WHERE RfqID=@RfqID AND ProjectDocumentID=@DocId AND SubcontractorID=@SubId;";
                 var already = await con.ExecuteScalarAsync<int>(alreadySql, new { RfqID = rfqId, DocId = newProjectDocumentId, SubId = subId });
                 if (already > 0) continue;
 
-                // 4) Email body with all details
+                // 4) Email body with that doc's name
                 var commentHtml = $@"
 <p>Dear Subcontractor,</p>
 <p>A new document has been added to the project and is now relevant to the RFQ previously shared with you.</p>
@@ -101,7 +98,7 @@ WHERE RfqID=@RfqID AND ProjectDocumentID=@DocId AND SubcontractorID=@SubId;";
 
                 await _email.ReplyRfqThreadAsync(rfqId, subId, commentHtml);
 
-                // 5) log it
+                // 5) Log the notification
                 const string logSql = @"
 INSERT INTO dbo.RfqDocumentNotificationLog (LogID, RfqID, ProjectDocumentID, SubcontractorID, SentOn)
 VALUES (NEWID(), @RfqID, @DocId, @SubId, SYSUTCDATETIME());";

@@ -63,44 +63,23 @@ namespace UnibouwAPI.Services
 
 
         public async Task NotifyAsync(
-            Guid projectId,
-            Guid currentRfqId,
-            Guid projectDocumentId,
-            string docName,
-            string userEmail,
-            string? language = "en")
+       Guid projectId,
+       Guid currentRfqId,
+       Guid projectDocumentId,
+       string docName,
+       string userEmail,
+       string? language = "en")
         {
             // Fetch details from DB for every call, ensures correct data for each doc
             var (projectName, rfqNumber, workItemName) = await GetRfqDetailsAsync(currentRfqId);
-
             var subs = (await _repo.GetEligibleSubcontractorsForRfqAsync(currentRfqId)).ToList();
             _logger.LogInformation("NOTIFY: {Count} eligible subs for RFQ {RFQ} / Doc {Doc}", subs.Count, currentRfqId, docName);
             if (!subs.Any()) return;
 
             foreach (var sub in subs)
             {
-                const string sql = @"
-SELECT COUNT(1)
-FROM RfqDocumentLink l
-JOIN RfqSubcontractorMapping m ON l.RfqID = m.RfqID
-JOIN Rfq r ON m.RfqID = r.RfqID
-WHERE l.ProjectDocumentID = @DocID
-  AND m.SubcontractorID = @SubID
-  AND r.ProjectID = @ProjectID;";
-                using var con = new SqlConnection(_connectionString);
-                var alreadyHadDoc = await con.ExecuteScalarAsync<int>(sql, new
-                {
-                    DocID = projectDocumentId,
-                    SubID = sub.SubcontractorID,
-                    ProjectID = projectId
-                });
-                _logger.LogInformation("NOTIFY: Sub {Sub} alreadyHadDoc={HadDoc}", sub.SubcontractorID, alreadyHadDoc);
-                if (alreadyHadDoc > 0)
-                {
-                    _logger.LogInformation("NOTIFY: SKIP sub {Sub}, already had doc {Doc}", sub.SubcontractorID, docName);
-                    continue;
-                }
-
+                // ❌ Remove all "already had doc" checks!
+                // ✅ Only check if already notified
                 var alreadyNotified = await _repo.WasNotificationSentAsync(currentRfqId, projectDocumentId, sub.SubcontractorID);
                 if (alreadyNotified)
                 {
@@ -122,7 +101,6 @@ WHERE l.ProjectDocumentID = @DocID
 <p>Best regards<br/>QMS Team</p>";
 
                 _logger.LogInformation("NOTIFY: Sending notification to {Email} for doc {Doc}", sub.Email, docName);
-
                 try
                 {
                     await _email.SendSimpleEmailAsync(sub.Email!, subject, htmlBody);
@@ -137,44 +115,28 @@ WHERE l.ProjectDocumentID = @DocID
         }
 
         public async Task NotifyForEditRfqDocs(
-     Guid projectId,
-     Guid rfqId,
-     IEnumerable<dynamic> linkedDocs,
-     string userEmail,
-     string? language = "en")
+    Guid projectId,
+    Guid rfqId,
+    IEnumerable<dynamic> linkedDocs,
+    string userEmail,
+    string? language = "en")
         {
-            // Fetch details from DB (project name, rfq number, work item name)
             var (projectName, rfqNumber, workItemName) = await GetRfqDetailsAsync(rfqId);
+            _logger.LogInformation("NotifyForEditRfqDocs: projectId={ProjectId}, rfqId={RfqId}, docsCount={DocsCount}, user={User}",
+                projectId, rfqId, linkedDocs.Count(), userEmail);
 
             foreach (var doc in linkedDocs)
             {
                 var subs = (await _repo.GetEligibleSubcontractorsForRfqAsync(rfqId)).ToList();
                 foreach (var sub in subs)
                 {
-                    // Usual checks (already had doc, already notified, etc.)
-                    const string sql = @"
-SELECT COUNT(1)
-FROM RfqDocumentLink l
-JOIN RfqSubcontractorMapping m ON l.RfqID = m.RfqID
-JOIN Rfq r ON m.RfqID = r.RfqID
-WHERE l.ProjectDocumentID = @DocID
-  AND m.SubcontractorID = @SubID
-  AND r.ProjectID = @ProjectID
-  AND l.RfqID <> @CurrentRfqID;";
-                    using var con = new SqlConnection(_connectionString);
-                    var alreadyHadDoc = await con.ExecuteScalarAsync<int>(sql, new
-                    {
-                        DocID = doc.ProjectDocumentID,
-                        SubID = sub.SubcontractorID,
-                        ProjectID = projectId,
-                        CurrentRfqID = rfqId
-                    });
-                    if (alreadyHadDoc > 0)
-                        continue;
-
+                    // ✅ Only check notification log for idempotency
                     var alreadyNotified = await _repo.WasNotificationSentAsync(rfqId, doc.ProjectDocumentID, sub.SubcontractorID);
                     if (alreadyNotified)
+                    {
+                        _logger.LogInformation("NOTIFY: SKIP sub {Sub}, already notified for this RFQ/doc", sub.SubcontractorID);
                         continue;
+                    }
 
                     var subject = "RFQ Update – New Document Added for Review";
                     var htmlBody = $@"
@@ -194,9 +156,8 @@ WHERE l.ProjectDocumentID = @DocID
                         await _email.SendSimpleEmailAsync(sub.Email!, subject, htmlBody);
                         await _repo.LogNotificationAsync(rfqId, doc.ProjectDocumentID, sub.SubcontractorID);
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        // Optional: log errors here
                     }
                 }
             }
