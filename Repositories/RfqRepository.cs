@@ -53,17 +53,35 @@ WHERE ProjectID = @ProjectID AND IsDeleted = 0;";
         {
             var sql = @"
 SELECT 
-    r.*,
+    r.RfqID,
+    r.RfqNumber,
+    r.SentDate,
+    r.DueDate,
+    r.GlobalDueDate,
+    r.CustomerID,
+    r.ProjectID,
+    r.RfqSent,
+    r.QuoteReceived,
+    r.Status,
+    r.CreatedOn,
+    r.CreatedBy,
+    r.ModifiedOn,
+    r.ModifiedBy,
+    r.CustomNote,            -- ✅ IMPORTANT (explicit)
+    
     c.CustomerName,
     p.Name AS ProjectName,
+
     wi.WorkItemID,
     wi.Name AS WorkItemName
+
 FROM Rfq r
 LEFT JOIN Customers c ON r.CustomerID = c.CustomerID
 LEFT JOIN Projects p ON r.ProjectID = p.ProjectID
 LEFT JOIN RfqWorkItemMapping rw ON r.RfqID = rw.RfqID
 LEFT JOIN WorkItems wi ON rw.WorkItemID = wi.WorkItemID
-WHERE r.RfqID = @Id AND r.IsDeleted = 0";
+WHERE r.RfqID = @Id AND r.IsDeleted = 0
+";
 
             var rfqDictionary = new Dictionary<Guid, Rfq>();
 
@@ -74,12 +92,18 @@ WHERE r.RfqID = @Id AND r.IsDeleted = 0";
                     if (!rfqDictionary.TryGetValue(rfq.RfqID, out var rfqEntry))
                     {
                         rfqEntry = rfq;
+
+                        // ✅ Initialize list
                         rfqEntry.WorkItems = new List<WorkItem>();
+
                         rfqDictionary.Add(rfq.RfqID, rfqEntry);
                     }
 
-                    if (workItem != null)
+                    // ✅ Add work items safely
+                    if (workItem != null && workItem.WorkItemID != Guid.Empty)
+                    {
                         rfqEntry.WorkItems.Add(workItem);
+                    }
 
                     return rfqEntry;
                 },
@@ -175,7 +199,7 @@ ORDER BY r.CreatedOn DESC";
             rfq.RfqID = Guid.NewGuid();
             rfq.CreatedOn = amsterdamNow;
             rfq.IsDeleted = false;
-
+            rfq.CustomNote = rfq.CustomNote ?? string.Empty;
             if (rfq.SubcontractorDueDates == null || !rfq.SubcontractorDueDates.Any())
                 throw new Exception("Subcontractor due dates are required");
 
@@ -214,13 +238,13 @@ ORDER BY r.CreatedOn DESC";
                         INSERT INTO Rfq
                         (
                             RfqID, SentDate, DueDate, GlobalDueDate, RfqSent, QuoteReceived,
-                            CustomerID, ProjectID, Status, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy,
+                            CustomerID, ProjectID, CustomNote, Status, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy,
                             DeletedOn, DeletedBy, IsDeleted
                         )
                         VALUES
                         (
                             @RfqID, @SentDate, @DueDate, @GlobalDueDate, @RfqSent, @QuoteReceived,
-                            @CustomerID, @ProjectID, @Status, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy,
+                            @CustomerID, @ProjectID,   @CustomNote, @Status, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy,
                             @DeletedOn, @DeletedBy, @IsDeleted
                         )";
 

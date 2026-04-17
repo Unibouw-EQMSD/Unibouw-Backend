@@ -110,22 +110,23 @@ VALUES
         public async Task<bool> AnchorExistsAsync(Guid projectId, Guid subcontractorId, Guid rfqId, string pmMailbox, string conversationId)
         {
             const string sql = @"
-    SELECT TOP 1 1
-    FROM dbo.OutboundRfqEmailAnchor
-    WHERE IsActive = 1
-      AND ProjectId = @ProjectId
-      AND SubcontractorId = @SubId
-      AND RfqId = @RfqId
-      AND PmMailbox = @PmMailbox
-      AND (ConversationId = @ConversationId OR ConversationId IS NULL);";
+SELECT TOP 1 1
+FROM dbo.OutboundRfqEmailAnchor
+WHERE IsActive = 1
+  AND ProjectId = @ProjectId
+  AND SubcontractorId = @SubId
+  AND RfqId = @RfqId
+  AND PmMailbox = @PmMailbox
+  -- If any anchor for this combo exists, we consider it valid, regardless of ConversationId
+";
             using var conn = new SqlConnection(_cs);
             var x = await conn.ExecuteScalarAsync<int?>(sql, new
             {
                 ProjectId = projectId,
                 SubId = subcontractorId,
                 RfqId = rfqId,
-                PmMailbox = pmMailbox,
-                ConversationId = conversationId
+                PmMailbox = pmMailbox
+                // ConversationId is not used in the WHERE clause anymore
             });
             return x.HasValue;
         }

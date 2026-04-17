@@ -293,25 +293,23 @@ namespace UnibouwAPI.Services
                 return;
             }
 
+            // 1. Extract UBW token from subject/body
             var (projectId, subId, rfqId, found) = ParseToken(msg.Subject);
             if (!found) (projectId, subId, rfqId, found) = ParseToken(msg.BodyPreview);
 
             if (!found)
             {
                 Console.WriteLine("[Inbox] Token not found in subject/preview. Fetching full body...");
-
                 var full = await graph.Users[pmMailbox].Messages[msg.Id].GetAsync(r =>
                 {
                     r.QueryParameters.Select = new[]
                     {
-            "id", "subject", "bodyPreview", "body", "receivedDateTime", "conversationId", "from"
-        };
+                "id", "subject", "bodyPreview", "body", "receivedDateTime", "conversationId", "from"
+            };
                 }, ct);
-
                 (projectId, subId, rfqId, found) = ParseToken(full?.Subject);
                 if (!found) (projectId, subId, rfqId, found) = ParseToken(full?.BodyPreview);
                 if (!found) (projectId, subId, rfqId, found) = ParseToken(full?.Body?.Content);
-
                 Console.WriteLine($"[Inbox] Token after full fetch found={found}");
             }
 
@@ -321,27 +319,73 @@ namespace UnibouwAPI.Services
                 return;
             }
 
+            // 2. Anchor check (relaxed, ignore ConversationId)
+            Console.WriteLine($"[DEBUG] Anchor check: project={projectId}, sub={subId}, rfq={rfqId}, pm={pmMailbox}, conv={msg.ConversationId}");
             var anchorOk = await _repo.AnchorExistsAsync(projectId.Value, subId.Value, rfqId.Value, pmMailbox, msg.ConversationId);
+            Console.WriteLine($"[DEBUG] Anchor found: {anchorOk}");
             if (!anchorOk)
             {
                 Console.WriteLine($"[Inbox] Skip: Anchor not found. pm={pmMailbox}, conv={msg.ConversationId}, p={projectId}, s={subId}");
                 return;
             }
 
+            // 3. Ignore self-sent copy
             var fromEmail = msg.From?.EmailAddress?.Address ?? "";
             if (!string.IsNullOrWhiteSpace(fromEmail) &&
                 fromEmail.Equals(pmMailbox, StringComparison.OrdinalIgnoreCase))
             {
-                return; // ignore self-sent copy in Inbox
+                return;
             }
+
+            // 4. Compose message text: only the top reply!
+            string rawText = msg.Body?.Content ?? msg.BodyPreview ?? "";
+            string plainText = StripHtml(rawText); // Remove HTML tags (implement/keep your StripHtml)
+            string replyText = ExtractTopReply(plainText); // Your working code
+
+            // 5. Fetch project/RFQ details for official details block
+            string projectLine = ""; string rfqLine = ""; string dueLine = "";
+            try
+            {
+                using var conn = new SqlConnection(_connectionString);
+                var details = await conn.QuerySingleOrDefaultAsync<dynamic>(@"
+            SELECT p.Number AS ProjectCode, p.Name AS ProjectName, r.RfqNumber, rsm.DueDate
+            FROM Projects p
+            INNER JOIN Rfq r ON r.ProjectID = p.ProjectID
+            INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = r.RfqID
+            WHERE p.ProjectID = @ProjectID AND r.RfqID = @RfqID AND rsm.SubcontractorID = @SubID",
+                    new { ProjectID = projectId.Value, RfqID = rfqId.Value, SubID = subId.Value });
+
+                if (details != null)
+                {
+                    projectLine = $"Project: {details.ProjectCode} - {details.ProjectName}";
+                    rfqLine = $"RFQ No: {details.RfqNumber}";
+                    dueLine = $"Due Date: {(details.DueDate != null ? ((DateTime)details.DueDate).ToString("dd-MMM-yyyy") : "")}";
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[Inbox] Warning: Could not fetch official project/RFQ details. " + ex.Message);
+            }
+
+            string officialDetails = $"{projectLine}\n{rfqLine}\n{dueLine}".Trim();
+            string messageToLog = string.IsNullOrWhiteSpace(officialDetails)
+                ? replyText.Trim()
+                : $"{replyText.Trim()}\n\n---\n{officialDetails}";
+
             var subject = msg.Subject ?? "";
             var receivedUtc = msg.ReceivedDateTime!.Value.UtcDateTime;
             var receivedAms = ToAmsterdamTime(receivedUtc);
-            var messageText = (msg.BodyPreview ?? "").Trim();
 
-            await _repo.InsertInboundToConversationAsync(projectId.Value, subId.Value, subject, messageText, receivedAms, fromEmail);
+            // 6. Save to conversation
+            await _repo.InsertInboundToConversationAsync(
+                projectId.Value,
+                subId.Value,
+                subject,
+                messageToLog,
+                receivedAms,
+                fromEmail
+            );
         }
-
         private async Task<List<Message>> GetFolderMessagesSinceAsync(
      GraphServiceClient graph,
      string pmMailbox,

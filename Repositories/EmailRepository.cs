@@ -191,9 +191,8 @@ namespace UnibouwAPI.Repositories
           WHERE prj.ProjectID = @Id",
                 new { Id = projectId });
             string personName = personDetails?.PersonName ?? "Project Assignee";
-
             var workItems = (await _connection.QueryAsync<dynamic>(
-                @"SELECT WorkItemID, Name FROM WorkItems WHERE WorkItemID IN @ids",
+                @"SELECT WorkItemID, Number, Name FROM WorkItems WHERE WorkItemID IN @ids",
                 new { ids = request.WorkItems })).ToList();
 
             var subcontractors = (await _connection.QueryAsync<dynamic>(
@@ -215,22 +214,12 @@ namespace UnibouwAPI.Repositories
                 string toEmail = (string)sub.Email;
                 string subName = (string)sub.Name;
 
-                bool alreadyEmailed = await _connection.ExecuteScalarAsync<int>(
-                    @"SELECT COUNT(1)
-              FROM RfqSubcontractorMapping
-              WHERE RfqID = @RfqID
-                AND SubcontractorID = @SubId
-                AND CreatedOn IS NOT NULL",
-                    new { RfqID = rfqId, SubId = subcontractorId }) > 0;
-                if (alreadyEmailed)
-                    continue;
-
                 DateTime dueDate = await _connection.QuerySingleAsync<DateTime>(
                     @"SELECT DueDate FROM RfqSubcontractorMapping WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
                     new { RfqID = rfqId, SubId = subcontractorId });
 
                 string workItemListHtml = string.Join("",
-                    workItems.Select(w => $"<li><strong>{WebUtility.HtmlEncode((string)w.Name)}</strong></li>"));
+    workItems.Select(w => $"<li><strong>{WebUtility.HtmlEncode((string)w.Number)} - {WebUtility.HtmlEncode((string)w.Name)}</strong></li>"));
                 string workItemIdsCsv = string.Join(",", workItems.Select(w => w.WorkItemID));
                 string summaryUrl =
                     $"{baseUrl}/project-summary" +
@@ -239,16 +228,15 @@ namespace UnibouwAPI.Repositories
                     $"&workItemIds={workItemIdsCsv}";
                 string token = $"<!-- UBW:project={projectId};sub={subcontractorId};rfq={rfqId} -->";
                 var intro = string.IsNullOrWhiteSpace(request.Body) ? T("IntroFallback") : request.Body;
-
                 string body = token + $@"
 <p>{T("Dear")} {WebUtility.HtmlEncode(subName)},</p>
 <p>{intro}</p>
 <ul>
-  <li><strong>{T("Project")}:</strong> {WebUtility.HtmlEncode(projectCode)} - {WebUtility.HtmlEncode(projectName)}</li>
-  <li><strong>{T("RfqNo")}:</strong> {WebUtility.HtmlEncode((string)rfq.RfqNumber)}</li>
-  <li><strong>{T("DueDate")}:</strong> {dueDate:dd-MMM-yyyy}</li>
+  <li><strong>{T("Project")}: </strong>{WebUtility.HtmlEncode(projectCode)} - {WebUtility.HtmlEncode(projectName)}</li>
+  <li><strong>{T("RfqNo")}: </strong>{WebUtility.HtmlEncode((string)rfq.RfqNumber)}</li>
+  <li><strong>{T("DueDate")}: </strong>{dueDate:dd-MMM-yyyy}</li>
 </ul>
-<p><strong>{T("WorkItems")}:</strong></p>
+<p><strong>{T("WorkItems")}: </strong></p>
 <ul>{workItemListHtml}</ul>
 <br/>
 <p>
@@ -276,12 +264,12 @@ namespace UnibouwAPI.Repositories
                         Content = body
                     },
                     ToRecipients = new List<Microsoft.Graph.Models.Recipient>
+        {
+            new Microsoft.Graph.Models.Recipient
             {
-                new Microsoft.Graph.Models.Recipient
-                {
-                    EmailAddress = new Microsoft.Graph.Models.EmailAddress { Address = toEmail }
-                }
+                EmailAddress = new Microsoft.Graph.Models.EmailAddress { Address = toEmail }
             }
+        }
                 };
                 var sendMailBody = new Microsoft.Graph.Users.Item.SendMail.SendMailPostRequestBody
                 {
@@ -290,9 +278,8 @@ namespace UnibouwAPI.Repositories
                 };
                 await graphClient.Users[senderUser].SendMail.PostAsync(sendMailBody);
 
-                // === Wait a moment and then fetch the sent message for tracking (optional: adjust delay as needed) ===
+                // Wait and try to fetch the sent message for tracking (optional: adjust delay as needed)
                 await Task.Delay(1500);
-
                 var sent = await graphClient.Users[senderUser].MailFolders["SentItems"].Messages.GetAsync(r =>
                 {
                     r.QueryParameters.Top = 10;
@@ -304,28 +291,23 @@ namespace UnibouwAPI.Repositories
                     m.Subject == subject &&
                     m.ToRecipients.Any(rec => rec.EmailAddress.Address.Equals(toEmail, StringComparison.OrdinalIgnoreCase)));
 
-                if (sentMsg != null)
-                {
-                    await SaveOutboundAnchorAsync(
-                        projectId,
-                        subcontractorId,
-                        rfqId,
-                        senderUser,
-                        subject,
-                        sentMsg.ConversationId,
-                        sentMsg.InternetMessageId,
-                        sentMsg.Id
-                    );
-                }
-                else
-                {
-                    // Optionally log if not found
-                }
+                // === Always insert/update anchor, even if sentMsg is null ===
+                await SaveOutboundAnchorAsync(
+                    projectId,
+                    subcontractorId,
+                    rfqId,
+                    senderUser,
+                    subject,
+                    sentMsg?.ConversationId,
+                    sentMsg?.InternetMessageId,
+                    sentMsg?.Id
+                );
 
+                // Optionally update CreatedOn in mapping
                 await _connection.ExecuteAsync(
                     @"UPDATE RfqSubcontractorMapping
-              SET CreatedOn = GETDATE()
-              WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
+          SET CreatedOn = GETDATE()
+          WHERE RfqID = @RfqID AND SubcontractorID = @SubId",
                     new { RfqID = rfqId, SubId = subcontractorId });
 
                 sentEmails.Add(new EmailRequest
