@@ -380,25 +380,58 @@ public async Task<IActionResult> UpdateRfqPost(
 
         [HttpPost("save-subcontractor-workitem-mapping")]
         [Authorize]
-        public async Task<IActionResult> SaveSubcontractorWorkItemMapping([FromQuery] Guid workItemId, [FromQuery] Guid subcontractorId, [FromQuery] Guid rfqId, [FromQuery] DateTime? dueDate)
+        public async Task<IActionResult> SaveSubcontractorWorkItemMapping(
+     [FromQuery] Guid workItemId,
+     [FromQuery] Guid subcontractorId,
+     [FromQuery] Guid rfqId,
+     [FromQuery] DateTime? dueDate)
         {
             try
             {
-                // Only these two are mandatory
                 if (subcontractorId == Guid.Empty || workItemId == Guid.Empty)
+                {
                     return BadRequest(new
                     {
                         message = "SubcontractorID and WorkItemID are required."
                     });
+                }
 
-                // 1️⃣ Save subcontractor–work item mapping (ALWAYS)
+                // ===============================
+                // 1️⃣ GET ERP IDS (BIGINT NOW)
+                // ===============================
+                long subcontractorErpId = await _repository.GetSubcontractorErpIdAsync(subcontractorId);
+                long workItemErpId = await _repository.GetWorkItemErpIdAsync(workItemId);
+
+                if (subcontractorErpId <= 0)
+                {
+                    return BadRequest(new
+                    {
+                        message = "Subcontractor ERP ID not found."
+                    });
+                }
+
+                if (workItemErpId <= 0)
+                {
+                    return BadRequest(new
+                    {
+                        message = "WorkItem ERP ID not found."
+                    });
+                }
+
+                // ==========================================
+                // 2️⃣ SAVE MAPPING (BIGINT VERSION)
+                // ==========================================
                 await _repository.SaveSubcontractorWorkItemMappingAsync(
                     subcontractorId,
                     workItemId,
+                    subcontractorErpId,
+                    workItemErpId,
                     User?.Identity?.Name ?? "System"
                 );
 
-                // 2️⃣ Update RFQ–subcontractor due date (ONLY IF RFQ EXISTS)
+                // ==========================================
+                // 3️⃣ UPDATE RFQ SUBCONTRACTOR DUE DATE
+                // ==========================================
                 if (rfqId != Guid.Empty && dueDate.HasValue)
                 {
                     var success = await _repository.UpdateRfqSubcontractorDueDateAsync(
@@ -408,10 +441,12 @@ public async Task<IActionResult> UpdateRfqPost(
                     );
 
                     if (!success)
+                    {
                         return NotFound(new
                         {
                             message = "RfqSubcontractorMapping update failed."
                         });
+                    }
                 }
 
                 return Ok(new

@@ -18,33 +18,44 @@ public class RfqDocUpdateNotifier
     private IDbConnection Con => new SqlConnection(_cs);
 
     // Helper to fetch details
-    private async Task<(string ProjectName, string RfqNumber, string WorkItemNames)> GetRfqDetailsAsync(Guid rfqId)
+    private async Task<(string ProjectName, string ProjectNumber, string RfqNumber, string WorkItemsText)> GetRfqDetailsAsync(Guid rfqId)
     {
         const string sql = @"
-            SELECT 
-                p.Name AS ProjectName,
-                r.RfqNumber,
-                wi.Name AS WorkItemName
-            FROM Rfq r
-            INNER JOIN Projects p ON r.ProjectID = p.ProjectID
-            LEFT JOIN RfqWorkItems rwi ON r.RfqID = rwi.RfqID
-            LEFT JOIN WorkItems wi ON rwi.WorkItemID = wi.WorkItemID
-            WHERE r.RfqID = @RfqID
-        ";
-        using var con = new SqlConnection(_cs);
+SELECT 
+    p.Name        AS ProjectName,
+    p.Number      AS ProjectNumber,
+    r.RfqNumber   AS RfqNumber
+FROM dbo.Rfq r
+JOIN dbo.Projects p ON p.ProjectID = r.ProjectID
+WHERE r.RfqID = @RfqID;
 
-        var results = (await con.QueryAsync(sql, new { RfqID = rfqId })).ToList();
+SELECT 
+    wi.Number AS WorkItemNumber,
+    wi.Name   AS WorkItemName
+FROM dbo.RfqWorkItemMapping rwm
+JOIN dbo.WorkItems wi ON wi.WorkItemID = rwm.WorkItemID
+WHERE rwm.RfqID = @RfqID
+  AND wi.IsDeleted = 0
+ORDER BY wi.Number;
+";
 
-        var projectName = results.FirstOrDefault()?.ProjectName ?? "(Unknown Project)";
-        var rfqNumber = results.FirstOrDefault()?.RfqNumber ?? "(Unknown RFQ)";
-        var workItemNames = results
-            .Select(r => (string)r.WorkItemName)
-            .Where(n => !string.IsNullOrEmpty(n))
-            .Distinct()
-            .ToList();
-        var workItemName = workItemNames.Any() ? string.Join(", ", workItemNames) : "-";
+        using var con = Con; // or _connection
+        using var multi = await con.QueryMultipleAsync(sql, new { RfqID = rfqId });
 
-        return (projectName, rfqNumber, workItemName);
+        var head = await multi.ReadSingleAsync<dynamic>();
+        var workItems = (await multi.ReadAsync<dynamic>()).ToList();
+
+        string workItemsText =
+            workItems.Any()
+                ? string.Join(", ", workItems.Select(w => $"{w.WorkItemNumber} - {w.WorkItemName}"))
+                : "-";
+
+        return (
+            (string)head.ProjectName,
+            (string)head.ProjectNumber,
+            (string)head.RfqNumber,
+            workItemsText
+        );
     }
 
     public async Task NotifyForNewProjectDocAsync(Guid projectId, Guid newProjectDocumentId, string docName)
@@ -63,8 +74,7 @@ WHERE r.ProjectID = @ProjectID
 
         foreach (var rfqId in rfqIds)
         {
-            var (projectName, rfqNumber, workItemName) = await GetRfqDetailsAsync(rfqId);
-
+            var (projectName, projectNumber, rfqNumber, workItemsText) = await GetRfqDetailsAsync(rfqId);
             // 2) Eligible subcontractors
             const string subsSql = @"
 SELECT SubcontractorID
@@ -89,9 +99,9 @@ WHERE RfqID=@RfqID AND ProjectDocumentID=@DocId AND SubcontractorID=@SubId;";
 <p>A new document has been added to the project and is now relevant to the RFQ previously shared with you.</p>
 <p>Please review the newly added document using the same RFQ link shared earlier and consider it while preparing or updating your quotation.</p>
 <p>
-<strong>Project:</strong> {WebUtility.HtmlEncode(projectName)}<br/>
+<strong>Project:<strong>Project:</strong> {WebUtility.HtmlEncode(projectNumber)} - {WebUtility.HtmlEncode(projectName)}<br/>
 <strong>RFQ Reference:</strong> {WebUtility.HtmlEncode(rfqNumber)}<br/>
-<strong>Work Item:</strong> {WebUtility.HtmlEncode(workItemName)}<br/>
+<strong>Work Item(s):</strong> {WebUtility.HtmlEncode(workItemsText)}<br/>
 <strong>New Document(s) Added:</strong> {WebUtility.HtmlEncode(docName)}
 </p>
 <p>Best regards<br/>QMS Team</p>";

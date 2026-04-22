@@ -114,7 +114,7 @@ namespace UnibouwAPI.Controllers
 
         [HttpPost("createSubcontractorWithMappings")]
         [Authorize]
-        public async Task<IActionResult> CreateSubcontractorWithMappings([FromBody] Subcontractor subcontractor)
+        public async Task<IActionResult> CreateSubcontractorWithMappings([FromBody] Subcontractor subcontractor, [FromQuery] string? language = "en")
         {
             if (subcontractor == null)
             {
@@ -143,8 +143,7 @@ namespace UnibouwAPI.Controllers
                 subcontractor.RegisteredDate = amsterdamNow;
 
                 // Pass it to repository
-                var success = await _repository.CreateSubcontractorWithMappings(subcontractor);
-
+                var success = await _repository.CreateSubcontractorWithMappings(subcontractor, language);
                 if (success)
                 {
                     _logger.LogInformation("Subcontractor created successfully. SubcontractorID: {SubcontractorID}, CreatedBy: {UserEmail}", subcontractor.SubcontractorID, userEmail);
@@ -161,24 +160,21 @@ namespace UnibouwAPI.Controllers
                     return StatusCode(500, "Something went wrong while saving data.");
                 }
             }
-            catch (InvalidOperationException ex) when (ex.Message.Contains("email", StringComparison.OrdinalIgnoreCase))
+            catch (InvalidOperationException ex) when (ex.Message.Contains("e-mailadres") || ex.Message.Contains("email", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning(ex, "Duplicate email detected for subcontractor: {Email}", subcontractor.Email);
                 return Conflict(new
                 {
-                    Field = "email",
-                    Message = "A subcontractor with this email address already exists.",
-                    Error = ex.Message
+                    field = "email",
+                    message = ex.Message
                 });
             }
-            catch (InvalidOperationException ex) when (ex.Message.Contains("name", StringComparison.OrdinalIgnoreCase))
+
+            catch (InvalidOperationException ex) when (ex.Message.Contains("naam") || ex.Message.Contains("name", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning(ex, "Duplicate name detected for subcontractor: {Name}", subcontractor.Name);
                 return Conflict(new
                 {
-                    Field = "name",
-                    Message = "A subcontractor with this name already exists.",
-                    Error = ex.Message
+                    field = "name",
+                    message = ex.Message
                 });
             }
             catch (Exception ex)
@@ -190,6 +186,7 @@ namespace UnibouwAPI.Controllers
                     Error = ex.Message
                 });
             }
+
         }
 
         [HttpGet("{id}/reminders-sent")]

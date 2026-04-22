@@ -20,18 +20,22 @@ namespace UnibouwAPI.Services
         }
 
         public async Task<(
-            (List<long?> Inserted, List<long?> Updated, List<long?> Skipped) Categories,(List<long?> Inserted, List<long?> Updated, List<long?> Skipped) WorkItems,
-            (List<long?> Inserted, List<long?> Updated, List<long?> Skipped) Customers,(List<long?> Inserted, List<long?> Updated, List<long?> Skipped) Projects,
-                (List<Guid> Inserted, List<Guid> Updated, List<Guid> Skipped) Subcontractors
-    )> SyncAllAsync()
+         (List<long?> Inserted, List<long?> Updated, List<long?> Skipped) Categories,
+         (List<long?> Inserted, List<long?> Updated, List<long?> Skipped) WorkItems,
+         (List<long?> Inserted, List<long?> Updated, List<long?> Skipped) Customers,
+         (List<long?> Inserted, List<long?> Updated, List<long?> Skipped) Projects,
+         (List<Guid> Inserted, List<Guid> Updated, List<Guid> Skipped) Subcontractors,
+         (List<(long, long)> Inserted, List<(long, long)> Updated, List<(long, long)> Skipped) SubcontractorWorkItems
+     )> SyncAllAsync()
         {
-            await SyncPersonsAsync(); // <-- Add this line, always sync Persons first!
+            await SyncPersonsAsync(); // (if referenced)
             var categories = await SyncWorkItemCategoryTypesAsync();
             var workItems = await SyncWorkItemsAsync();
             var customers = await SyncCustomersAsync();
             var projects = await SyncProjectsAsync();
             var subcontractors = await SyncSubcontractorsAsync();
-            return (categories, workItems, customers, projects, subcontractors);
+            var subcontractorWorkItems = await SyncSubcontractorWorkItemsMappingAsync();
+            return (categories, workItems, customers, projects, subcontractors, subcontractorWorkItems);
         }
         public async Task<(List<long?> Inserted, List<long?> Updated, List<long?> Skipped)> TransferDataAsync1()
         {
@@ -265,12 +269,10 @@ namespace UnibouwAPI.Services
 
         public async Task<(List<long?> Inserted, List<long?> Updated, List<long?> Skipped)> SyncWorkItemsAsync()
         {
-            // Step 1: Read work items from source
             IEnumerable<WorkItem> sourceData;
             using (var sourceConn = new SqlConnection(_dwhConnection))
             {
                 await sourceConn.OpenAsync();
-
                 const string selectQuery = @"
             SELECT
                 ERP_ID,
@@ -286,10 +288,10 @@ namespace UnibouwAPI.Services
                 DeletedOn,
                 DeletedBy,
                 IsDeleted
-            FROM dbo.WorkItems";
-
+            FROM dbo.WorkItems
+            WHERE ERP_ID IS NOT NULL;";
                 sourceData = await sourceConn.QueryAsync<WorkItem>(selectQuery);
-                sourceData = sourceData.Where(x => x.ERP_ID != null);
+                Console.WriteLine($"[DWH SYNC] Source DWH WorkItems: {sourceData.Count()}");
             }
 
             var insertedIds = new List<long?>();
@@ -301,103 +303,74 @@ namespace UnibouwAPI.Services
                 await targetConn.OpenAsync();
 
                 const string mergeSql = @"
-            MERGE dbo.WorkItems AS target
-            USING (
-                SELECT
-                    @ERP_ID           AS ERP_ID,
-                    @CategoryID       AS CategoryID,
-                    @Number           AS Number,
-                    @Name             AS Name,
-                    @WorkItemParentID AS WorkItemParentID,
-                    @IsActive         AS IsActive,
-                    @CreatedOn        AS CreatedOn,
-                    @CreatedBy        AS CreatedBy,
-                    @ModifiedOn       AS ModifiedOn,
-                    @ModifiedBy       AS ModifiedBy,
-                    @DeletedOn        AS DeletedOn,
-                    @DeletedBy        AS DeletedBy,
-                    @IsDeleted        AS IsDeleted
-            ) AS source
-            ON target.ERP_ID = source.ERP_ID
-
-            WHEN MATCHED AND (
-                   ISNULL(target.CategoryID, '') <> ISNULL(source.CategoryID, '')
-                OR ISNULL(target.Number, '') <> ISNULL(source.Number, '')
-                OR ISNULL(target.Name, '') <> ISNULL(source.Name, '')
-                OR ISNULL(target.WorkItemParentID, 0) <> ISNULL(source.WorkItemParentID, 0)
-                OR ISNULL(target.IsActive, 0) <> ISNULL(source.IsActive, 0)
-                OR ISNULL(target.ModifiedOn, '1900-01-01') <> ISNULL(source.ModifiedOn, '1900-01-01')
-                OR ISNULL(target.IsDeleted, 0) <> ISNULL(source.IsDeleted, 0)
-            )
-            THEN UPDATE SET
-                CategoryID       = source.CategoryID,
-                Number           = source.Number,
-                Name             = source.Name,
-                WorkItemParentID = source.WorkItemParentID,
-                IsActive         = source.IsActive,
-                ModifiedOn       = source.ModifiedOn,
-                ModifiedBy       = source.ModifiedBy,
-                DeletedOn        = source.DeletedOn,
-                DeletedBy        = source.DeletedBy,
-                IsDeleted        = source.IsDeleted
-
-            WHEN NOT MATCHED BY TARGET THEN
-                INSERT (
-                    WorkItemID,
-                    ERP_ID,
-                    CategoryID,
-                    Number,
-                    Name,
-                    WorkItemParentID,
-                    IsActive,
-                    CreatedOn,
-                    CreatedBy,
-                    ModifiedOn,
-                    ModifiedBy,
-                    DeletedOn,
-                    DeletedBy,
-                    IsDeleted
-                )
-                VALUES (
-                    NEWID(),
-                    source.ERP_ID,
-                    source.CategoryID,
-                    source.Number,
-                    source.Name,
-                    source.WorkItemParentID,
-                    source.IsActive,
-                    source.CreatedOn,
-                    source.CreatedBy,
-                    source.ModifiedOn,
-                    source.ModifiedBy,
-                    source.DeletedOn,
-                    source.DeletedBy,
-                    source.IsDeleted
-                )
-            OUTPUT $action, source.ERP_ID;
-        ";
-
+MERGE dbo.WorkItems AS target
+USING (
+    SELECT
+        @ERP_ID AS ERP_ID,
+        @CategoryID AS CategoryID,
+        @Number AS Number,
+        @Name AS Name,
+        @WorkItemParentID AS WorkItemParentID,
+        @IsActive AS IsActive,
+        @CreatedOn AS CreatedOn,
+        @CreatedBy AS CreatedBy,
+        @ModifiedOn AS ModifiedOn,
+        @ModifiedBy AS ModifiedBy,
+        @DeletedOn AS DeletedOn,
+        @DeletedBy AS DeletedBy,
+        @IsDeleted AS IsDeleted
+) AS source
+ON target.ERP_ID = source.ERP_ID
+WHEN MATCHED THEN
+    UPDATE SET
+        CategoryID = source.CategoryID,
+        Number = source.Number,
+        Name = source.Name,
+        WorkItemParentID = source.WorkItemParentID,
+        IsActive = source.IsActive,
+        CreatedOn = source.CreatedOn,
+        CreatedBy = source.CreatedBy,
+        ModifiedOn = source.ModifiedOn,
+        ModifiedBy = source.ModifiedBy,
+        DeletedOn = source.DeletedOn,
+        DeletedBy = source.DeletedBy,
+        IsDeleted = source.IsDeleted
+WHEN NOT MATCHED BY TARGET THEN
+    INSERT (
+        WorkItemID, ERP_ID, CategoryID, Number, Name, WorkItemParentID,
+        IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted
+    )
+    VALUES (
+        NEWID(), source.ERP_ID, source.CategoryID, source.Number, source.Name, source.WorkItemParentID,
+        source.IsActive, source.CreatedOn, source.CreatedBy, source.ModifiedOn, source.ModifiedBy,
+        source.DeletedOn, source.DeletedBy, source.IsDeleted
+    )
+OUTPUT $action, source.ERP_ID;
+";
                 foreach (var item in sourceData)
                 {
-                    var result = await targetConn
-                        .QueryAsync<(string Action, long? ERP_ID)>(mergeSql, item);
-
-                    if (!result.Any())
+                    try
                     {
-                        skippedIds.Add(item.ERP_ID);
-                        continue;
+                        var result = await targetConn.QueryAsync<(string Action, long? ERP_ID)>(mergeSql, item);
+                        if (!result.Any())
+                        {
+                            skippedIds.Add(item.ERP_ID);
+                            continue;
+                        }
+                        foreach (var r in result)
+                        {
+                            if (r.Action == "INSERT") insertedIds.Add(r.ERP_ID);
+                            else if (r.Action == "UPDATE") updatedIds.Add(r.ERP_ID);
+                        }
                     }
-
-                    foreach (var r in result)
+                    catch (Exception ex)
                     {
-                        if (r.Action == "INSERT")
-                            insertedIds.Add(r.ERP_ID);
-                        else if (r.Action == "UPDATE")
-                            updatedIds.Add(r.ERP_ID);
+                        Console.WriteLine($"[DWH SYNC] Error upserting WorkItem (ERP_ID={item.ERP_ID}): {ex.Message}");
+                        skippedIds.Add(item.ERP_ID);
                     }
                 }
+                Console.WriteLine($"[DWH SYNC] WorkItems Inserted: {insertedIds.Count}, Updated: {updatedIds.Count}, Skipped: {skippedIds.Count}");
             }
-
             return (insertedIds, updatedIds, skippedIds);
         }
 
@@ -470,11 +443,12 @@ namespace UnibouwAPI.Services
                 await sourceConn.OpenAsync();
                 const string selectSql = @"
             SELECT
-                SubcontractorID, Name, Rating, Email, Location, Country, OfficeAddress, BillingAddress,
+                SubcontractorID, ERP_ID, Name, Rating, Email, Location, Country, OfficeAddress, BillingAddress,
                 RegisteredDate, IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted, PersonID
             FROM dbo.Subcontractors
-            WHERE SubcontractorID IS NOT NULL;";
+            WHERE ERP_ID IS NOT NULL;";
                 sourceData = await sourceConn.QueryAsync<Subcontractor>(selectSql);
+                Console.WriteLine($"[DWH SYNC] Source DWH Subcontractors: {sourceData.Count()}");
             }
 
             var inserted = new List<Guid>();
@@ -484,21 +458,11 @@ namespace UnibouwAPI.Services
             using (var targetConn = new SqlConnection(_unibouwConnection))
             {
                 await targetConn.OpenAsync();
-
-                // Get all valid PersonIDs in Unibouw
-                var validPersonIds = (await targetConn.QueryAsync<long>("SELECT PersonID FROM dbo.Persons")).ToHashSet();
-
-                // Set PersonID = null if missing (force insert)
-                foreach (var sub in sourceData)
-                {
-                    if (sub.PersonID.HasValue && !validPersonIds.Contains(sub.PersonID.Value))
-                        sub.PersonID = null;
-                }
-
                 const string mergeSql = @"
 MERGE dbo.Subcontractors AS target
 USING (
     SELECT
+        @ERP_ID AS ERP_ID,
         @SubcontractorID AS SubcontractorID,
         @Name AS Name,
         @Rating AS Rating,
@@ -518,57 +482,63 @@ USING (
         @IsDeleted AS IsDeleted,
         @PersonID AS PersonID
 ) AS source
-ON target.SubcontractorID = source.SubcontractorID
-WHEN MATCHED AND (
-    ISNULL(target.Name,'') <> ISNULL(source.Name,'')
-    OR ISNULL(target.Email,'') <> ISNULL(source.Email,'')
-    OR ISNULL(target.PersonID,0) <> ISNULL(source.PersonID,0)
-)
-THEN UPDATE SET
-    Name = source.Name,
-    Rating = source.Rating,
-    Email = source.Email,
-    Location = source.Location,
-    Country = source.Country,
-    OfficeAddress = source.OfficeAddress,
-    BillingAddress = source.BillingAddress,
-    RegisteredDate = source.RegisteredDate,
-    IsActive = source.IsActive,
-    ModifiedOn = source.ModifiedOn,
-    ModifiedBy = source.ModifiedBy,
-    DeletedOn = source.DeletedOn,
-    DeletedBy = source.DeletedBy,
-    IsDeleted = source.IsDeleted,
-    PersonID = source.PersonID
+ON target.ERP_ID = source.ERP_ID
+WHEN MATCHED THEN
+    UPDATE SET
+        SubcontractorID = source.SubcontractorID,
+        Name = source.Name,
+        Rating = source.Rating,
+        Email = source.Email,
+        Location = source.Location,
+        Country = source.Country,
+        OfficeAddress = source.OfficeAddress,
+        BillingAddress = source.BillingAddress,
+        RegisteredDate = source.RegisteredDate,
+        IsActive = source.IsActive,
+        CreatedOn = source.CreatedOn,
+        CreatedBy = source.CreatedBy,
+        ModifiedOn = source.ModifiedOn,
+        ModifiedBy = source.ModifiedBy,
+        DeletedOn = source.DeletedOn,
+        DeletedBy = source.DeletedBy,
+        IsDeleted = source.IsDeleted,
+        PersonID = source.PersonID
 WHEN NOT MATCHED BY TARGET THEN
     INSERT (
-        SubcontractorID, Name, Rating, Email, Location, Country, OfficeAddress, BillingAddress, RegisteredDate,
-        IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted, RemindersSent, PersonID
+        ERP_ID, SubcontractorID, Name, Rating, Email, Location, Country,
+        OfficeAddress, BillingAddress, RegisteredDate, IsActive, CreatedOn,
+        CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted, PersonID
     )
     VALUES (
-        source.SubcontractorID, source.Name, source.Rating, source.Email, source.Location, source.Country,
-        source.OfficeAddress, source.BillingAddress, source.RegisteredDate, source.IsActive, source.CreatedOn,
-        source.CreatedBy, source.ModifiedOn, source.ModifiedBy, source.DeletedOn, source.DeletedBy, source.IsDeleted,
-        0, -- RemindersSent
-        source.PersonID
+        source.ERP_ID, source.SubcontractorID, source.Name, source.Rating, source.Email,
+        source.Location, source.Country, source.OfficeAddress, source.BillingAddress,
+        source.RegisteredDate, source.IsActive, source.CreatedOn, source.CreatedBy,
+        source.ModifiedOn, source.ModifiedBy, source.DeletedOn, source.DeletedBy, source.IsDeleted, source.PersonID
     )
 OUTPUT $action, source.SubcontractorID;
 ";
-
                 foreach (var sub in sourceData)
                 {
-                    var result = await targetConn.QueryAsync<(string Action, Guid SubcontractorID)>(mergeSql, sub);
-                    if (!result.Any())
+                    try
+                    {
+                        var result = await targetConn.QueryAsync<(string Action, Guid SubcontractorID)>(mergeSql, sub);
+                        if (!result.Any())
+                        {
+                            skipped.Add(sub.SubcontractorID);
+                            continue;
+                        }
+                        foreach (var r in result)
+                        {
+                            if (r.Action == "INSERT") inserted.Add(r.SubcontractorID);
+                            else if (r.Action == "UPDATE") updated.Add(r.SubcontractorID);
+                        }
+                    }
+                    catch (Exception ex)
                     {
                         skipped.Add(sub.SubcontractorID);
-                        continue;
-                    }
-                    foreach (var r in result)
-                    {
-                        if (r.Action == "INSERT") inserted.Add(r.SubcontractorID);
-                        else if (r.Action == "UPDATE") updated.Add(r.SubcontractorID);
                     }
                 }
+                Console.WriteLine($"[DWH SYNC] Subcontractors Inserted: {inserted.Count}, Updated: {updated.Count}, Skipped: {skipped.Count}");
             }
             return (inserted, updated, skipped);
         }
@@ -870,6 +840,136 @@ OUTPUT $action, source.PersonID;";
             }
 
             return missingSubcontractors;
+        }
+        public async Task<(
+            List<(long SubcontractorERP_ID, long WorkItemERP_ID)> Inserted,
+            List<(long SubcontractorERP_ID, long WorkItemERP_ID)> Updated,
+            List<(long SubcontractorERP_ID, long WorkItemERP_ID)> Skipped
+        )> SyncSubcontractorWorkItemsMappingAsync()
+        {
+            // Step 1: Read all mappings from DWH
+            IEnumerable<(long SubcontractorERP_ID, long WorkItemERP_ID, DateTime? CreatedOn, string CreatedBy)> sourceData;
+            using (var sourceConn = new SqlConnection(_dwhConnection))
+            {
+                await sourceConn.OpenAsync();
+                const string selectQuery = @"
+            SELECT
+                SubcontractorID AS SubcontractorERP_ID,
+                WorkItemID AS WorkItemERP_ID,
+                CreatedOn,
+                CreatedBy
+            FROM dbo.SubcontractorWorkItemsMapping";
+                sourceData = await sourceConn.QueryAsync<(long, long, DateTime?, string)>(selectQuery);
+                Console.WriteLine($"[DWH SYNC] Source mapping rows from DWH: {sourceData.Count()}");
+            }
+
+            var inserted = new List<(long, long)>();
+            var updated = new List<(long, long)>();
+            var skipped = new List<(long, long)>();
+
+            using (var targetConn = new SqlConnection(_unibouwConnection))
+            {
+                await targetConn.OpenAsync();
+
+                // Log row count before
+                var countBefore = await targetConn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM dbo.SubcontractorWorkItemsMapping");
+                Console.WriteLine($"[DWH SYNC] Unibouw mapping table count BEFORE: {countBefore}");
+
+                // Optional: Filter for valid ERP_IDs (in case you ever want to skip bad rows)
+                var validSubcontractorERPIDs = (await targetConn.QueryAsync<long>("SELECT ERP_ID FROM dbo.Subcontractors")).ToHashSet();
+                var validWorkItemERPIDs = (await targetConn.QueryAsync<long>("SELECT ERP_ID FROM dbo.WorkItems")).ToHashSet();
+
+                var filtered = sourceData
+                    .Where(x => validSubcontractorERPIDs.Contains(x.SubcontractorERP_ID)
+                             && validWorkItemERPIDs.Contains(x.WorkItemERP_ID))
+                    .ToList();
+
+                Console.WriteLine($"[DWH SYNC] Filtered mapping rows with valid ERP_IDs: {filtered.Count}");
+
+                const string mergeSql = @"
+MERGE dbo.SubcontractorWorkItemsMapping AS target
+USING (
+    SELECT
+        @SubcontractorERP_ID AS SubcontractorERP_ID,
+        @WorkItemERP_ID AS WorkItemERP_ID,
+        @CreatedOn AS CreatedOn,
+        @CreatedBy AS CreatedBy
+) AS source
+ON target.SubcontractorERP_ID = source.SubcontractorERP_ID AND target.WorkItemERP_ID = source.WorkItemERP_ID
+WHEN MATCHED THEN
+    UPDATE SET CreatedOn = source.CreatedOn, CreatedBy = source.CreatedBy
+WHEN NOT MATCHED BY TARGET THEN
+    INSERT (SubcontractorERP_ID, WorkItemERP_ID, CreatedOn, CreatedBy)
+    VALUES (source.SubcontractorERP_ID, source.WorkItemERP_ID, source.CreatedOn, source.CreatedBy)
+OUTPUT $action, source.SubcontractorERP_ID, source.WorkItemERP_ID;
+";
+                int totalUpserted = 0;
+                foreach (var item in filtered)
+                {
+                    try
+                    {
+                        var result = await targetConn.QueryAsync<(string Action, long SubcontractorERP_ID, long WorkItemERP_ID)>(mergeSql, new
+                        {
+                            SubcontractorERP_ID = item.SubcontractorERP_ID,
+                            WorkItemERP_ID = item.WorkItemERP_ID,
+                            CreatedOn = item.CreatedOn,
+                            CreatedBy = item.CreatedBy
+                        });
+                        if (!result.Any())
+                        {
+                            skipped.Add((item.SubcontractorERP_ID, item.WorkItemERP_ID));
+                        }
+                        else
+                        {
+                            foreach (var r in result)
+                            {
+                                if (r.Action == "INSERT") inserted.Add((r.SubcontractorERP_ID, r.WorkItemERP_ID));
+                                else if (r.Action == "UPDATE") updated.Add((r.SubcontractorERP_ID, r.WorkItemERP_ID));
+                            }
+                        }
+                        totalUpserted++;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[DWH SYNC] Error upserting mapping ({item.SubcontractorERP_ID}, {item.WorkItemERP_ID}): {ex.Message}");
+                        skipped.Add((item.SubcontractorERP_ID, item.WorkItemERP_ID));
+                    }
+                }
+
+                Console.WriteLine($"[DWH SYNC] Upserted {totalUpserted} mapping rows. Inserted: {inserted.Count}, Updated: {updated.Count}, Skipped: {skipped.Count}");
+
+                // Step 3: Update GUID columns based on ERP_IDs
+                try
+                {
+                    var updatedSids = await targetConn.ExecuteAsync(@"
+UPDATE swi
+SET swi.SubcontractorID = s.SubcontractorID
+FROM dbo.SubcontractorWorkItemsMapping swi
+INNER JOIN dbo.Subcontractors s ON swi.SubcontractorERP_ID = s.ERP_ID
+WHERE swi.SubcontractorID IS NULL OR swi.SubcontractorID <> s.SubcontractorID;
+");
+                    Console.WriteLine($"[DWH SYNC] Updated SubcontractorID GUIDs: {updatedSids}");
+
+                    var updatedWids = await targetConn.ExecuteAsync(@"
+UPDATE swi
+SET swi.WorkItemID = w.WorkItemID
+FROM dbo.SubcontractorWorkItemsMapping swi
+INNER JOIN dbo.WorkItems w ON swi.WorkItemERP_ID = w.ERP_ID
+WHERE swi.WorkItemID IS NULL OR swi.WorkItemID <> w.WorkItemID;
+");
+                    Console.WriteLine($"[DWH SYNC] Updated WorkItemID GUIDs: {updatedWids}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[DWH SYNC] Error updating GUID columns: {ex.Message}");
+                }
+
+                // Log mapping table row count after insert
+                var countAfter = await targetConn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM dbo.SubcontractorWorkItemsMapping");
+                Console.WriteLine($"[DWH SYNC] Unibouw mapping table count AFTER: {countAfter}");
+            }
+
+            return (inserted, updated, skipped);
         }
 
         public async Task<MissingSubcontractorResponseDto> GetMissingSubcontractorDetailsAsync()

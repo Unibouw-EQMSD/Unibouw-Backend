@@ -32,7 +32,15 @@ namespace UnibouwAPI.Repositories.Interfaces
 
         Task<bool?> DeleteRfqAsync(Guid rfqId, string deletedBy);
 
-        Task SaveSubcontractorWorkItemMappingAsync(Guid subcontractorId, Guid workItemId, string createdBy);
+        Task SaveSubcontractorWorkItemMappingAsync(
+       Guid subcontractorId,
+       Guid workItemId,
+       long subcontractorErpId,
+       long workItemErpId,
+       string createdBy);
+
+        Task<long> GetSubcontractorErpIdAsync(Guid subcontractorId);
+        Task<long> GetWorkItemErpIdAsync(Guid workItemId);
 
         Task<bool> SaveOrUpdateRfqSubcontractorMappingAsync(Guid rfqId, Guid subcontractorId, Guid workItemId, DateTime dueDate, string user);
 

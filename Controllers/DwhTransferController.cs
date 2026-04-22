@@ -34,64 +34,62 @@ namespace UnibouwAPI.Controllers
                 await CompareSubcontractorIDs();
                 // ✅ Success logger
                 _logger.LogInformation(
-                    "✅ DWH Sync Completed Successfully at {Time}.\n" +
-                    "Categories: Inserted={CI}, Updated={CU}, Skipped={CS}\n" +
-                    "WorkItems:  Inserted={WI}, Updated={WU}, Skipped={WS}\n" +
-                    "Customers:  Inserted={CUI}, Updated={CUU}, Skipped={CUS}\n" +
-                    "Projects:   Inserted={PI}, Updated={PU}, Skipped={PS}",
-                    amsterdamNow,
-
-                    // Categories
-                    result.Categories.Inserted.Count,
-                    result.Categories.Updated.Count,
-                    result.Categories.Skipped.Count,
-
-                    // WorkItems
-                    result.WorkItems.Inserted.Count,
-                    result.WorkItems.Updated.Count,
-                    result.WorkItems.Skipped.Count,
-
-                    // Customers
-                    result.Customers.Inserted.Count,
-                    result.Customers.Updated.Count,
-                    result.Customers.Skipped.Count,
-
-                    // Projects
-                    result.Projects.Inserted.Count,
-                    result.Projects.Updated.Count,
-                    result.Projects.Skipped.Count
-                );
+       "✅ DWH Sync Completed Successfully at {Time}.\n" +
+       "Categories: Inserted={CI}, Updated={CU}, Skipped={CS}\n" +
+       "WorkItems:  Inserted={WI}, Updated={WU}, Skipped={WS}\n" +
+       "Customers:  Inserted={CUI}, Updated={CUU}, Skipped={CUS}\n" +
+       "Projects:   Inserted={PI}, Updated={PU}, Skipped={PS}\n" +
+       "SubcontractorWorkItems: Inserted={SWI}, Updated={SWU}, Skipped={SWS}",
+       amsterdamNow,
+       result.Categories.Inserted.Count,
+       result.Categories.Updated.Count,
+       result.Categories.Skipped.Count,
+       result.WorkItems.Inserted.Count,
+       result.WorkItems.Updated.Count,
+       result.WorkItems.Skipped.Count,
+       result.Customers.Inserted.Count,
+       result.Customers.Updated.Count,
+       result.Customers.Skipped.Count,
+       result.Projects.Inserted.Count,
+       result.Projects.Updated.Count,
+       result.Projects.Skipped.Count,
+       result.SubcontractorWorkItems.Inserted.Count,
+       result.SubcontractorWorkItems.Updated.Count,
+       result.SubcontractorWorkItems.Skipped.Count
+   );
 
                 return Ok(new
                 {
                     Message = "Full data transfer complete.",
-
                     Categories = new
                     {
                         Inserted = result.Categories.Inserted.Count,
                         Updated = result.Categories.Updated.Count,
                         Skipped = result.Categories.Skipped.Count
                     },
-
                     WorkItems = new
                     {
                         Inserted = result.WorkItems.Inserted.Count,
                         Updated = result.WorkItems.Updated.Count,
                         Skipped = result.WorkItems.Skipped.Count
                     },
-
                     Customers = new
                     {
                         Inserted = result.Customers.Inserted.Count,
                         Updated = result.Customers.Updated.Count,
                         Skipped = result.Customers.Skipped.Count
                     },
-
                     Projects = new
                     {
                         Inserted = result.Projects.Inserted.Count,
                         Updated = result.Projects.Updated.Count,
                         Skipped = result.Projects.Skipped.Count
+                    },
+                    SubcontractorWorkItems = new
+                    {
+                        Inserted = result.SubcontractorWorkItems.Inserted.Count,
+                        Updated = result.SubcontractorWorkItems.Updated.Count,
+                        Skipped = result.SubcontractorWorkItems.Skipped.Count
                     }
                 });
 

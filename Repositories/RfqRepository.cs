@@ -285,10 +285,14 @@ VALUES
         }
 
 
+
+
         public async Task SaveSubcontractorWorkItemMappingAsync(
-     Guid subcontractorId,
-     Guid workItemId,
-     string createdBy)
+    Guid subcontractorId,
+    Guid workItemId,
+    long subcontractorErpId,
+    long workItemErpId,
+    string createdBy)
         {
             const string sql = @"
 IF NOT EXISTS (
@@ -300,6 +304,8 @@ INSERT INTO SubcontractorWorkItemsMapping
 (
     SubcontractorID,
     WorkItemID,
+    SubcontractorERP_ID,
+    WorkItemERP_ID,
     CreatedBy,
     CreatedOn
 )
@@ -307,6 +313,8 @@ VALUES
 (
     @SubcontractorID,
     @WorkItemID,
+    @SubcontractorERP_ID,
+    @WorkItemERP_ID,
     @CreatedBy,
     GETDATE()
 );";
@@ -315,10 +323,23 @@ VALUES
             {
                 SubcontractorID = subcontractorId,
                 WorkItemID = workItemId,
+                SubcontractorERP_ID = subcontractorErpId,
+                WorkItemERP_ID = workItemErpId,
                 CreatedBy = createdBy
             });
         }
 
+        public async Task<long> GetSubcontractorErpIdAsync(Guid subcontractorId)
+        {
+            const string sql = @"SELECT ERP_ID FROM Subcontractors WHERE SubcontractorID = @id";
+            return await _connection.QueryFirstOrDefaultAsync<long>(sql, new { id = subcontractorId });
+        }
+
+        public async Task<long> GetWorkItemErpIdAsync(Guid workItemId)
+        {
+            const string sql = @"SELECT ERP_ID FROM WorkItems WHERE WorkItemID = @id";
+            return await _connection.QueryFirstOrDefaultAsync<long>(sql, new { id = workItemId });
+        }
 
         public async Task<bool> SaveOrUpdateRfqSubcontractorMappingAsync(
     Guid rfqId,

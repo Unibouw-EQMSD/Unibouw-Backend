@@ -78,7 +78,7 @@ namespace UnibouwAPI.Controllers
                 if (categoryId <= 0)
                     return BadRequest(new { message = "Invalid category ID." });
 
-                var items = await _repository.GetAllWorkItems();
+                var items = await _repository.GetAllWorkItems(onlyActive);
 
                 // Filter by category
                 var filteredItems = items.Where(w => w.CategoryID == categoryId);

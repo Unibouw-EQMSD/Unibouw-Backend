@@ -72,15 +72,15 @@ namespace UnibouwAPI.Repositories
         public async Task<IEnumerable<SubcontractorWorkItemMapping>> GetAllSubcontractorWorkItemMapping(bool onlyActive = false)
         {
             var query = @"
-        SELECT DISTINCT
-            m.WorkItemID,
-            m.SubcontractorID,
-            s.Name AS SubcontractorName,
-            w.Name AS WorkItemName
-        FROM SubcontractorWorkItemsMapping m
-        INNER JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
-        INNER JOIN Subcontractors s ON m.SubcontractorID = s.SubcontractorID
-        WHERE s.IsDeleted = 0";
+        SELECT 
+    s.SubcontractorID,
+    w.WorkItemID
+FROM SubcontractorWorkItemsMapping m
+INNER JOIN Subcontractors s 
+    ON s.ERP_ID = m.SubcontractorERP_ID
+INNER JOIN WorkItems w 
+    ON w.ERP_ID = m.WorkItemERP_ID
+WHERE s.IsDeleted = 0";
 
             if (onlyActive)
                 query += " AND s.IsActive = 1";
@@ -88,17 +88,22 @@ namespace UnibouwAPI.Repositories
             return await _connection.QueryAsync<SubcontractorWorkItemMapping>(query);
         }
 
-        public async Task<List<SubcontractorWorkItemMapping?>> GetSubcontractorWorkItemMappingById(Guid id)
+        public async Task<List<SubcontractorWorkItemMapping>> GetSubcontractorWorkItemMappingById(Guid id)
         {
             var query = @"
-            SELECT 
-                m.*, 
-                s.Name AS SubcontractorName,
-                w.Name AS WorkItemName
-            FROM SubcontractorWorkItemsMapping m
-            LEFT JOIN WorkItems w ON m.WorkItemID = w.WorkItemID
-            LEFT JOIN Subcontractors s ON m.SubcontractorID = s.SubcontractorID
-            WHERE m.SubcontractorID = @Id AND s.IsActive = 1";
+    SELECT 
+        s.SubcontractorID,
+        w.WorkItemID,
+        s.Name AS SubcontractorName,
+        w.Name AS WorkItemName
+    FROM SubcontractorWorkItemsMapping m
+    INNER JOIN Subcontractors s 
+        ON s.ERP_ID = m.SubcontractorERP_ID
+    INNER JOIN WorkItems w 
+        ON w.ERP_ID = m.WorkItemERP_ID
+    WHERE s.SubcontractorID = @Id 
+      AND s.IsActive = 1
+      AND s.IsDeleted = 0";
 
             var result = await _connection.QueryAsync<SubcontractorWorkItemMapping>(query, new { Id = id });
             return result.ToList();
@@ -107,13 +112,38 @@ namespace UnibouwAPI.Repositories
         public async Task<bool> CreateSubcontractorWorkItemMapping(SubcontractorWorkItemMapping mapping)
         {
             var query = @"
-                INSERT INTO SubcontractorWorkItemsMapping (SubcontractorID, WorkItemID)
-                VALUES (@SubcontractorID, @WorkItemID);
-            ";
+        INSERT INTO SubcontractorWorkItemsMapping 
+        (
+            SubcontractorID,
+            SubcontractorERP_ID,
+            WorkItemID,
+            WorkItemERP_ID
+        )
+        SELECT 
+            s.SubcontractorID,
+            s.ERP_ID,
+            w.WorkItemID,
+            w.ERP_ID
+        FROM Subcontractors s
+        JOIN WorkItems w ON w.WorkItemID = @WorkItemId
+        WHERE s.SubcontractorID = @SubcontractorId
+          AND s.ERP_ID IS NOT NULL
+          AND w.ERP_ID IS NOT NULL;
+    ";
 
             using (var connection = new SqlConnection(_connectionString))
             {
-                var rows = await connection.ExecuteAsync(query, mapping);
+                var parameters = new
+                {
+                    SubcontractorId = mapping.SubcontractorID,
+                    WorkItemId = mapping.WorkItemID
+                };
+
+                var rows = await connection.ExecuteAsync(query, parameters);
+
+                if (rows == 0)
+                    throw new Exception("No matching Subcontractor or WorkItem found OR ERP_ID is NULL");
+
                 return rows > 0;
             }
         }

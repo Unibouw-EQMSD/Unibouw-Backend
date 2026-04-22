@@ -138,9 +138,15 @@ namespace UnibouwAPI.Controllers
             try
             {
                 var items = await _repositoryCommon.GetAllSubcontractorWorkItemMapping(onlyActive);
-                if (items == null || !items.Any())
-                    return NotFound(new { message = "No subcontractor work item mappings found.", data = Array.Empty<SubcontractorWorkItemMapping>() });
-                return Ok(new { count = items.Count(), data = items });
+
+                return Ok(new
+                {
+                    count = items?.Count() ?? 0,
+                    message = (items != null && items.Any())
+                        ? "Data fetched successfully."
+                        : "No subcontractor work item mappings found.",
+                    data = items ?? new List<SubcontractorWorkItemMapping>()
+                });
             }
             catch (Exception ex)
             {
