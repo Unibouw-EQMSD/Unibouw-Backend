@@ -26,7 +26,7 @@ namespace UnibouwAPI.Controllers
             return Ok(new { data = items });
         }
 
-        [HttpDelete("{projectDocumentId:guid}")]
+        [HttpPost("{projectDocumentId:guid}/delete")]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteProjectDoc(Guid projectId, Guid projectDocumentId)
         {

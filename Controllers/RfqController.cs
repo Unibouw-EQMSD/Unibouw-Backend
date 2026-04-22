@@ -263,120 +263,140 @@ namespace UnibouwAPI.Controllers
             }
 
         [HttpPost("update")]
-[Authorize]
-public async Task<IActionResult> UpdateRfqPost(
-    [FromQuery] Guid rfqId,
-    [FromBody] Rfq rfq,
-    [FromQuery] List<Guid> subcontractorIds,
-    [FromQuery] List<Guid> workItems,
-    [FromServices] IProjectDocuments docs,
-    [FromServices] RfqDocumentNotifier notifier,
-    [FromQuery] bool sendEmail = false,
-    [FromQuery] string? language = "en"
-)
-{
-    try
-    {
-        if (rfq == null || rfqId == Guid.Empty)
-            return BadRequest(new { message = "RFQ data and ID are required." });
-
-        rfq.RfqID = rfqId;
-        rfq.RfqSent = sendEmail ? 1 : rfq.RfqSent;
-        rfq.Status = sendEmail ? "Sent" : rfq.Status;
-
-        var rfqUpdated = await _repository.UpdateRfqMainAsync(rfq);
-        if (!rfqUpdated)
-            return NotFound(new { message = $"RFQ with ID {rfqId} not found." });
-
-        if (workItems?.Any() == true)
-            await _repository.UpdateRfqWorkItemsAsync(rfqId, workItems);
-
-        if (rfq.SubcontractorDueDates?.Any() == true)
+        [Authorize]
+        public async Task<IActionResult> UpdateRfqPost(
+     [FromQuery] Guid rfqId,
+     [FromBody] Rfq rfq,
+     [FromQuery] List<Guid> subcontractorIds,
+     [FromQuery] List<Guid> workItems,
+     [FromServices] IProjectDocuments docs,
+     [FromServices] RfqDocumentNotifier notifier,
+     [FromQuery] bool sendEmail = false,
+     [FromQuery] string? language = "en"
+ )
         {
-            foreach (var sub in rfq.SubcontractorDueDates)
+            try
             {
-                if (!sub.DueDate.HasValue)
-                    continue;
-                await _repository.UpdateSubcontractorDueDateAsync(
-                    rfqId,
-                    sub.SubcontractorID,
-                    sub.DueDate.Value
-                );
-            }
-        }
+                if (rfq == null || rfqId == Guid.Empty)
+                    return BadRequest(new { message = "RFQ data and ID are required." });
 
-        // Get user email for logs/notifications
-        var userEmail =
-            User.FindFirst("preferred_username")?.Value ??
-            User.FindFirst("upn")?.Value ??
-            User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ??
-            User.Identity?.Name ??
-            "System";
+                rfq.RfqID = rfqId;
 
-        // Get project name
-        string projectName = rfq.ProjectName ?? "";
+                // ================= ✅ FIXED STATUS LOGIC =================
+                if (sendEmail)
+                {
+                    rfq.RfqSent = 1;
+                    rfq.Status = "Sent";
+                    rfq.SentDate = DateTime.UtcNow;
+                }
+                else
+                {
+                    // 🔥 DO NOT override status
+                    // Respect whatever frontend sends (Sent / Draft)
 
-        // Get work item names if needed (optional, set your own logic)
-        string workItemName = ""; // Or build from workItems
-
-        if (sendEmail)
-        {
-            rfq.SentDate = DateTime.UtcNow;
-
-            var sentEmails = await _emailRepository.SendRfqEmailAsync(new EmailRequest
-            {
-                RfqID = rfqId,
-                SubcontractorIDs = subcontractorIds ?? new(),
-                WorkItems = workItems ?? new(),
-                Subject = "RFQ Invitation - Unibouw",
-                Body = rfq.CustomNote,
-                Language = language
-            });
-
-            foreach (var email in sentEmails)
-            {
-                await _conversationRepo.AddRFQConversationMessageAsync(
-                    new RFQConversationMessage
+                    // Optional safety (prevents null issues)
+                    if (string.IsNullOrEmpty(rfq.Status))
                     {
-                        ProjectID = rfq.ProjectID!.Value,
-                        SubcontractorID = email.SubcontractorIDs.First(),
-                        SenderType = "PM",
-                        MessageText = HtmlToPlainText(email.Body),
-                        MessageDateTime = amsterdamNow,
-                        CreatedBy = userEmail
+                        rfq.Status = "Draft";
                     }
-                );
-            }
-
-            // ---- Notify subs about new docs (spreadsheet logic) ----
-            var linkedDocs = await docs.GetRfqDocumentsAsync(rfqId);
-
-                    await notifier.NotifyForEditRfqDocs(
-               rfq.ProjectID!.Value,
-               rfqId,
-               linkedDocs,
-               userEmail,
-               language
-           );
                 }
 
-        return Ok(new
-        {
-            message = sendEmail
-                ? "RFQ updated successfully and emails sent."
-                : "RFQ updated successfully."
-        });
-    }
-    catch (Exception ex)
-    {
-        _logger.LogError(ex, "Error updating RFQ {RfqId}", rfqId);
-        return StatusCode(500, new
-        {
-            message = "An error occurred while updating the RFQ.",
-            error = ex.Message
-        });
-    }
-}
+                // 🧪 Debug (remove later)
+                _logger.LogInformation($"FINAL STATUS BEFORE SAVE: {rfq.Status}");
+
+                // ================= SAVE MAIN RFQ =================
+                var rfqUpdated = await _repository.UpdateRfqMainAsync(rfq);
+                if (!rfqUpdated)
+                    return NotFound(new { message = $"RFQ with ID {rfqId} not found." });
+
+                // ================= UPDATE WORK ITEMS =================
+                if (workItems?.Any() == true)
+                    await _repository.UpdateRfqWorkItemsAsync(rfqId, workItems);
+
+                // ================= UPDATE DUE DATES =================
+                if (rfq.SubcontractorDueDates?.Any() == true)
+                {
+                    foreach (var sub in rfq.SubcontractorDueDates)
+                    {
+                        if (!sub.DueDate.HasValue) continue;
+
+                        await _repository.UpdateSubcontractorDueDateAsync(
+                            rfqId,
+                            sub.SubcontractorID,
+                            sub.DueDate.Value
+                        );
+                    }
+                }
+
+                // ================= USER INFO =================
+                var userEmail =
+                    User.FindFirst("preferred_username")?.Value ??
+                    User.FindFirst("upn")?.Value ??
+                    User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ??
+                    User.Identity?.Name ??
+                    "System";
+
+                string projectName = rfq.ProjectName ?? "";
+                string workItemName = "";
+
+                // ================= SEND EMAIL (ONLY IF TRUE) =================
+                if (sendEmail)
+                {
+                    var sentEmails = await _emailRepository.SendRfqEmailAsync(new EmailRequest
+                    {
+                        RfqID = rfqId,
+                        SubcontractorIDs = subcontractorIds ?? new(),
+                        WorkItems = workItems ?? new(),
+                        Subject = "RFQ Invitation - Unibouw",
+                        Body = rfq.CustomNote,
+                        Language = language
+                    });
+
+                    foreach (var email in sentEmails)
+                    {
+                        await _conversationRepo.AddRFQConversationMessageAsync(
+                            new RFQConversationMessage
+                            {
+                                ProjectID = rfq.ProjectID!.Value,
+                                SubcontractorID = email.SubcontractorIDs.First(),
+                                SenderType = "PM",
+                                MessageText = HtmlToPlainText(email.Body),
+                                MessageDateTime = amsterdamNow,
+                                CreatedBy = userEmail
+                            }
+                        );
+                    }
+
+                    // ================= DOC NOTIFICATIONS =================
+                    var linkedDocs = await docs.GetRfqDocumentsAsync(rfqId);
+
+                    await notifier.NotifyForEditRfqDocs(
+                        rfq.ProjectID!.Value,
+                        rfqId,
+                        linkedDocs,
+                        userEmail,
+                        language
+                    );
+                }
+
+                return Ok(new
+                {
+                    message = sendEmail
+                        ? "RFQ updated successfully and emails sent."
+                        : "RFQ updated successfully."
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating RFQ {RfqId}", rfqId);
+
+                return StatusCode(500, new
+                {
+                    message = "An error occurred while updating the RFQ.",
+                    error = ex.Message
+                });
+            }
+        }
 
         [HttpPost("save-subcontractor-workitem-mapping")]
         [Authorize]
