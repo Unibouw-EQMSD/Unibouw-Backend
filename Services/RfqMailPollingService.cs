@@ -5,6 +5,8 @@ using Microsoft.Graph;
 using Microsoft.Graph.Models;
 using System.Data;
 using System.Text.RegularExpressions;
+using UnibouwAPI.Models;
+using UnibouwAPI.Repositories;
 using UnibouwAPI.Repositories.Interfaces;
 using UnibouwAPI.Services.Interfaces;
 
@@ -15,13 +17,13 @@ namespace UnibouwAPI.Services
         private readonly IConfiguration _config;
         private readonly IRfqEmailIngestionRepository _repo;
         private readonly ILogger<RfqMailPollingService> _logger;
-
+        private readonly IRFQConversationMessage _conversationRepo;
         private readonly string _connectionString;
 
         public RfqMailPollingService(
             IConfiguration config,
             IRfqEmailIngestionRepository repo,
-            ILogger<RfqMailPollingService> logger)
+            ILogger<RfqMailPollingService> logger, IRFQConversationMessage conversationRepo)
         {
             _config = config;
             _connectionString = config.GetConnectionString("UnibouwDbConnection")
@@ -29,6 +31,7 @@ namespace UnibouwAPI.Services
 
             _repo = repo;
             _logger = logger;
+            _conversationRepo = conversationRepo;
         }
 
         private GraphServiceClient CreateGraphClient()
@@ -175,31 +178,58 @@ namespace UnibouwAPI.Services
         }
 
 
-        private async Task TryIngestSentAsync(GraphServiceClient graph, string pmMailbox, Message msg, CancellationToken ct)
+        private async Task TryIngestSentAsync(
+       GraphServiceClient graph,
+       string pmMailbox,
+       Message msg,
+       CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(msg.ConversationId))
                 return;
 
-            // Parse token as usual (projectId, subId, rfqId, found)...
+            // 1️⃣ Parse token
             var (projectId, subId, rfqId, found) = ParseToken(msg.Subject);
-            if (!found) (projectId, subId, rfqId, found) = ParseToken(msg.BodyPreview);
+            if (!found)
+                (projectId, subId, rfqId, found) = ParseToken(msg.BodyPreview);
+
             if (!found)
             {
                 var full = await graph.Users[pmMailbox].Messages[msg.Id].GetAsync(r =>
                 {
-                    r.QueryParameters.Select = new[] { "id", "subject", "bodyPreview", "body", "receivedDateTime", "sentDateTime", "conversationId" };
+                    r.QueryParameters.Select = new[]
+                    {
+                "id",
+                "subject",
+                "bodyPreview",
+                "body",
+                "receivedDateTime",
+                "sentDateTime",
+                "conversationId",
+                "from"
+            };
                 }, ct);
+
                 (projectId, subId, rfqId, found) = ParseToken(full?.Subject);
                 if (!found) (projectId, subId, rfqId, found) = ParseToken(full?.BodyPreview);
                 if (!found) (projectId, subId, rfqId, found) = ParseToken(full?.Body?.Content);
             }
+
             if (!found || !projectId.HasValue || !subId.HasValue || !rfqId.HasValue)
                 return;
 
-            var anchorOk = await _repo.AnchorExistsAsync(projectId.Value, subId.Value, rfqId.Value, pmMailbox, msg.ConversationId);
+            // ✅ 2️⃣ RELAX anchor check for SentItems
+            var anchorOk = await _repo.AnchorExistsAsync(
+                projectId.Value,
+                subId.Value,
+                rfqId.Value,
+                pmMailbox,
+                null   // ✅ ignore ConversationId for sent mails
+            );
+
             if (!anchorOk)
                 return;
 
+            // 3️⃣ Skip ONLY original RFQ send (not replies)
             var subj = (msg.Subject ?? "").Trim();
             if (subj.StartsWith("RFQ –", StringComparison.OrdinalIgnoreCase) &&
                 !subj.StartsWith("RE:", StringComparison.OrdinalIgnoreCase) &&
@@ -208,20 +238,20 @@ namespace UnibouwAPI.Services
                 return;
             }
 
-            var fromEmail = msg.From?.EmailAddress?.Address ?? "";
-            if (fromEmail.Equals(pmMailbox, StringComparison.OrdinalIgnoreCase))
-                return;
+            // ✅ 4️⃣ DO NOT skip self‑sent replies
+            // (self-sent check intentionally removed)
 
-            // Use full body content, or fallback to BodyPreview
+            // 5️⃣ Extract reply body
             var rawText = msg.Body?.Content ?? msg.BodyPreview ?? "";
-            // Convert <br> tags to newlines before stripping HTML
-            rawText = rawText.Replace("<br>", "\n", StringComparison.OrdinalIgnoreCase)
-                             .Replace("<br/>", "\n", StringComparison.OrdinalIgnoreCase)
-                             .Replace("<br />", "\n", StringComparison.OrdinalIgnoreCase);
+            rawText = rawText
+                .Replace("<br>", "\n", StringComparison.OrdinalIgnoreCase)
+                .Replace("<br/>", "\n", StringComparison.OrdinalIgnoreCase)
+                .Replace("<br />", "\n", StringComparison.OrdinalIgnoreCase);
+
             var plainText = StripHtml(rawText);
             var replyText = ExtractTopReply(plainText);
 
-            // Fetch official details from DB
+            // 6️⃣ Fetch official RFQ details
             using var conn = new SqlConnection(_connectionString);
             var details = await conn.QuerySingleAsync<dynamic>(
                 @"SELECT 
@@ -229,30 +259,43 @@ namespace UnibouwAPI.Services
             p.Name AS ProjectName,
             r.RfqNumber,
             rsm.DueDate
-        FROM Projects p
-        INNER JOIN Rfq r ON r.ProjectID = p.ProjectID
-        INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = r.RfqID
-        WHERE p.ProjectID = @ProjectID AND r.RfqID = @RfqID AND rsm.SubcontractorID = @SubID",
-                new { ProjectID = projectId.Value, RfqID = rfqId.Value, SubID = subId.Value }
+          FROM Projects p
+          INNER JOIN Rfq r ON r.ProjectID = p.ProjectID
+          INNER JOIN RfqSubcontractorMapping rsm ON rsm.RfqID = r.RfqID
+          WHERE p.ProjectID = @ProjectID
+            AND r.RfqID = @RfqID
+            AND rsm.SubcontractorID = @SubID",
+                new
+                {
+                    ProjectID = projectId.Value,
+                    RfqID = rfqId.Value,
+                    SubID = subId.Value
+                }
             );
+
             string projectLine = $"Project: {details.ProjectCode} - {details.ProjectName}";
             string rfqLine = $"RFQ No: {details.RfqNumber}";
             string dueLine = $"Due Date: {((DateTime)details.DueDate):dd-MMM-yyyy}";
             string officialDetails = $"{projectLine}\n{rfqLine}\n{dueLine}";
 
-            // Combine reply and official details
             string messageToLog = $"{replyText}\n\n---\n{officialDetails}";
 
             var sentUtc = (msg.SentDateTime ?? msg.ReceivedDateTime)!.Value.UtcDateTime;
             var sentAms = ToAmsterdamTime(sentUtc);
 
-            await _repo.InsertPmSentToConversationAsync(
-                projectId.Value,
-                subId.Value,
-                msg.Subject ?? "",
-                messageToLog,
-                sentAms,
-                pmMailbox
+            // ✅ 7️⃣ INSERT INTO RFQConversationMessage
+            await _conversationRepo.AddRFQConversationMessageAsync(
+                new RFQConversationMessage
+                {
+                    ProjectID = projectId.Value,
+                    SubcontractorID = subId.Value,
+                    SenderType = "PM",
+                    Subject = msg.Subject ?? "",
+                    MessageText = messageToLog,
+                    MessageDateTime = sentAms,
+                    CreatedBy = pmMailbox,
+                    Tag = "Outgoing - Reply"
+                }
             );
         }
         private string StripHtml(string html)

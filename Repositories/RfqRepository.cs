@@ -641,21 +641,77 @@ VALUES (@RfqID, @SubId, @DueDate);";
         }
 
         // ⭐ GLOBAL MAPPING IMPLEMENTATION
-        public async Task EnsureGlobalSubcontractorWorkItemMapping(Guid workItemId, Guid subcontractorId)
+        public async Task EnsureGlobalSubcontractorWorkItemMapping(
+     Guid workItemId,
+     Guid subcontractorId)
         {
-            const string query = @"
-                IF NOT EXISTS (
-                    SELECT 1 
-                    FROM SubcontractorWorkItemsMapping 
-                    WHERE WorkItemID = @WorkItemID AND SubcontractorID = @SubcontractorID
-                )
-                BEGIN
-                    INSERT INTO SubcontractorWorkItemsMapping (WorkItemID, SubcontractorID)
-                    VALUES (@WorkItemID, @SubcontractorID);
-                END";
-
             using var connection = _connection;
-            await connection.ExecuteAsync(query, new { WorkItemID = workItemId, SubcontractorID = subcontractorId });
+
+            const string erpQuery = @"
+        SELECT 
+            s.ERP_ID AS SubcontractorERP_ID,
+            w.ERP_ID AS WorkItemERP_ID
+        FROM Subcontractors s
+        INNER JOIN WorkItems w 
+            ON w.WorkItemID = @WorkItemID
+        WHERE s.SubcontractorID = @SubcontractorID
+          AND s.IsDeleted = 0
+          AND w.IsDeleted = 0;
+    ";
+
+            var erp = await connection.QueryFirstOrDefaultAsync<(long SubcontractorERP_ID, long WorkItemERP_ID)>(
+                erpQuery,
+                new
+                {
+                    WorkItemID = workItemId,
+                    SubcontractorID = subcontractorId
+                }
+            );
+
+            if (erp.SubcontractorERP_ID <= 0 || erp.WorkItemERP_ID <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"ERP mapping missing for SubcontractorID={subcontractorId}, WorkItemID={workItemId}"
+                );
+            }
+
+            const string insertQuery = @"
+        IF NOT EXISTS (
+            SELECT 1
+            FROM SubcontractorWorkItemsMapping
+            WHERE SubcontractorID = @SubcontractorID
+              AND WorkItemID = @WorkItemID
+        )
+        BEGIN
+            INSERT INTO SubcontractorWorkItemsMapping
+            (
+                SubcontractorID,
+                WorkItemID,
+                SubcontractorERP_ID,
+                WorkItemERP_ID,
+                CreatedOn
+            )
+            VALUES
+            (
+                @SubcontractorID,
+                @WorkItemID,
+                @SubcontractorERP_ID,
+                @WorkItemERP_ID,
+                GETDATE()
+            );
+        END;
+    ";
+
+            await connection.ExecuteAsync(
+                insertQuery,
+                new
+                {
+                    SubcontractorID = subcontractorId,
+                    WorkItemID = workItemId,
+                    SubcontractorERP_ID = erp.SubcontractorERP_ID,
+                    WorkItemERP_ID = erp.WorkItemERP_ID
+                }
+            );
         }
         public async Task<bool?> DeleteRfqAsync(Guid rfqId, string deletedBy)
         {
