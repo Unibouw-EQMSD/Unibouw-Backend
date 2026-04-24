@@ -11,6 +11,7 @@ using UnibouwAPI.Services.Interfaces;
 using UnibouwAPI.Workers;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseWindowsService();
 
 // Add controllers
 builder.Services.AddControllers();
