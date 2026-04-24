@@ -2,6 +2,7 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using System.Net;
+using UnibouwAPI.Models;
 using UnibouwAPI.Repositories;
 using UnibouwAPI.Repositories.Interfaces;
 
@@ -126,31 +127,44 @@ ORDER BY wi.Number;
             }
         }
 
+
         public async Task NotifyForEditRfqDocs(
-    Guid projectId,
-    Guid rfqId,
-    IEnumerable<dynamic> linkedDocs,
-    string userEmail,
-    string? language = "en")
+            Guid projectId,
+            Guid rfqId,
+            IEnumerable<ProjectDocumentDto> linkedDocs,
+            string userEmail,
+            string? language = "en")
+
         {
-            var (projectName, projectNumber, rfqNumber, workItemsText) = await GetRfqDetailsAsync(rfqId);
-            _logger.LogInformation("NotifyForEditRfqDocs: projectId={ProjectId}, rfqId={RfqId}, docsCount={DocsCount}, user={User}",
+            var (projectName, projectNumber, rfqNumber, workItemsText) =
+                await GetRfqDetailsAsync(rfqId);
+
+            _logger.LogInformation(
+                "NotifyForEditRfqDocs: projectId={ProjectId}, rfqId={RfqId}, docsCount={DocsCount}, user={User}",
                 projectId, rfqId, linkedDocs.Count(), userEmail);
 
             foreach (var doc in linkedDocs)
             {
                 var subs = (await _repo.GetEligibleSubcontractorsForRfqAsync(rfqId)).ToList();
+
                 foreach (var sub in subs)
                 {
-                    // ✅ Only check notification log for idempotency
-                    var alreadyNotified = await _repo.WasNotificationSentAsync(rfqId, doc.ProjectDocumentID, sub.SubcontractorID);
+                    var alreadyNotified = await _repo.WasNotificationSentAsync(
+                        rfqId,
+                        doc.ProjectDocumentID,
+                        sub.SubcontractorID
+                    );
+
                     if (alreadyNotified)
                     {
-                        _logger.LogInformation("NOTIFY: SKIP sub {Sub}, already notified for this RFQ/doc", sub.SubcontractorID);
+                        _logger.LogInformation(
+                            "NOTIFY: SKIP sub {Sub}, already notified for this RFQ/doc",
+                            sub.SubcontractorID);
                         continue;
                     }
 
                     var subject = "RFQ Update – New Document Added for Review";
+
                     var htmlBody = $@"
 <p>Dear Subcontractor,</p>
 <p>A new document has been added to the project and is now relevant to the RFQ previously shared with you.</p>
@@ -159,17 +173,25 @@ ORDER BY wi.Number;
 <strong>Project:</strong> {WebUtility.HtmlEncode(projectNumber)} - {WebUtility.HtmlEncode(projectName)}<br/>
 <strong>RFQ Reference:</strong> {WebUtility.HtmlEncode(rfqNumber)}<br/>
 <strong>Work Item(s):</strong> {WebUtility.HtmlEncode(workItemsText)}<br/>
-<strong>New Document(s) Added:</strong> {WebUtility.HtmlEncode(doc.Filename)}
+<strong>New Document(s) Added:</strong> {WebUtility.HtmlEncode(doc.FileName)}  <!-- ✅ FIX -->
 </p>
 <p>Best regards<br/>QMS Team</p>";
 
                     try
                     {
                         await _email.SendSimpleEmailAsync(sub.Email!, subject, htmlBody);
-                        await _repo.LogNotificationAsync(rfqId, doc.ProjectDocumentID, sub.SubcontractorID);
+                        await _repo.LogNotificationAsync(
+                            rfqId,
+                            doc.ProjectDocumentID,
+                            sub.SubcontractorID
+                        );
                     }
                     catch (Exception ex)
                     {
+                        _logger.LogError(
+                            ex,
+                            "Failed to send document notification. RFQ={RfqId}, Doc={DocId}, Sub={SubId}",
+                            rfqId, doc.ProjectDocumentID, sub.SubcontractorID);
                     }
                 }
             }

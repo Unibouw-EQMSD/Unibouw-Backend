@@ -300,13 +300,22 @@ namespace UnibouwAPI.Services
         }
         private string StripHtml(string html)
         {
-            if (string.IsNullOrWhiteSpace(html)) return "";
-            html = html.Replace("<br>", "\n", StringComparison.OrdinalIgnoreCase)
-                       .Replace("<br/>", "\n", StringComparison.OrdinalIgnoreCase)
-                       .Replace("<br />", "\n", StringComparison.OrdinalIgnoreCase);
-            html = Regex.Replace(html, @"<\s*p\s*>", "\n\n", RegexOptions.IgnoreCase);
-            return Regex.Replace(html, "<.*?>", string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(html))
+                return string.Empty;
+
+            // ✅ Handle REAL HTML line breaks
+            html = html
+                .Replace("<br>", "\n", StringComparison.OrdinalIgnoreCase)
+                .Replace("<br/>", "\n", StringComparison.OrdinalIgnoreCase)
+                .Replace("<br />", "\n", StringComparison.OrdinalIgnoreCase)
+                .Replace("</p>", "\n\n", StringComparison.OrdinalIgnoreCase);
+
+            // ✅ Remove ALL real HTML tags
+            html = Regex.Replace(html, "<.*?>", string.Empty, RegexOptions.Singleline);
+
+            return html.Trim();
         }
+
 
         private string ExtractTopReply(string? text)
         {
