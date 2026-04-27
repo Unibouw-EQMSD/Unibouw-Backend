@@ -262,15 +262,14 @@ GROUP BY
                         subcontractor.IsDeleted = false;
 
                         long subcontractorErpId = await connection.ExecuteScalarAsync<long>(
-                            @"INSERT INTO Subcontractors 
-                      (SubcontractorID, Name, Rating, Email, Location, Country, OfficeAddress, BillingAddress, RegisteredDate, PersonID,
-                       IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted, RemindersSent)
-                      VALUES 
-                      (@SubcontractorID, @Name, @Rating, @Email, @Location, @Country, @OfficeAddress, @BillingAddress, @RegisteredDate, @PersonID,
-                       @IsActive, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted, @RemindersSent);
-
-                      SELECT CAST(SCOPE_IDENTITY() AS BIGINT);",
-                            subcontractor, transaction);
+     @"INSERT INTO Subcontractors 
+    (SubcontractorID, Name, Rating, Email, Location, Country, OfficeAddress, BillingAddress, RegisteredDate, PersonID,
+     IsActive, CreatedOn, CreatedBy, ModifiedOn, ModifiedBy, DeletedOn, DeletedBy, IsDeleted, RemindersSent)
+    OUTPUT INSERTED.ERP_ID
+    VALUES 
+    (@SubcontractorID, @Name, @Rating, @Email, @Location, @Country, @OfficeAddress, @BillingAddress, @RegisteredDate, @PersonID,
+     @IsActive, @CreatedOn, @CreatedBy, @ModifiedOn, @ModifiedBy, @DeletedOn, @DeletedBy, @IsDeleted, @RemindersSent);",
+     subcontractor, transaction);
 
                         // STEP 5: GET WORK ITEM ERP IDs
                         var workItemErpMap = (await connection.QueryAsync<(Guid WorkItemID, long ERP_ID)>(
