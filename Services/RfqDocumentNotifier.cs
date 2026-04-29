@@ -73,60 +73,144 @@ ORDER BY wi.Number;
                 workItemsText
             );
         }
-
-
         public async Task NotifyAsync(
-       Guid projectId,
-       Guid currentRfqId,
-       Guid projectDocumentId,
-       string docName,
-       string userEmail,
-       string? language = "en")
+            Guid projectId,
+            Guid currentRfqId,
+            Guid projectDocumentId,
+            string docName,
+            string userEmail,
+            string? language = "en")
         {
-            // Fetch details from DB for every call, ensures correct data for each doc
-            var (projectName, projectNumber, rfqNumber, workItemsText) = await GetRfqDetailsAsync(currentRfqId);
-            var subs = (await _repo.GetEligibleSubcontractorsForRfqAsync(currentRfqId)).ToList();
-            _logger.LogInformation("NOTIFY: {Count} eligible subs for RFQ {RFQ} / Doc {Doc}", subs.Count, currentRfqId, docName);
-            if (!subs.Any()) return;
+            // STEP 1: Get ONLY previous SENT RFQs (important rule)
+            var previousRfqs = await _repo.GetPreviousSentRfqsMissingDocumentAsync(
+                projectId,
+                currentRfqId,
+                projectDocumentId
+            );
 
-            foreach (var sub in subs)
+            if (previousRfqs == null || !previousRfqs.Any())
             {
-                // ❌ Remove all "already had doc" checks!
-                // ✅ Only check if already notified
-                var alreadyNotified = await _repo.WasNotificationSentAsync(currentRfqId, projectDocumentId, sub.SubcontractorID);
-                if (alreadyNotified)
+                _logger.LogInformation(
+                    "NOTIFY: No eligible previous RFQs found. No notification triggered."
+                );
+                return;
+            }
+
+            foreach (var rfqId in previousRfqs)
+            {
+                // STEP 2: Load RFQ details
+                var (projectName, projectNumber, rfqNumber, _) =
+                    await GetRfqDetailsAsync(rfqId);
+
+                // STEP 3: Get eligible subcontractors (already filtered in SQL)
+                var rows = (await _repo.GetEligibleSubcontractorsForRfqAsync(rfqId)).ToList();
+
+                if (!rows.Any())
                 {
-                    _logger.LogInformation("NOTIFY: SKIP sub {Sub}, already notified for this RFQ/doc", sub.SubcontractorID);
+                    _logger.LogInformation(
+                        "NOTIFY: No eligible subcontractors for RFQ {RfqId}",
+                        rfqId
+                    );
                     continue;
                 }
 
-                var subject = "RFQ Update – New Document Added for Review";
-                var htmlBody = $@"
+                // STEP 4: Group by subcontractor
+                var grouped = rows.GroupBy(x => new { x.SubcontractorID, x.Email });
+
+                foreach (var group in grouped)
+                {
+                    var subId = group.Key.SubcontractorID;
+                    var email = group.Key.Email;
+
+                    if (string.IsNullOrWhiteSpace(email))
+                    {
+                        _logger.LogWarning("NOTIFY: Missing email for subcontractor {Sub}", subId);
+                        continue;
+                    }
+
+                    // STEP 5: Prevent duplicate notification
+                    var alreadyNotified = await _repo.WasNotificationSentAsync(
+                        rfqId,
+                        projectDocumentId,
+                        subId
+                    );
+
+                    if (alreadyNotified)
+                    {
+                        _logger.LogInformation("NOTIFY: SKIP already sent sub {Sub}", subId);
+                        continue;
+                    }
+
+                    // STEP 6: Work item list
+                    var allowedStatuses = new HashSet<string>
+{
+    "Interested",
+    "Maybe Later",
+    "Viewed",
+    "Not Responded"
+};
+
+                    var workItemsText = string.Join(", ",
+                        group
+                            .Where(w =>
+                                !string.IsNullOrWhiteSpace(w.RfqResponseStatusName) &&
+                                allowedStatuses.Contains(w.RfqResponseStatusName.Trim())
+                            )
+                            .GroupBy(w => w.WorkItemID)
+                            .Select(g => g.First())
+                            .Select(w => $"{w.WorkItemNumber} - {w.WorkItemName}")
+                    );
+
+                    // STEP 7: Email body (STRICT AC TEMPLATE)
+                    var subject = "Re: RFQ Update – New Document Added for Review";
+
+                    var htmlBody = $@"
 <p>Dear Subcontractor,</p>
+
 <p>A new document has been added to the project and is now relevant to the RFQ previously shared with you.</p>
-<p>Please review the newly added document using the RFQ link shared earlier and consider it while preparing or updating your quotation.</p>
+
+<p>Please review the newly added document using the same RFQ link shared earlier and consider it while preparing or updating your quotation.</p>
+
 <p>
 <strong>Project:</strong> {WebUtility.HtmlEncode(projectNumber)} - {WebUtility.HtmlEncode(projectName)}<br/>
 <strong>RFQ Reference:</strong> {WebUtility.HtmlEncode(rfqNumber)}<br/>
 <strong>Work Item(s):</strong> {WebUtility.HtmlEncode(workItemsText)}<br/>
-<strong>New Document(s) Added:</strong> {WebUtility.HtmlEncode(docName)}
+<strong>New Document:</strong> {WebUtility.HtmlEncode(docName)}
 </p>
+
+<p>Kindly review the document and proceed accordingly.</p>
+
 <p>Best regards<br/>QMS Team</p>";
 
-                _logger.LogInformation("NOTIFY: Sending notification to {Email} for doc {Doc}", sub.Email, docName);
-                try
-                {
-                    await _email.SendSimpleEmailAsync(sub.Email!, subject, htmlBody);
-                    await _repo.LogNotificationAsync(currentRfqId, projectDocumentId, sub.SubcontractorID);
-                    _logger.LogInformation("NOTIFY: Notification logged for RFQ {RFQ} Doc {Doc} Sub {Sub}", currentRfqId, projectDocumentId, sub.SubcontractorID);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "NOTIFY: Failed to send notification to {Email} for doc {Doc}", sub.Email, docName);
+                    try
+                    {
+                        // STEP 8: Send email
+                        await _email.SendSimpleEmailAsync(email, subject, htmlBody);
+
+                        // STEP 9: Log notification (CRITICAL FOR STOPPING SECOND RFQ DUPES)
+                        await _repo.LogNotificationAsync(
+                            rfqId,
+                            projectDocumentId,
+                            subId
+                        );
+
+                        _logger.LogInformation(
+                            "NOTIFY: Sent successfully to {Email} for RFQ {RfqId}",
+                            email,
+                            rfqId
+                        );
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex,
+                            "NOTIFY FAILED for {Email} RFQ {RfqId}",
+                            email,
+                            rfqId
+                        );
+                    }
                 }
             }
         }
-
 
         public async Task NotifyForEditRfqDocs(
             Guid projectId,

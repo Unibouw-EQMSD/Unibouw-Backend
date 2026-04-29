@@ -559,12 +559,7 @@ ORDER BY wi.Name, s.Name;
                         string status = row.StatusName != null
                             ? row.StatusName.ToString()
                             : "Not Responded";
-
-                        bool hasResponse =
-                            submissionTime.HasValue ||
-                            row.HasDocument == 1 ||
-                            quoteAmount.HasValue;
-
+                        bool hasResponse = !string.IsNullOrEmpty(status);
                         DateTime finalDate = submissionTime ?? rfqCreatedDate;
 
                         var indiaZone = TimeZoneInfo.FindSystemTimeZoneById("India Standard Time");
@@ -586,9 +581,9 @@ ORDER BY wi.Name, s.Name;
                             rfqId = g.Key.RfqID.ToString(),
 
                             responded = hasResponse,
-                            interested = hasResponse && status == "Interested",
-                            maybeLater = hasResponse && status == "Maybe Later",
-                            notInterested = hasResponse && status == "Not Interested",
+                            interested = status == "Interested",
+                            maybeLater = status == "Maybe Later",
+                            notInterested = status == "Not Interested",
                             viewed = viewed,
 
                             quote = quoteAmount?.ToString("0.00") ?? "—",
@@ -699,9 +694,9 @@ ORDER BY wi.Name, s.Name;
                     documentId = r.DocumentId != null ? r.DocumentId.ToString() : null,
 
                     responded = hasResponse,
-                    interested = hasResponse && status == "Interested",
-                    maybeLater = hasResponse && status == "Maybe Later",
-                    notInterested = hasResponse && status == "Not Interested",
+                    interested = status == "Interested",
+                    maybeLater = status == "Maybe Later",
+                    notInterested = status == "Not Interested",
                     viewed = r.Viewed != null && r.Viewed == true,
 
                     submissionDateTime = amsterdamTime.ToString("dd-MM-yyyy, HH:mm"),

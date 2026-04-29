@@ -841,17 +841,20 @@ OUTPUT $action, source.PersonID;";
 
             return missingSubcontractors;
         }
+       
         public async Task<(
-            List<(long SubcontractorERP_ID, long WorkItemERP_ID)> Inserted,
-            List<(long SubcontractorERP_ID, long WorkItemERP_ID)> Updated,
-            List<(long SubcontractorERP_ID, long WorkItemERP_ID)> Skipped
-        )> SyncSubcontractorWorkItemsMappingAsync()
+     List<(long SubcontractorERP_ID, long WorkItemERP_ID)> Inserted,
+     List<(long SubcontractorERP_ID, long WorkItemERP_ID)> Updated,
+     List<(long SubcontractorERP_ID, long WorkItemERP_ID)> Skipped
+ )> SyncSubcontractorWorkItemsMappingAsync()
         {
             // Step 1: Read all mappings from DWH
             IEnumerable<(long SubcontractorERP_ID, long WorkItemERP_ID, DateTime? CreatedOn, string CreatedBy)> sourceData;
+
             using (var sourceConn = new SqlConnection(_dwhConnection))
             {
                 await sourceConn.OpenAsync();
+
                 const string selectQuery = @"
             SELECT
                 SubcontractorID AS SubcontractorERP_ID,
@@ -859,7 +862,9 @@ OUTPUT $action, source.PersonID;";
                 CreatedOn,
                 CreatedBy
             FROM dbo.SubcontractorWorkItemsMapping";
+
                 sourceData = await sourceConn.QueryAsync<(long, long, DateTime?, string)>(selectQuery);
+
                 Console.WriteLine($"[DWH SYNC] Source mapping rows from DWH: {sourceData.Count()}");
             }
 
@@ -871,20 +876,9 @@ OUTPUT $action, source.PersonID;";
             {
                 await targetConn.OpenAsync();
 
-                // Log row count before
-                var countBefore = await targetConn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM dbo.SubcontractorWorkItemsMapping");
-                Console.WriteLine($"[DWH SYNC] Unibouw mapping table count BEFORE: {countBefore}");
-
-                // Optional: Filter for valid ERP_IDs (in case you ever want to skip bad rows)
-                var validSubcontractorERPIDs = (await targetConn.QueryAsync<long>("SELECT ERP_ID FROM dbo.Subcontractors")).ToHashSet();
-                var validWorkItemERPIDs = (await targetConn.QueryAsync<long>("SELECT ERP_ID FROM dbo.WorkItems")).ToHashSet();
-
-                var filtered = sourceData
-                    .Where(x => validSubcontractorERPIDs.Contains(x.SubcontractorERP_ID)
-                             && validWorkItemERPIDs.Contains(x.WorkItemERP_ID))
-                    .ToList();
-
-                Console.WriteLine($"[DWH SYNC] Filtered mapping rows with valid ERP_IDs: {filtered.Count}");
+                // 🔥 NO FILTER — TAKE ALL DATA
+                var allMappings = sourceData.ToList();
+                Console.WriteLine($"[DWH SYNC] Processing ALL mappings: {allMappings.Count}");
 
                 const string mergeSql = @"
 MERGE dbo.SubcontractorWorkItemsMapping AS target
@@ -895,26 +889,37 @@ USING (
         @CreatedOn AS CreatedOn,
         @CreatedBy AS CreatedBy
 ) AS source
-ON target.SubcontractorERP_ID = source.SubcontractorERP_ID AND target.WorkItemERP_ID = source.WorkItemERP_ID
+ON target.SubcontractorERP_ID = source.SubcontractorERP_ID 
+   AND target.WorkItemERP_ID = source.WorkItemERP_ID
+
 WHEN MATCHED THEN
-    UPDATE SET CreatedOn = source.CreatedOn, CreatedBy = source.CreatedBy
+    UPDATE SET 
+        CreatedOn = source.CreatedOn, 
+        CreatedBy = source.CreatedBy
+
 WHEN NOT MATCHED BY TARGET THEN
     INSERT (SubcontractorERP_ID, WorkItemERP_ID, CreatedOn, CreatedBy)
     VALUES (source.SubcontractorERP_ID, source.WorkItemERP_ID, source.CreatedOn, source.CreatedBy)
+
 OUTPUT $action, source.SubcontractorERP_ID, source.WorkItemERP_ID;
 ";
-                int totalUpserted = 0;
-                foreach (var item in filtered)
+
+                int processed = 0;
+
+                foreach (var item in allMappings)
                 {
                     try
                     {
-                        var result = await targetConn.QueryAsync<(string Action, long SubcontractorERP_ID, long WorkItemERP_ID)>(mergeSql, new
-                        {
-                            SubcontractorERP_ID = item.SubcontractorERP_ID,
-                            WorkItemERP_ID = item.WorkItemERP_ID,
-                            CreatedOn = item.CreatedOn,
-                            CreatedBy = item.CreatedBy
-                        });
+                        var result = await targetConn.QueryAsync<(string Action, long SubcontractorERP_ID, long WorkItemERP_ID)>(
+                            mergeSql,
+                            new
+                            {
+                                SubcontractorERP_ID = item.SubcontractorERP_ID,
+                                WorkItemERP_ID = item.WorkItemERP_ID,
+                                CreatedOn = item.CreatedOn,
+                                CreatedBy = item.CreatedBy
+                            });
+
                         if (!result.Any())
                         {
                             skipped.Add((item.SubcontractorERP_ID, item.WorkItemERP_ID));
@@ -923,50 +928,62 @@ OUTPUT $action, source.SubcontractorERP_ID, source.WorkItemERP_ID;
                         {
                             foreach (var r in result)
                             {
-                                if (r.Action == "INSERT") inserted.Add((r.SubcontractorERP_ID, r.WorkItemERP_ID));
-                                else if (r.Action == "UPDATE") updated.Add((r.SubcontractorERP_ID, r.WorkItemERP_ID));
+                                if (r.Action == "INSERT")
+                                    inserted.Add((r.SubcontractorERP_ID, r.WorkItemERP_ID));
+                                else if (r.Action == "UPDATE")
+                                    updated.Add((r.SubcontractorERP_ID, r.WorkItemERP_ID));
                             }
                         }
-                        totalUpserted++;
+
+                        processed++;
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[DWH SYNC] Error upserting mapping ({item.SubcontractorERP_ID}, {item.WorkItemERP_ID}): {ex.Message}");
+                        Console.WriteLine($"[DWH SYNC] Error mapping ({item.SubcontractorERP_ID}, {item.WorkItemERP_ID}): {ex.Message}");
                         skipped.Add((item.SubcontractorERP_ID, item.WorkItemERP_ID));
                     }
                 }
 
-                Console.WriteLine($"[DWH SYNC] Upserted {totalUpserted} mapping rows. Inserted: {inserted.Count}, Updated: {updated.Count}, Skipped: {skipped.Count}");
+                Console.WriteLine($"[DWH SYNC] Processed: {processed}");
+                Console.WriteLine($"[DWH SYNC] Inserted: {inserted.Count}, Updated: {updated.Count}, Skipped: {skipped.Count}");
 
-                // Step 3: Update GUID columns based on ERP_IDs
+                // 🔁 Step 2: Update GUID references (linking phase)
                 try
                 {
-                    var updatedSids = await targetConn.ExecuteAsync(@"
+                    var updatedSubs = await targetConn.ExecuteAsync(@"
 UPDATE swi
 SET swi.SubcontractorID = s.SubcontractorID
 FROM dbo.SubcontractorWorkItemsMapping swi
-INNER JOIN dbo.Subcontractors s ON swi.SubcontractorERP_ID = s.ERP_ID
+INNER JOIN dbo.Subcontractors s 
+    ON swi.SubcontractorERP_ID = s.ERP_ID
 WHERE swi.SubcontractorID IS NULL OR swi.SubcontractorID <> s.SubcontractorID;
 ");
-                    Console.WriteLine($"[DWH SYNC] Updated SubcontractorID GUIDs: {updatedSids}");
 
-                    var updatedWids = await targetConn.ExecuteAsync(@"
+                    Console.WriteLine($"[DWH SYNC] Updated Subcontractor GUIDs: {updatedSubs}");
+
+                    var updatedWorks = await targetConn.ExecuteAsync(@"
 UPDATE swi
 SET swi.WorkItemID = w.WorkItemID
 FROM dbo.SubcontractorWorkItemsMapping swi
-INNER JOIN dbo.WorkItems w ON swi.WorkItemERP_ID = w.ERP_ID
+INNER JOIN dbo.WorkItems w 
+    ON swi.WorkItemERP_ID = w.ERP_ID
 WHERE swi.WorkItemID IS NULL OR swi.WorkItemID <> w.WorkItemID;
 ");
-                    Console.WriteLine($"[DWH SYNC] Updated WorkItemID GUIDs: {updatedWids}");
+
+                    Console.WriteLine($"[DWH SYNC] Updated WorkItem GUIDs: {updatedWorks}");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[DWH SYNC] Error updating GUID columns: {ex.Message}");
+                    Console.WriteLine($"[DWH SYNC] Error updating GUID references: {ex.Message}");
                 }
 
-                // Log mapping table row count after insert
-                var countAfter = await targetConn.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM dbo.SubcontractorWorkItemsMapping");
-                Console.WriteLine($"[DWH SYNC] Unibouw mapping table count AFTER: {countAfter}");
+                // 🔍 Debug: Check unresolved mappings
+                var nullCount = await targetConn.ExecuteScalarAsync<int>(@"
+SELECT COUNT(*) 
+FROM dbo.SubcontractorWorkItemsMapping
+WHERE SubcontractorID IS NULL OR WorkItemID IS NULL");
+
+                Console.WriteLine($"[DWH SYNC] Unresolved mappings (NULL GUIDs): {nullCount}");
             }
 
             return (inserted, updated, skipped);

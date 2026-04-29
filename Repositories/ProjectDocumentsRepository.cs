@@ -44,79 +44,116 @@ ORDER BY l.LinkedOn DESC;";
             return await con.QueryAsync<ProjectDocumentDto>(sql, new { RfqID = rfqId });
         }
 
-        public async Task<UploadProjectDocResult> UploadAndLinkAsync(Guid projectId, Guid rfqId, string originalFileName, string contentType, byte[] bytes, string createdBy)
+        public async Task<UploadProjectDocResult> UploadAndLinkAsync(
+     Guid projectId,
+     Guid rfqId,
+     string originalFileName,
+     string contentType,
+     byte[] bytes,
+     string createdBy)
         {
             if (projectId == Guid.Empty) throw new ArgumentException("ProjectID is required");
             if (rfqId == Guid.Empty) throw new ArgumentException("RFQID is required");
             if (bytes == null || bytes.Length == 0) throw new ArgumentException("File bytes missing");
 
             var basePath = _configuration["DocumentStorage:BasePath"];
-            if (string.IsNullOrWhiteSpace(basePath)) throw new InvalidOperationException("DocumentStorage:BasePath missing");
+            if (string.IsNullOrWhiteSpace(basePath))
+                throw new InvalidOperationException("DocumentStorage:BasePath missing");
 
             var checksum = DocumentStorage.ComputeSha256(bytes);
 
             using var con = Connection;
             await con.OpenAsync();
+
             using var tx = con.BeginTransaction();
 
-            // 1) find duplicate within project
-            const string findSql = @"
+            try
+            {
+                // 1) find duplicate within project
+                const string findSql = @"
 SELECT TOP 1 ProjectDocumentID, ProjectID, FileName, OriginalFileName, ContentType, SizeBytes, StoragePath, ChecksumSha256, CreatedOn, CreatedBy, IsDeleted
 FROM ProjectDocument
 WHERE ProjectID = @ProjectID AND ChecksumSha256 = @Checksum AND IsDeleted = 0;";
-            var existing = await con.QueryFirstOrDefaultAsync<ProjectDocumentDto>(
-                findSql, new { ProjectID = projectId, Checksum = checksum }, tx);
 
-            bool isNew = existing == null;
-            ProjectDocumentDto doc;
+                var existing = await con.QueryFirstOrDefaultAsync<ProjectDocumentDto>(
+                    findSql,
+                    new { ProjectID = projectId, Checksum = checksum },
+                    tx);
 
-            if (!isNew)
-            {
-                doc = existing!;
-            }
-            else
-            {
-                var docId = Guid.NewGuid();
-                var storagePath = await DocumentStorage.SaveToDiskAsync(basePath, projectId, docId, originalFileName, bytes);
+                bool isNew = existing == null;
+                ProjectDocumentDto doc;
 
-                doc = new ProjectDocumentDto
+                if (!isNew)
                 {
-                    ProjectDocumentID = docId,
-                    ProjectID = projectId,
-                    FileName = Path.GetFileName(originalFileName),
-                    OriginalFileName = Path.GetFileName(originalFileName),
-                    ContentType = contentType,
-                    SizeBytes = bytes.LongLength,
-                    StoragePath = storagePath,
-                    ChecksumSha256 = checksum,
-                    CreatedBy = createdBy,
-                    CreatedOn = DateTime.UtcNow,
-                    IsDeleted = false
-                };
+                    doc = existing!;
+                }
+                else
+                {
+                    var docId = Guid.NewGuid();
 
-                const string insertDoc = @"
+                    // ⚠️ moved OUTSIDE DB dependency but still inside flow
+                    var storagePath = await DocumentStorage.SaveToDiskAsync(
+                        basePath, projectId, docId, originalFileName, bytes);
+
+                    doc = new ProjectDocumentDto
+                    {
+                        ProjectDocumentID = docId,
+                        ProjectID = projectId,
+                        FileName = Path.GetFileName(originalFileName),
+                        OriginalFileName = Path.GetFileName(originalFileName),
+                        ContentType = contentType,
+                        SizeBytes = bytes.LongLength,
+                        StoragePath = storagePath,
+                        ChecksumSha256 = checksum,
+                        CreatedBy = createdBy,
+                        CreatedOn = DateTime.UtcNow,
+                        IsDeleted = false
+                    };
+
+                    const string insertDoc = @"
 INSERT INTO ProjectDocument
 (ProjectDocumentID, ProjectID, FileName, OriginalFileName, ContentType, SizeBytes, StoragePath, ChecksumSha256, CreatedOn, CreatedBy, IsDeleted)
 VALUES
 (@ProjectDocumentID, @ProjectID, @FileName, @OriginalFileName, @ContentType, @SizeBytes, @StoragePath, @ChecksumSha256, SYSUTCDATETIME(), @CreatedBy, 0);";
 
-                await con.ExecuteAsync(insertDoc, doc, tx);
-            }
+                    await con.ExecuteAsync(insertDoc, doc, tx);
+                }
 
-            // 2) link to RFQ (idempotent)
-            const string linkSql = @"
-IF NOT EXISTS (SELECT 1 FROM RfqDocumentLink WHERE RfqID = @RfqID AND ProjectDocumentID = @ProjectDocumentID)
+                // 2) ALWAYS ensure RFQ link exists (even for duplicates)
+                const string linkSql = @"
+IF NOT EXISTS (
+    SELECT 1 FROM RfqDocumentLink
+    WHERE RfqID = @RfqID AND ProjectDocumentID = @ProjectDocumentID
+)
 BEGIN
     INSERT INTO RfqDocumentLink (RfqID, ProjectDocumentID, LinkedOn, LinkedBy)
     VALUES (@RfqID, @ProjectDocumentID, SYSUTCDATETIME(), @LinkedBy);
 END";
-            await con.ExecuteAsync(linkSql, new { RfqID = rfqId, ProjectDocumentID = doc.ProjectDocumentID, LinkedBy = createdBy }, tx);
 
-            tx.Commit();
+                await con.ExecuteAsync(
+                    linkSql,
+                    new
+                    {
+                        RfqID = rfqId,
+                        ProjectDocumentID = doc.ProjectDocumentID,
+                        LinkedBy = createdBy
+                    },
+                    tx);
 
-            return new UploadProjectDocResult { Document = doc, IsNewForProject = isNew };
+                tx.Commit();
+
+                return new UploadProjectDocResult
+                {
+                    Document = doc,
+                    IsNewForProject = isNew
+                };
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
         }
-
         public async Task LinkExistingDocsAsync(Guid rfqId, IEnumerable<Guid> projectDocumentIds, string linkedBy)
         {
             if (rfqId == Guid.Empty) throw new ArgumentException("RFQID is required");

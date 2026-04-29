@@ -24,6 +24,13 @@ namespace UnibouwAPI.Repositories
 
         private IDbConnection _connection => new SqlConnection(_connectionString);
 
+
+        private class WorkItemGroup
+        {
+            public List<Guid> WorkItemIDs { get; set; }
+            public List<string> WorkItemNames { get; set; }
+        }
+
         public async Task<IEnumerable<dynamic>> GetAllSubcontractor(bool onlyActive = false)
         {
             using var connection = new SqlConnection(_connectionString);
@@ -82,32 +89,49 @@ GROUP BY
 ";
 
             if (onlyActive)
-                query += " AND s.IsActive = 1";
+                query += " HAVING MAX(CASE WHEN s.IsActive = 1 THEN 1 ELSE 0 END) = 1";
 
             var subcontractors = (await connection.QueryAsync(query)).ToList();
 
+            // ✅ LOAD ALL WORK ITEMS IN ONE QUERY (NO LOOP DB CALLS)
+            var allMappings = (await connection.QueryAsync<(Guid SubcontractorID, Guid WorkItemID, string WorkItemName)>(@"
+        SELECT 
+            m.SubcontractorID,
+            w.WorkItemID,
+            w.Name
+        FROM SubcontractorWorkItemsMapping m
+        INNER JOIN WorkItems w ON w.WorkItemID = m.WorkItemID
+    ")).ToList();
+
+            // ✅ GROUP IN MEMORY (FAST)
+            var grouped = allMappings
+                .GroupBy(x => x.SubcontractorID)
+              .ToDictionary(
+    g => g.Key,
+    g => new WorkItemGroup
+    {
+        WorkItemIDs = g.Select(x => x.WorkItemID).ToList(),
+        WorkItemNames = g.Select(x => x.WorkItemName).ToList()
+    });
+
+            // ✅ SAME STRUCTURE LOOP (but NO DB calls inside)
             foreach (var sub in subcontractors)
             {
-                var workItems = await connection.QueryAsync<Guid>(@"
-            SELECT w.WorkItemID
-            FROM SubcontractorWorkItemsMapping m
-            INNER JOIN WorkItems w ON w.WorkItemID = m.WorkItemID
-            WHERE m.SubcontractorID = @Id",
-                    new { Id = sub.SubcontractorID });
-
-                var workItemNames = await connection.QueryAsync<string>(@"
-            SELECT w.Name
-            FROM SubcontractorWorkItemsMapping m
-            INNER JOIN WorkItems w ON w.WorkItemID = m.WorkItemID
-            WHERE m.SubcontractorID = @Id",
-                    new { Id = sub.SubcontractorID });
-
-                sub.WorkItemIDs = workItems.ToList();
-                sub.WorkItemName = string.Join(", ", workItemNames);
+                if (grouped.TryGetValue((Guid)sub.SubcontractorID, out WorkItemGroup data))
+                {
+                    sub.WorkItemIDs = data.WorkItemIDs;
+                    sub.WorkItemName = string.Join(", ", data.WorkItemNames);
+                }
+                else
+                {
+                    sub.WorkItemIDs = new List<Guid>();
+                    sub.WorkItemName = "";
+                }
             }
 
             return subcontractors;
         }
+
         public async Task<dynamic?> GetSubcontractorById(Guid id)
         {
             // 1. Basic subcontractor info + contact
